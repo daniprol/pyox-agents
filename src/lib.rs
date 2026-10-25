@@ -12,12 +12,14 @@
 //! | `agent`         | `Engine` and `Run`: the agent loop and the event stream       |
 //! | `events`        | The event classes Python receives (`TextDelta`, ...)          |
 //! | `messages`      | Our own conversation history format                           |
+//! | `history_store` | Reading given history; loading/saving it with history stores  |
 //! | `openai_chat`   | Adapter for the OpenAI Chat Completions API                   |
 //! | `sse`           | Splits a byte stream into server-sent events                  |
 //! | `text_chunks`   | Groups streamed text (deltas, paragraphs, whole messages)     |
 //! | `tools`         | Tool definitions and how to call Python or Rust tools         |
 //! | `errors`        | The Python exception classes                                  |
 //! | `json_convert`  | Converts JSON values to Python objects and back               |
+//! | `python_call`   | Calls Python functions (sync or async) from the agent loop    |
 
 use pyo3::prelude::*;
 
@@ -25,9 +27,11 @@ mod agent;
 mod client;
 mod errors;
 mod events;
+mod history_store;
 mod json_convert;
 mod messages;
 mod openai_chat;
+mod python_call;
 mod sse;
 mod text_chunks;
 mod tools;

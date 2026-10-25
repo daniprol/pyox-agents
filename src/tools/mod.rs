@@ -14,9 +14,6 @@
 
 mod builtin;
 
-use std::future::Future;
-use std::pin::Pin;
-
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
@@ -26,6 +23,7 @@ use serde_json::{Map, Value};
 pub use builtin::BuiltinTool;
 
 use crate::json_convert::{json_to_python, python_to_json};
+use crate::python_call::call_python;
 
 /// Everything the agent loop needs to know about one tool.
 pub struct ToolDefinition {
@@ -138,46 +136,21 @@ async fn run_rust_tool(tool_name: &str, run: impl FnOnce() -> Result<String, Str
     }
 }
 
-/// What calling `tool.invoke(arguments)` gave back.
-enum InvokeResult {
-    /// A sync tool already returned its result.
-    Finished(Py<PyAny>),
-    /// An async tool returned a coroutine, which runs on Python's event loop.
-    Pending(Pin<Box<dyn Future<Output = PyResult<Py<PyAny>>> + Send>>),
-}
-
 /// Calls `tool.invoke(arguments)`, awaiting the result if the tool is async.
-///
-/// The call happens on a thread meant for blocking work: sync tools (like
-/// compiled Rust tools) may take a while, and must not stall the network tasks.
 async fn run_python_tool(
     python_tool: &Py<PyAny>,
     arguments: &Map<String, Value>,
     python_task_locals: &TaskLocals,
 ) -> PyResult<String> {
-    // `Python::attach` gives us access to the Python interpreter (it takes the GIL).
     let python_tool = Python::attach(|py| python_tool.clone_ref(py));
     let arguments = Value::Object(arguments.clone());
-    let python_task_locals = python_task_locals.clone();
-
-    let invoke_result = tokio::task::spawn_blocking(move || {
-        Python::attach(|py| -> PyResult<InvokeResult> {
+    let tool_result = call_python(
+        move |py| {
             let arguments_dict = json_to_python(py, &arguments)?;
-            let result = python_tool.bind(py).call_method1("invoke", (arguments_dict,))?;
-            if result.hasattr("__await__")? {
-                let future = pyo3_async_runtimes::into_future_with_locals(&python_task_locals, result)?;
-                Ok(InvokeResult::Pending(Box::pin(future)))
-            } else {
-                Ok(InvokeResult::Finished(result.unbind()))
-            }
-        })
-    })
-    .await
-    .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("The tool crashed"))??;
-
-    let tool_result = match invoke_result {
-        InvokeResult::Finished(result) => result,
-        InvokeResult::Pending(future) => future.await?,
-    };
+            python_tool.bind(py).call_method1("invoke", (arguments_dict,))
+        },
+        python_task_locals,
+    )
+    .await?;
     Python::attach(|py| tool_result.bind(py).extract::<String>())
 }

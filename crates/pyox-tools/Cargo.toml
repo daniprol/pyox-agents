@@ -2,10 +2,11 @@
 name = "pyox-tools"
 version = "0.1.0"
 edition = "2024"
-description = "Write pyox-agents tools in Rust: the argument schema comes from a typed struct"
+description = "Write pyox-agents tools and history stores in Rust"
 
 [dependencies]
 pyo3 = { version = "0.30.1", features = ["abi3-py311"] }
 schemars = "1.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
+tokio = { version = "1.54", features = ["rt-multi-thread"] }

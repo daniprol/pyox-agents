@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeGuard
 
 from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
+from pyox_agents.messages import History, HistoryStore, LoadHistory
 from pyox_agents.tools import Tool, ToolLike, tool
 
 TextChunks = Literal["delta", "paragraph", "message"] | int
@@ -27,6 +28,12 @@ class Agent:
         agent = Agent(model="gpt-5-mini", prompt="Be brief.", tools=[get_weather])
         async for event in agent.execute("Weather in Vigo?"):
             ...
+
+    With a `history_store`, a run names its conversation and the agent loads
+    it before the run and saves the new messages after it:
+
+        agent = Agent(model="gpt-5-mini", history_store=store)
+        await agent.run("Hi again", conversation_id="user-42")
     """
 
     def __init__(
@@ -39,6 +46,7 @@ class Agent:
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
         text_chunks: TextChunks = "delta",
+        history_store: HistoryStore | LoadHistory | None = None,
     ) -> None:
         self.model = model
         self.prompt = prompt
@@ -52,29 +60,35 @@ class Agent:
             model_parameters=dict(model_parameters or {}),
             max_turns=max_turns,
             text_chunks=text_chunks,
+            history_store=history_store,
         )
 
     def execute(
         self,
         prompt: str | None = None,
         *,
-        history: Sequence[Mapping[str, Any]] | None = None,
+        history: History | None = None,
+        conversation_id: str | None = None,
         text_chunks: TextChunks | None = None,
     ) -> Run:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
 
-        Pass `history` (e.g. `RunFinished.messages` of a previous run) to continue a conversation.
-        `text_chunks` overrides the agent's setting for this run.
+        To continue a conversation, either pass `history` (e.g. `RunFinished.messages` of a
+        previous run, or its `messages_json()`), or a `conversation_id` to load it from the
+        agent's `history_store`. `text_chunks` overrides the agent's setting for this run.
         """
-        history_list = list(history) if history is not None else None
-        return self._engine.execute(prompt, history=history_list, text_chunks=text_chunks)
+        return self._engine.execute(
+            prompt, history=history, conversation_id=conversation_id, text_chunks=text_chunks
+        )
 
     async def run(
-        self, prompt: str | None = None, *, history: Sequence[Mapping[str, Any]] | None = None
+        self, prompt: str | None = None, *, history: History | None = None, conversation_id: str | None = None
     ) -> RunFinished:
         """Run to completion and return the final event (with `.text` and `.messages`)."""
         # Nobody reads the text as it streams here, so group it per message: fewer events.
-        async for event in self.execute(prompt, history=history, text_chunks="message"):
+        async for event in self.execute(
+            prompt, history=history, conversation_id=conversation_id, text_chunks="message"
+        ):
             if isinstance(event, RunFinished):
                 return event
         raise RuntimeError("The run ended without a RunFinished event")

@@ -15,6 +15,9 @@
 //! Text returned by `run` was allocated by the tool package, so it must be
 //! freed by the tool package too: that's what `free_result` is for.
 //!
+//! History stores use the same approach (see `native_history`), and share
+//! `NativeResult` with tools.
+//!
 //! `unsafe` marks code where Rust can't check memory safety by itself; the
 //! comments next to each `unsafe` block explain why it is correct.
 
@@ -29,7 +32,7 @@ use serde_json::Value;
 
 use crate::{RustTool, parse_and_run};
 
-/// Bump when `NativeToolFunctions` or `NativeToolResult` change.
+/// Bump when `NativeToolFunctions` or `NativeResult` change.
 pub const INTERFACE_VERSION: u32 = 1;
 
 /// The capsule name; checked when reading, so a wrong capsule is rejected.
@@ -38,14 +41,52 @@ pub const CAPSULE_NAME: &CStr = c"pyox_tools.native_tool.v1";
 /// The Python attribute that holds the capsule on a tool object.
 pub const CAPSULE_ATTRIBUTE: &str = "__pyox_native_tool__";
 
-/// Text returned by a native tool, as raw parts of a Rust `Vec<u8>`.
+/// Text returned across the native interface (a result or an error message),
+/// as raw parts of a Rust `Vec<u8>`.
 /// `#[repr(C)]` gives the struct the same memory layout in every library.
 #[repr(C)]
-pub struct NativeToolResult {
+pub struct NativeResult {
     pub is_error: bool,
     pub text_pointer: *mut u8,
     pub text_length: usize,
     pub text_capacity: usize,
+}
+
+impl NativeResult {
+    /// Hands over the text's memory without freeing it: whoever receives
+    /// the result must give it back to `free_result` of this same library.
+    pub(crate) fn new(outcome: Result<String, String>) -> Self {
+        let (is_error, text) = match outcome {
+            Ok(text) => (false, text),
+            Err(message) => (true, message),
+        };
+        let mut bytes = ManuallyDrop::new(text.into_bytes());
+        NativeResult {
+            is_error,
+            text_pointer: bytes.as_mut_ptr(),
+            text_length: bytes.len(),
+            text_capacity: bytes.capacity(),
+        }
+    }
+
+    /// Copies the text out, then frees the original with the `free_result`
+    /// of the library that allocated it.
+    ///
+    /// # Safety
+    /// `self` must come from a call into the library `free_result` belongs to,
+    /// and must not be used again afterwards.
+    pub(crate) unsafe fn read_and_free(
+        self,
+        free_result: unsafe extern "C" fn(NativeResult),
+    ) -> Result<String, String> {
+        // SAFETY: the caller guarantees the parts describe a live byte buffer.
+        let text_bytes = unsafe { std::slice::from_raw_parts(self.text_pointer, self.text_length) };
+        let text = String::from_utf8_lossy(text_bytes).into_owned();
+        let is_error = self.is_error;
+        // SAFETY: freed once, by the library that allocated it.
+        unsafe { free_result(self) };
+        if is_error { Err(text) } else { Ok(text) }
+    }
 }
 
 /// The functions of one native tool.
@@ -54,9 +95,9 @@ pub struct NativeToolResult {
 pub struct NativeToolFunctions {
     pub interface_version: u32,
     /// Runs the tool. `arguments` points to the JSON text of the arguments.
-    pub run: unsafe extern "C" fn(arguments_pointer: *const u8, arguments_length: usize) -> NativeToolResult,
+    pub run: unsafe extern "C" fn(arguments_pointer: *const u8, arguments_length: usize) -> NativeResult,
     /// Frees a result returned by `run`.
-    pub free_result: unsafe extern "C" fn(result: NativeToolResult),
+    pub free_result: unsafe extern "C" fn(result: NativeResult),
 }
 
 // ---------------------------------------------------------------------------
@@ -73,10 +114,7 @@ pub fn capsule_for<Tool: RustTool + 'static>(py: Python<'_>) -> PyResult<Bound<'
     PyCapsule::new_with_value(py, functions, CAPSULE_NAME)
 }
 
-unsafe extern "C" fn run_native<Tool: RustTool>(
-    arguments_pointer: *const u8,
-    arguments_length: usize,
-) -> NativeToolResult {
+unsafe extern "C" fn run_native<Tool: RustTool>(arguments_pointer: *const u8, arguments_length: usize) -> NativeResult {
     // SAFETY: the engine passes a pointer and length of a byte slice it owns
     // and keeps alive until this call returns (see `NativeTool::call`).
     let arguments_bytes = unsafe { std::slice::from_raw_parts(arguments_pointer, arguments_length) };
@@ -87,24 +125,12 @@ unsafe extern "C" fn run_native<Tool: RustTool>(
             serde_json::from_slice(arguments_bytes).map_err(|error| format!("Invalid arguments: {error}"))?;
         parse_and_run::<Tool>(arguments)
     }));
-    let (is_error, text) = match outcome {
-        Ok(Ok(text)) => (false, text),
-        Ok(Err(message)) => (true, message),
-        Err(_) => (true, format!("Tool {} crashed", Tool::NAME)),
-    };
-
-    // Hand over the text's memory without freeing it; `free_result` frees it later.
-    let mut bytes = ManuallyDrop::new(text.into_bytes());
-    NativeToolResult {
-        is_error,
-        text_pointer: bytes.as_mut_ptr(),
-        text_length: bytes.len(),
-        text_capacity: bytes.capacity(),
-    }
+    NativeResult::new(outcome.unwrap_or_else(|_| Err(format!("Tool {} crashed", Tool::NAME))))
 }
 
-unsafe extern "C" fn free_result(result: NativeToolResult) {
-    // SAFETY: the parts come from a `Vec<u8>` built in `run_native`, in this
+/// Frees a `NativeResult` made in this library. Shared by tools and history stores.
+pub(crate) unsafe extern "C" fn free_result(result: NativeResult) {
+    // SAFETY: the parts come from a `Vec<u8>` built in `NativeResult::new`, in this
     // same library, and each result is freed exactly once.
     drop(unsafe { Vec::from_raw_parts(result.text_pointer, result.text_length, result.text_capacity) });
 }
@@ -147,11 +173,7 @@ impl NativeTool {
         // copied before being freed once by the library that allocated it.
         unsafe {
             let result = (self.functions.run)(arguments_json.as_ptr(), arguments_json.len());
-            let text_bytes = std::slice::from_raw_parts(result.text_pointer, result.text_length);
-            let text = String::from_utf8_lossy(text_bytes).into_owned();
-            let is_error = result.is_error;
-            (self.functions.free_result)(result);
-            if is_error { Err(text) } else { Ok(text) }
+            result.read_and_free(self.functions.free_result)
         }
     }
 }

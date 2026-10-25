@@ -1,0 +1,13 @@
+[project]
+name = "fast-history"
+version = "0.1.0"
+description = "Example: a conversation history store written in Rust (SQLite through sqlx)"
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.uv]
+# Rebuild when the Rust code (or the pyox-tools crate it uses) changes.
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "*.pyi" }, { file = "src/**/*.rs" }, { file = "../../crates/pyox-tools/src/**/*.rs" }]

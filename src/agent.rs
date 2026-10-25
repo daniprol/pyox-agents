@@ -7,10 +7,12 @@
 //! The loop (in `run_agent_loop`):
 //!
 //! ```text
+//! load the conversation from the history store (if the run names one)
 //! repeat until the model stops calling tools (at most `max_turns` times):
 //!     stream a model response, forwarding text to Python as it arrives
 //!     add the assistant message to the history
 //!     run the requested tools (concurrently) and add their results
+//! save the run's new messages to the history store (if any)
 //! ```
 
 use std::panic::AssertUnwindSafe;
@@ -30,6 +32,7 @@ use tokio::task::JoinHandle;
 use crate::client::{Client, ClientSettings};
 use crate::errors::MaxTurnsExceededError;
 use crate::events::{AgentEvent, RunFinished, ToolFinished, ToolStarted};
+use crate::history_store::{HistoryStore, messages_from_python};
 use crate::json_convert::python_to_json;
 use crate::messages::{Message, TokenUsage, ToolCall};
 use crate::openai_chat::{build_request_body, stream_chat_completion};
@@ -50,6 +53,7 @@ struct AgentConfig {
     max_turns: u32,
     /// How streamed text is grouped into `TextDelta` events (can be changed per run).
     text_chunks: TextChunking,
+    history_store: Option<HistoryStore>,
 }
 
 /// Python: created by `pyox_agents.Agent`; most users never touch it directly.
@@ -63,7 +67,7 @@ impl Engine {
     #[new]
     #[pyo3(signature = (
         *, client, model, prompt = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
-        text_chunks = None,
+        text_chunks = None, history_store = None,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent(...)`
     fn new(
@@ -74,6 +78,7 @@ impl Engine {
         model_parameters: Option<Bound<'_, PyDict>>,
         max_turns: u32,
         text_chunks: Option<Bound<'_, PyAny>>,
+        history_store: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let tools = tools
             .iter()
@@ -105,31 +110,43 @@ impl Engine {
                     Some(value) => TextChunking::from_python(&value)?,
                     None => TextChunking::Delta,
                 },
+                history_store: history_store.as_ref().map(HistoryStore::from_python).transpose()?,
             }),
         })
     }
 
     /// Starts a run. Nothing is sent until Python starts iterating over it.
-    #[pyo3(signature = (prompt = None, *, history = None, text_chunks = None))]
+    ///
+    /// The history comes from `history` (message dicts or JSON text), or is
+    /// loaded from the agent's history store when `conversation_id` is given.
+    #[pyo3(signature = (prompt = None, *, history = None, conversation_id = None, text_chunks = None))]
     fn execute(
         &self,
         prompt: Option<String>,
         history: Option<Bound<'_, PyAny>>,
+        conversation_id: Option<String>,
         text_chunks: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Run> {
         let text_chunks = match text_chunks {
             Some(value) => TextChunking::from_python(&value)?,
             None => self.config.text_chunks,
         };
-        let mut messages: Vec<Message> = match history {
-            Some(history) => serde_json::from_value(python_to_json(&history)?)
-                .map_err(|error| PyValueError::new_err(format!("Invalid history: {error}")))?,
+        if conversation_id.is_some() {
+            if history.is_some() {
+                return Err(PyValueError::new_err("Give `history` or `conversation_id`, not both"));
+            }
+            if self.config.history_store.is_none() {
+                return Err(PyValueError::new_err(
+                    "`conversation_id` needs an agent with a `history_store`",
+                ));
+            }
+        }
+        let history = match history {
+            Some(history) => messages_from_python(&history)?,
             None => Vec::new(),
         };
-        if let Some(prompt) = prompt {
-            messages.push(Message::User { content: prompt });
-        }
-        if messages.is_empty() {
+        // A run with a conversation_id is checked after loading, in the loop.
+        if prompt.is_none() && history.is_empty() && conversation_id.is_none() {
             return Err(PyValueError::new_err("Give a prompt, a history, or both"));
         }
 
@@ -137,7 +154,9 @@ impl Engine {
         Ok(Run {
             not_started: Mutex::new(Some(RunInputs {
                 config: self.config.clone(),
-                messages,
+                history,
+                prompt,
+                conversation_id,
                 text_chunks,
                 event_sender,
             })),
@@ -151,7 +170,11 @@ impl Engine {
 struct RunInputs {
     config: Arc<AgentConfig>,
     text_chunks: TextChunking,
-    messages: Vec<Message>,
+    /// History given directly with `execute(history=...)`.
+    history: Vec<Message>,
+    prompt: Option<String>,
+    /// Set when the history is loaded from (and saved to) the history store.
+    conversation_id: Option<String>,
     event_sender: Sender<PyResult<AgentEvent>>,
 }
 
@@ -219,10 +242,33 @@ async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals) {
 async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> PyResult<()> {
     let RunInputs {
         config,
-        mut messages,
+        history,
+        prompt,
+        conversation_id,
         text_chunks,
         event_sender,
     } = inputs;
+    // The store and the conversation, when this run loads and saves one.
+    let stored_conversation = match &conversation_id {
+        Some(conversation_id) => config.history_store.as_ref().map(|store| (store, conversation_id)),
+        None => None,
+    };
+
+    let mut messages = match stored_conversation {
+        Some((store, conversation_id)) => store.load(conversation_id, &python_task_locals).await?,
+        None => history,
+    };
+    // Everything from here on is new in this run (and is what gets saved).
+    let new_messages_start = messages.len();
+    if let Some(prompt) = prompt {
+        messages.push(Message::User { content: prompt });
+    }
+    if messages.is_empty() {
+        return Err(PyValueError::new_err(format!(
+            "Conversation {:?} has no messages yet: give a prompt",
+            conversation_id.unwrap_or_default()
+        )));
+    }
     let mut total_usage = TokenUsage::default();
     let mut text_output = TextOutput::new(text_chunks, event_sender.clone());
 
@@ -245,12 +291,18 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         });
 
         if tool_calls.is_empty() {
+            if let Some((store, conversation_id)) = stored_conversation {
+                store
+                    .save(conversation_id, &messages[new_messages_start..], &python_task_locals)
+                    .await?;
+            }
             let finished = RunFinished {
                 text: assistant_turn.text,
                 turns: turn,
                 input_tokens: total_usage.input_tokens,
                 output_tokens: total_usage.output_tokens,
                 messages,
+                new_messages_start,
             };
             let _ = event_sender.send(Ok(AgentEvent::RunFinished(finished))).await;
             return Ok(());

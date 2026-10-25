@@ -52,7 +52,7 @@ After changing Rust code, `uv sync` (or `uv run ...`) rebuilds it automatically.
 | `TextDelta`    | `text`                                                              |
 | `ToolStarted`  | `call_id`, `name`, `arguments` (dict)                               |
 | `ToolFinished` | `call_id`, `name`, `result`, `is_error`                             |
-| `RunFinished`  | `text`, `turns`, `input_tokens`, `output_tokens`, `messages`        |
+| `RunFinished`  | `text`, `turns`, `input_tokens`, `output_tokens`, `messages`, `new_messages` |
 
 They work with `match` too: `case TextDelta(text=text): ...`
 
@@ -73,9 +73,60 @@ async for event in agent.execute("Explain asyncio", text_chunks=20):  # override
 ```
 
 `await agent.run(prompt)` runs to the end and returns the `RunFinished` event.
-To continue a conversation, pass the previous messages: `agent.run("And tomorrow?", history=previous.messages)`.
 
 One `Agent` can serve many runs at the same time: each run has its own history.
+
+## History
+
+Messages are plain dicts (typed as `UserMessage`, `AssistantMessage` and `ToolMessage`), and the same format
+goes in and out:
+
+```python
+{"role": "user", "content": "Hi"}
+{"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "name": "add", "arguments": {"a": 1}}]}
+{"role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3", "is_error": False}
+```
+
+**Pass it directly.** `history=` takes the messages of a previous run, or JSON text of them (`str` or `bytes`),
+which is parsed in Rust without building dicts:
+
+```python
+first = await agent.run("I am Dani")
+await agent.run("What is my name?", history=first.messages)
+await agent.run("What is my name?", history=first.messages_json())  # e.g. read from a database
+```
+
+`RunFinished.new_messages` (and `new_messages_json()`) hold only what the run added, to append to your storage.
+
+**Or let the agent load and save it** with a history store. Give it to the agent once, and name the
+conversation on each run:
+
+```python
+class PostgresHistory:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self.pool = pool  # created once at startup, shared by all runs
+
+    async def load(self, conversation_id: str) -> str:
+        # Return message dicts, or JSON text (faster: parsed in Rust).
+        return await self.pool.fetchval(
+            "SELECT coalesce(jsonb_agg(message ORDER BY position), '[]')::text FROM messages WHERE conversation_id = $1",
+            conversation_id,
+        )
+
+    async def save(self, conversation_id: str, new_messages_json: str) -> None:  # optional
+        ...  # append the run's new messages (JSON text of a list)
+
+
+agent = Agent(model="gpt-5-mini", history_store=PostgresHistory(pool))
+await agent.run("Hi again", conversation_id="user-42")
+```
+
+`load` and `save` can be sync or async; a plain `load(conversation_id)` function works too. Failed runs are not
+saved. Store errors are raised from the run (`HistoryError` when the store returns something invalid).
+
+**History stores in Rust.** Implement the `HistoryStore` trait from [`pyox-tools`](crates/pyox-tools) on a struct
+holding your connection pool (sqlx, diesel, SeaORM...). The agent calls it directly in Rust, so loading never
+goes through Python. See [`examples/rust_history_store`](examples/rust_history_store) for a complete SQLite store.
 
 ## Tools
 
@@ -159,7 +210,7 @@ Share one `Client` between agents to reuse its connection pool.
 
 All exceptions inherit from `AgentError`:
 `ApiError` (with `AuthenticationError` and `RateLimitError`), `RequestTimeoutError`, `NetworkError`,
-`InvalidResponseError` and `MaxTurnsExceededError` (the `max_turns` limit, 20 by default).
+`InvalidResponseError`, `MaxTurnsExceededError` (the `max_turns` limit, 20 by default) and `HistoryError`.
 
 ## How it works
 

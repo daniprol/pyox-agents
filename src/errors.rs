@@ -13,7 +13,8 @@
 //! ├── RequestTimeoutError      the request took too long
 //! ├── NetworkError             could not connect / connection dropped
 //! ├── InvalidResponseError     the API sent something we could not understand
-//! └── MaxTurnsExceededError    the agent hit its `max_turns` limit
+//! ├── MaxTurnsExceededError    the agent hit its `max_turns` limit
+//! └── HistoryError             a history store failed to load or save
 //! ```
 
 use pyo3::create_exception;
@@ -54,6 +55,13 @@ create_exception!(
     "The agent reached `max_turns`."
 );
 
+create_exception!(
+    pyox_agents,
+    HistoryError,
+    AgentError,
+    "A history store failed to load or save a conversation."
+);
+
 /// Picks the right exception for an HTTP error status code.
 pub fn error_for_http_status(status_code: u16, response_body: &str) -> PyErr {
     let message = format!("HTTP {status_code}: {response_body}");
@@ -83,5 +91,6 @@ pub fn add_exceptions_to_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("NetworkError", py.get_type::<NetworkError>())?;
     module.add("InvalidResponseError", py.get_type::<InvalidResponseError>())?;
     module.add("MaxTurnsExceededError", py.get_type::<MaxTurnsExceededError>())?;
+    module.add("HistoryError", py.get_type::<HistoryError>())?;
     Ok(())
 }
