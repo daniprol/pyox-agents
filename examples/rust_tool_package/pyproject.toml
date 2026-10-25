@@ -10,4 +10,4 @@ build-backend = "maturin"
 
 [tool.uv]
 # Rebuild when the Rust code (or the pyox-tools crate it uses) changes.
-cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "src/**/*.rs" }, { file = "../../crates/pyox-tools/src/**/*.rs" }]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "*.pyi" }, { file = "src/**/*.rs" }, { file = "../../crates/pyox-tools/src/**/*.rs" }]
