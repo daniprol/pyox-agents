@@ -28,6 +28,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Documentation: **[daniprol.github.io/pyox-agents](https://daniprol.github.io/pyox-agents/)**.
 Examples and the commands to run them are in [`examples/`](examples).
 
 Status: early. Only the OpenAI Chat Completions API (and compatible servers) is supported for now.
@@ -322,6 +323,10 @@ Git hooks ([prek](https://prek.j178.dev), configured in [`prek.toml`](prek.toml)
 | `git push`   | `ty check`, `cargo clippy`, `cargo test`, `pytest`              |
 
 Run them by hand with `uv run prek run --all-files` (add `--stage pre-push` for the push hooks).
+
+The documentation site lives in [`docs/`](docs) and [`zensical.toml`](zensical.toml), built with
+[Zensical](https://zensical.org). Preview it with `uv run --only-group docs zensical serve`; every push to `main`
+publishes it to GitHub Pages ([`.github/workflows/docs.yml`](.github/workflows/docs.yml)).
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs both hook stages on Python 3.11 and 3.14, plus a
 coverage job. The coverage report (Python and Rust, including the Rust code exercised by the Python tests) is

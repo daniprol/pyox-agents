@@ -4,6 +4,7 @@ How much time and memory does the agent library itself cost? We compare pyox-age
 [pydantic-ai](https://ai.pydantic.dev) on the same tasks, against the same fake model, and then pyox-agents with
 each way of grouping streamed text (`text_chunks`).
 
+<!-- --8<-- [start:results] -->
 ## pyox-agents vs pydantic-ai
 
 <!-- results:start -->
@@ -48,7 +49,7 @@ which takes seconds per answer, latencies are dominated by the model; the CPU an
 
 ## Streaming modes (`text_chunks`)
 
-pyox-agents can group streamed text into fewer, bigger `TextDelta` events (see the main README). Here is what each
+pyox-agents can group streamed text into fewer, bigger `TextDelta` events (the `text_chunks` option). Here is what each
 mode costs on the long streamed answer (5 markdown paragraphs, ~450 chunks from the API):
 
 <!-- text-chunks:start -->
@@ -69,6 +70,7 @@ What the numbers say:
   milliseconds between pieces) the wait before the first `TextDelta` grows with the group size: about 10 pieces
   with `10` (a fraction of a second), one paragraph with `"paragraph"` (can be seconds), the whole answer with
   `"message"`. So `10` (or a similar number) is the safe choice for live UIs: most of the savings, almost no delay.
+<!-- --8<-- [end:results] -->
 
 ## What is measured
 
