@@ -11,13 +11,12 @@ use futures::StreamExt;
 use pyo3::prelude::*;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use tokio::sync::mpsc::Sender;
 
 use crate::client::ClientSettings;
 use crate::errors::{ApiError, InvalidResponseError, error_for_http_failure, error_for_http_status};
-use crate::events::{AgentEvent, TextDelta};
 use crate::messages::{Message, TokenUsage, ToolCall};
 use crate::sse::SseDecoder;
+use crate::text_chunks::TextOutput;
 use crate::tools::ToolDefinition;
 
 /// What the model answered in one turn.
@@ -260,11 +259,11 @@ impl ChunkAccumulator {
 // ---------------------------------------------------------------------------
 
 /// Sends one request and streams the answer. Each piece of text is sent to
-/// `event_sender` as a `TextDelta` as soon as it arrives.
+/// `text_output` as soon as it arrives.
 pub async fn stream_chat_completion(
     client: &ClientSettings,
     request_body: &Value,
-    event_sender: &Sender<PyResult<AgentEvent>>,
+    text_output: &mut TextOutput,
 ) -> PyResult<AssistantTurn> {
     let mut request = client
         .http_client
@@ -294,8 +293,7 @@ pub async fn stream_chat_completion(
                 break 'reading;
             }
             if let Some(text) = accumulator.add_chunk(&event_data)? {
-                // If Python stopped listening, sending fails; the run is being cancelled anyway.
-                let _ = event_sender.send(Ok(AgentEvent::TextDelta(TextDelta { text }))).await;
+                text_output.push(&text).await;
             }
         }
     }

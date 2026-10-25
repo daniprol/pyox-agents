@@ -24,17 +24,24 @@ def text_response(text: str, *, usage: dict[str, int] = DEFAULT_USAGE) -> Stream
     )
 
 
+def text_pieces_response(*pieces: str) -> StreamResponse:
+    """An answer streamed exactly in the given pieces."""
+    chunks: list[dict[str, Any]] = [{"choices": [{"delta": {"content": piece}}]} for piece in pieces]
+    chunks.append({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+    return StreamResponse(chunks)
+
+
 def tool_call(name: str, /, **arguments: Any) -> tuple[str, dict[str, Any]]:
     """One requested tool call, for `tool_calls_response`."""
     return name, arguments
 
 
-def tool_calls_response(*calls: tuple[str, dict[str, Any]]) -> StreamResponse:
-    """An answer requesting tool calls. Call ids are `call_0`, `call_1`, ...
+def tool_calls_response(*calls: tuple[str, dict[str, Any]], text_pieces: tuple[str, ...] = ()) -> StreamResponse:
+    """An answer requesting tool calls, optionally after some text. Call ids are `call_0`, `call_1`, ...
 
     The arguments JSON of each call is split in two chunks, as real APIs do.
     """
-    chunks: list[dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = [{"choices": [{"delta": {"content": piece}}]} for piece in text_pieces]
     for index, (name, arguments) in enumerate(calls):
         arguments_text = json.dumps(arguments)
         middle = len(arguments_text) // 2

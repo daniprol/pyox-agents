@@ -14,6 +14,7 @@
 //! | `messages`      | Our own conversation history format                           |
 //! | `openai_chat`   | Adapter for the OpenAI Chat Completions API                   |
 //! | `sse`           | Splits a byte stream into server-sent events                  |
+//! | `text_chunks`   | Groups streamed text (deltas, paragraphs, whole messages)     |
 //! | `tools`         | Tool definitions and how to call Python or Rust tools         |
 //! | `errors`        | The Python exception classes                                  |
 //! | `json_convert`  | Converts JSON values to Python objects and back               |
@@ -28,6 +29,7 @@ mod json_convert;
 mod messages;
 mod openai_chat;
 mod sse;
+mod text_chunks;
 mod tools;
 
 /// The compiled Python module, importable as `pyox_agents._core`.

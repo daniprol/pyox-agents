@@ -85,8 +85,15 @@ class Engine:
         tools: Sequence[Any] = (),
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
+        text_chunks: str | int | None = None,
     ) -> None: ...
-    def execute(self, prompt: str | None = None, *, history: Sequence[Mapping[str, Any]] | None = None) -> Run: ...
+    def execute(
+        self,
+        prompt: str | None = None,
+        *,
+        history: Sequence[Mapping[str, Any]] | None = None,
+        text_chunks: str | int | None = None,
+    ) -> Run: ...
 
 class AgentError(Exception): ...
 class ApiError(AgentError): ...

@@ -33,6 +33,7 @@ use crate::events::{AgentEvent, RunFinished, ToolFinished, ToolStarted};
 use crate::json_convert::python_to_json;
 use crate::messages::{Message, TokenUsage, ToolCall};
 use crate::openai_chat::{build_request_body, stream_chat_completion};
+use crate::text_chunks::{TextChunking, TextOutput};
 use crate::tools::{ToolDefinition, ToolOutput};
 
 /// How many events can wait in the queue before the agent loop pauses.
@@ -47,6 +48,8 @@ struct AgentConfig {
     tools: Vec<ToolDefinition>,
     model_parameters: Map<String, Value>,
     max_turns: u32,
+    /// How streamed text is grouped into `TextDelta` events (can be changed per run).
+    text_chunks: TextChunking,
 }
 
 /// Python: created by `pyox_agents.Agent`; most users never touch it directly.
@@ -58,7 +61,11 @@ pub struct Engine {
 #[pymethods]
 impl Engine {
     #[new]
-    #[pyo3(signature = (*, client, model, prompt = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20))]
+    #[pyo3(signature = (
+        *, client, model, prompt = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
+        text_chunks = None,
+    ))]
+    #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent(...)`
     fn new(
         client: PyRef<'_, Client>,
         model: String,
@@ -66,6 +73,7 @@ impl Engine {
         tools: Vec<Bound<'_, PyAny>>,
         model_parameters: Option<Bound<'_, PyDict>>,
         max_turns: u32,
+        text_chunks: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let tools = tools
             .iter()
@@ -93,13 +101,26 @@ impl Engine {
                 tools,
                 model_parameters,
                 max_turns,
+                text_chunks: match text_chunks {
+                    Some(value) => TextChunking::from_python(&value)?,
+                    None => TextChunking::Delta,
+                },
             }),
         })
     }
 
     /// Starts a run. Nothing is sent until Python starts iterating over it.
-    #[pyo3(signature = (prompt = None, *, history = None))]
-    fn execute(&self, prompt: Option<String>, history: Option<Bound<'_, PyAny>>) -> PyResult<Run> {
+    #[pyo3(signature = (prompt = None, *, history = None, text_chunks = None))]
+    fn execute(
+        &self,
+        prompt: Option<String>,
+        history: Option<Bound<'_, PyAny>>,
+        text_chunks: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Run> {
+        let text_chunks = match text_chunks {
+            Some(value) => TextChunking::from_python(&value)?,
+            None => self.config.text_chunks,
+        };
         let mut messages: Vec<Message> = match history {
             Some(history) => serde_json::from_value(python_to_json(&history)?)
                 .map_err(|error| PyValueError::new_err(format!("Invalid history: {error}")))?,
@@ -117,6 +138,7 @@ impl Engine {
             not_started: Mutex::new(Some(RunInputs {
                 config: self.config.clone(),
                 messages,
+                text_chunks,
                 event_sender,
             })),
             event_receiver: Arc::new(tokio::sync::Mutex::new(event_receiver)),
@@ -128,6 +150,7 @@ impl Engine {
 /// What a run needs to start. Kept aside until the first event is requested.
 struct RunInputs {
     config: Arc<AgentConfig>,
+    text_chunks: TextChunking,
     messages: Vec<Message>,
     event_sender: Sender<PyResult<AgentEvent>>,
 }
@@ -197,9 +220,11 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
     let RunInputs {
         config,
         mut messages,
+        text_chunks,
         event_sender,
     } = inputs;
     let mut total_usage = TokenUsage::default();
+    let mut text_output = TextOutput::new(text_chunks, event_sender.clone());
 
     for turn in 1..=config.max_turns {
         let request_body = build_request_body(
@@ -209,7 +234,8 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
             &config.tools,
             &config.model_parameters,
         );
-        let assistant_turn = stream_chat_completion(&config.client, &request_body, &event_sender).await?;
+        let assistant_turn = stream_chat_completion(&config.client, &request_body, &mut text_output).await?;
+        text_output.finish().await; // the message ended: send any text still grouped
         total_usage.add(assistant_turn.usage);
 
         let tool_calls = assistant_turn.tool_calls;

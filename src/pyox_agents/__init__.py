@@ -17,7 +17,7 @@ from pyox_agents._core import (
     ToolFinished,
     ToolStarted,
 )
-from pyox_agents.agent import Agent
+from pyox_agents.agent import Agent, TextChunks
 from pyox_agents.tools import Tool, ToolLike, tool
 
 AgentEvent = TextDelta | ToolStarted | ToolFinished | RunFinished
@@ -38,6 +38,7 @@ __all__ = [
     "RequestTimeoutError",
     "Run",
     "RunFinished",
+    "TextChunks",
     "TextDelta",
     "Tool",
     "ToolFinished",

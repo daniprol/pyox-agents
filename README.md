@@ -56,6 +56,22 @@ After changing Rust code, `uv sync` (or `uv run ...`) rebuilds it automatically.
 
 They work with `match` too: `case TextDelta(text=text): ...`
 
+Models stream text in tiny pieces. To get fewer, bigger `TextDelta` events (less work for Python), choose how
+text is grouped with `text_chunks`, on the agent or per run:
+
+| `text_chunks`        | One `TextDelta` per...                                             |
+|----------------------|--------------------------------------------------------------------|
+| `"delta"` (default)  | piece sent by the API (lowest latency)                             |
+| `10` (any number N)  | N pieces                                                           |
+| `"paragraph"`        | markdown paragraph; fenced code blocks are never split             |
+| `"message"`          | whole assistant message (text before a tool call comes before it)  |
+
+```python
+agent = Agent(model="gpt-5-mini", text_chunks="paragraph")
+async for event in agent.execute("Explain asyncio", text_chunks=20):  # override for one run
+    ...
+```
+
 `await agent.run(prompt)` runs to the end and returns the `RunFinished` event.
 To continue a conversation, pass the previous messages: `agent.run("And tomorrow?", history=previous.messages)`.
 
@@ -112,6 +128,7 @@ impl RustTool for CountWords {
 
 ```python
 import fast_tools
+
 agent = Agent(model="gpt-5-mini", tools=[fast_tools.count_words])
 ```
 

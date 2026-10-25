@@ -1,10 +1,21 @@
 """`Agent`: the main entry point."""
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeGuard
+from typing import Any, Literal, TypeGuard
 
 from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
 from pyox_agents.tools import Tool, ToolLike, tool
+
+TextChunks = Literal["delta", "paragraph", "message"] | int
+"""How streamed text is grouped into `TextDelta` events:
+
+- `"delta"`: every piece the API sends (default, lowest latency).
+- an int N: every N pieces.
+- `"paragraph"`: each markdown paragraph; code blocks are never split.
+- `"message"`: the whole text of each assistant message.
+
+Bigger chunks mean fewer events, so less work for Python.
+"""
 
 
 class Agent:
@@ -27,6 +38,7 @@ class Agent:
         client: Client | None = None,
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
+        text_chunks: TextChunks = "delta",
     ) -> None:
         self.model = model
         self.prompt = prompt
@@ -39,20 +51,30 @@ class Agent:
             tools=self.tools,
             model_parameters=dict(model_parameters or {}),
             max_turns=max_turns,
+            text_chunks=text_chunks,
         )
 
-    def execute(self, prompt: str | None = None, *, history: Sequence[Mapping[str, Any]] | None = None) -> Run:
+    def execute(
+        self,
+        prompt: str | None = None,
+        *,
+        history: Sequence[Mapping[str, Any]] | None = None,
+        text_chunks: TextChunks | None = None,
+    ) -> Run:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
 
         Pass `history` (e.g. `RunFinished.messages` of a previous run) to continue a conversation.
+        `text_chunks` overrides the agent's setting for this run.
         """
-        return self._engine.execute(prompt, history=list(history) if history is not None else None)
+        history_list = list(history) if history is not None else None
+        return self._engine.execute(prompt, history=history_list, text_chunks=text_chunks)
 
     async def run(
         self, prompt: str | None = None, *, history: Sequence[Mapping[str, Any]] | None = None
     ) -> RunFinished:
         """Run to completion and return the final event (with `.text` and `.messages`)."""
-        async for event in self.execute(prompt, history=history):
+        # Nobody reads the text as it streams here, so group it per message: fewer events.
+        async for event in self.execute(prompt, history=history, text_chunks="message"):
             if isinstance(event, RunFinished):
                 return event
         raise RuntimeError("The run ended without a RunFinished event")
