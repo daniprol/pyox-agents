@@ -265,15 +265,10 @@ pub async fn stream_chat_completion(
     request_body: &Value,
     text_output: &mut TextOutput,
 ) -> PyResult<AssistantTurn> {
-    let mut request = client
-        .http_client
-        .post(format!("{}/chat/completions", client.base_url))
-        .json(request_body);
-    if let Some(api_key) = &client.api_key {
-        request = request.bearer_auth(api_key);
-    }
-
-    let response = request.send().await.map_err(error_for_http_failure)?;
+    let response = client
+        .post_json("/chat/completions", request_body)
+        .await
+        .map_err(error_for_http_failure)?;
     let status = response.status();
     if !status.is_success() {
         let response_body = response.text().await.unwrap_or_default();

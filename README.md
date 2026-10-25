@@ -206,6 +206,9 @@ agent = Agent(client=client, model="gpt-5-mini", model_parameters={"temperature"
 
 Share one `Client` between agents to reuse its connection pool.
 
+A request that fails before any response arrives (for example on a pooled connection the server had already
+closed) is sent again, up to `max_retries` times. Once the answer starts streaming it is never retried.
+
 ## Errors
 
 All exceptions inherit from `AgentError`:

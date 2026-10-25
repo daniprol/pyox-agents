@@ -17,6 +17,7 @@ class Client:
         headers: Mapping[str, str] | None = None,
         connect_timeout_seconds: float = 10.0,
         request_timeout_seconds: float | None = 600.0,
+        max_retries: int = 2,
     ) -> None: ...
     @property
     def base_url(self) -> str: ...

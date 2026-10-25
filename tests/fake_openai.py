@@ -5,6 +5,7 @@ whole Rust stack (HTTP, SSE decoding, parsing) is exercised without mocks.
 """
 
 import json
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
@@ -31,6 +32,14 @@ class ErrorResponse:
 
 
 @dataclass(frozen=True)
+class DroppedConnection:
+    """Close the connection without answering, like a server dropping an idle keep-alive connection."""
+
+
+Response = StreamResponse | ErrorResponse | DroppedConnection
+
+
+@dataclass(frozen=True)
 class RecordedRequest:
     body: dict[str, Any]
     headers: dict[str, str]  # names in lowercase
@@ -40,7 +49,7 @@ class RecordedRequest:
 class FakeOpenAI:
     """Answers each request with the next queued response and records every request."""
 
-    responses: list[StreamResponse | ErrorResponse] = field(default_factory=list)
+    responses: list[Response] = field(default_factory=list)
     requests: list[RecordedRequest] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -52,14 +61,14 @@ class FakeOpenAI:
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self._server.server_address[1]}/v1"
 
-    def queue(self, *responses: StreamResponse | ErrorResponse) -> None:
+    def queue(self, *responses: Response) -> None:
         self.responses.extend(responses)
 
     def close(self) -> None:
         self._server.shutdown()
         self._server.server_close()
 
-    def _next_response(self, request: RecordedRequest) -> StreamResponse | ErrorResponse:
+    def _next_response(self, request: RecordedRequest) -> Response:
         with self._lock:
             self.requests.append(request)
             if not self.responses:
@@ -76,6 +85,11 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             headers = {name.lower(): value for name, value in self.headers.items()}
             response = fake._next_response(RecordedRequest(body=body, headers=headers))
+
+            if isinstance(response, DroppedConnection):
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
 
             if isinstance(response, ErrorResponse):
                 self.send_response(response.status)

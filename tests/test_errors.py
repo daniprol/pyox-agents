@@ -6,7 +6,7 @@ import pytest
 
 from conftest import MakeAgent
 from factories import error_response, text_response, tool_call, tool_calls_response
-from fake_openai import FakeOpenAI, StreamResponse
+from fake_openai import DroppedConnection, FakeOpenAI, StreamResponse
 from pyox_agents import (
     Agent,
     AgentError,
@@ -92,3 +92,22 @@ def test_invalid_configuration(client: Client) -> None:
         Agent(model="m", client=client).execute()
     with pytest.raises(ValueError, match="header"):
         Client(headers={"bad header": "x"})
+
+
+async def test_retries_requests_dropped_before_any_response(fake_openai: FakeOpenAI) -> None:
+    fake_openai.queue(DroppedConnection(), DroppedConnection(), text_response("Made it"))
+    client = Client(api_key="x", base_url=fake_openai.base_url, max_retries=2)
+
+    result = await Agent(client=client, model="m").run("Hi")
+
+    assert result.text == "Made it"
+    assert len(fake_openai.requests) == 3
+
+
+async def test_gives_up_after_max_retries(fake_openai: FakeOpenAI) -> None:
+    fake_openai.queue(DroppedConnection(), DroppedConnection())
+    client = Client(api_key="x", base_url=fake_openai.base_url, max_retries=1)
+
+    with pytest.raises(NetworkError):
+        await Agent(client=client, model="m").run("Hi")
+    assert len(fake_openai.requests) == 2
