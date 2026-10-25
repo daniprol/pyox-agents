@@ -269,10 +269,13 @@ so this is the overhead of each library (details and how to run them in [`benchm
 
 | Scenario                     | Latency (pyox / pydantic-ai) | Throughput, 100 at once | Peak memory  |
 |------------------------------|-----------------------------:|------------------------:|-------------:|
-| Long streamed answer         | 56 ms / 138 ms               | 23 / 7 runs/s           | 56 / 117 MB  |
-| One tool call                | 4.3 ms / 20.5 ms             | 434 / 52 runs/s         | 33 / 104 MB  |
-| Five tool calls at once      | 5.4 ms / 31.3 ms             | 272 / 31 runs/s         | 35 / 107 MB  |
-| Startup (import + agent)     | 73 ms / 1079 ms              |                         | 23 / 76 MB   |
+| Long streamed answer         | 57 ms / 143 ms               | 24 / 6 runs/s           | 59 / 117 MB  |
+| One tool call                | 4.7 ms / 22.4 ms             | 395 / 43 runs/s         | 34 / 103 MB  |
+| Five tool calls at once      | 6.1 ms / 33.6 ms             | 239 / 29 runs/s         | 36 / 108 MB  |
+| Startup (import + agent)     | 77 ms / 1044 ms              |                         | 23 / 76 MB   |
+
+Grouping streamed text makes the long answer much cheaper: 56 ms with `text_chunks="delta"` (default), 7.6 ms with
+`10`, 4.5 ms with `"paragraph"` and 4.7 ms with `"message"`.
 
 ## Next steps
 

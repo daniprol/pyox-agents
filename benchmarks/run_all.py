@@ -6,8 +6,9 @@
 Steps:
 1. Start the fake OpenAI server (aimock) with the answers in fixtures.json.
 2. Startup time: hyperfine runs "import the library and create an agent" many times.
-3. For each scenario and library: `measure.py` in a new process (latency, CPU, throughput, memory).
-4. Write the tables in README.md, between the "results" markers.
+3. Each library on each scenario: `measure.py` in a new process (latency, CPU, throughput, memory).
+4. pyox-agents with each `text_chunks` mode on the long streamed answer, the same way.
+5. Write the tables in README.md, between the "results" and "text-chunks" markers.
 """
 
 import argparse
@@ -23,15 +24,15 @@ import time
 from importlib.metadata import version
 from pathlib import Path
 
-from agents import LIBRARIES
+from agents import LIBRARIES, TEXT_CHUNKS
 from measure import SCENARIOS
 
 HERE = Path(__file__).parent
 PORT = 4010
 BASE_URL = f"http://127.0.0.1:{PORT}/v1"
 AIMOCK = "@copilotkit/aimock@1.46.0"
-# `-c 4`: about one token (~4 characters) per streamed chunk, like a real model.
 PACKAGES = {"pyox-agents": "pyox-agents", "pydantic-ai": "pydantic-ai-slim"}  # library -> installed package
+# `-c 4`: about one token (~4 characters) per streamed chunk, like a real model.
 MOCK_SERVER = ["npx", "--yes", f"--package={AIMOCK}", "llmock", "-f", "fixtures.json", "-p", str(PORT), "-c", "4"]
 
 
@@ -71,15 +72,15 @@ def measure_startup() -> dict[str, dict[str, float]]:
     }
 
 
-def measure(library: str, scenario: str, runs: int, concurrency: int) -> dict:
-    command = [sys.executable, "measure.py", library, scenario, "--base-url", BASE_URL]
+def measure(agent: str, scenario: str, runs: int, concurrency: int) -> dict:
+    command = [sys.executable, "measure.py", agent, scenario, "--base-url", BASE_URL]
     command += ["--runs", str(runs), "--concurrency", str(concurrency)]
-    print(f"Measuring {library} / {scenario}...", flush=True)
-    output = subprocess.run(command, cwd=HERE, check=True, capture_output=True, text=True).stdout
+    print(f"Measuring {agent} / {scenario}...", flush=True)
+    output = subprocess.run(command, cwd=HERE, check=True, stdout=subprocess.PIPE, text=True).stdout
     return json.loads(output)
 
 
-def results_markdown(startup: dict[str, dict[str, float]], results: list[dict], runs: int, concurrency: int) -> str:
+def libraries_markdown(startup: dict[str, dict[str, float]], results: list[dict], runs: int, concurrency: int) -> str:
     versions = ", ".join(f"{library} {version(package)}" for library, package in PACKAGES.items())
     lines = [
         f"Python {platform.python_version()}, {versions}, {platform.system()} {platform.machine()}"
@@ -90,22 +91,28 @@ def results_markdown(startup: dict[str, dict[str, float]], results: list[dict], 
     ]
     for library in LIBRARIES:
         lines.append(f"| {library} | {startup[library]['time_ms']:.0f} ms | {startup[library]['memory_mb']:.0f} MB |")
-    lines += [
-        "",
-        "| Scenario | Library | Latency p50 | Latency p95 | CPU per run | Throughput | Peak memory |",
-        "|---|---|--:|--:|--:|--:|--:|",
-    ]
-    for r in results:
-        lines.append(
-            f"| {r['scenario']} | {r['library']} | {r['latency_p50_ms']:.1f} ms | {r['latency_p95_ms']:.1f} ms"
-            f" | {r['cpu_ms_per_run']:.1f} ms | {r['runs_per_second']:.0f} runs/s | {r['memory_peak_mb']:.0f} MB |"
-        )
+    lines += ["", *results_table("Scenario", "Library", results)]
     return "\n".join(lines)
 
 
-def write_into_readme(markdown: str) -> None:
+def results_table(first_column: str, second_column: str, results: list[dict]) -> list[str]:
+    lines = [
+        f"| {first_column} | {second_column} | First text | Latency p50 | Latency p95 | CPU per run | Throughput"
+        " | Failed | Peak memory |",
+        "|---|---|--:|--:|--:|--:|--:|--:|--:|",
+    ]
+    for r in results:
+        lines.append(
+            f"| {r['scenario']} | {r['agent']} | {r['first_text_p50_ms']:.1f} ms | {r['latency_p50_ms']:.1f} ms"
+            f" | {r['latency_p95_ms']:.1f} ms | {r['cpu_ms_per_run']:.1f} ms | {r['runs_per_second']:.0f} runs/s"
+            f" | {r['failed_runs']} | {r['memory_peak_mb']:.0f} MB |"
+        )
+    return lines
+
+
+def write_into_readme(section: str, markdown: str) -> None:
     readme = HERE / "README.md"
-    start, end = "<!-- results:start -->", "<!-- results:end -->"
+    start, end = f"<!-- {section}:start -->", f"<!-- {section}:end -->"
     before, rest = readme.read_text().split(start)
     after = rest.split(end)[1]
     readme.write_text(f"{before}{start}\n{markdown}\n{end}{after}")
@@ -129,16 +136,18 @@ def main() -> None:
     server = start_mock_server()
     try:
         startup = measure_startup()
-        results = [
+        libraries = [
             measure(library, scenario, args.runs, args.concurrency) for scenario in SCENARIOS for library in LIBRARIES
         ]
+        text_chunks = [measure(mode, "text", args.runs, args.concurrency) for mode in TEXT_CHUNKS]
     finally:
         stop_mock_server(server)
 
-    (HERE / "results.json").write_text(json.dumps({"startup": startup, "results": results}, indent=2) + "\n")
-    markdown = results_markdown(startup, results, args.runs, args.concurrency)
-    write_into_readme(markdown)
-    print(markdown)
+    all_results = {"startup": startup, "libraries": libraries, "text_chunks": text_chunks}
+    (HERE / "results.json").write_text(json.dumps(all_results, indent=2) + "\n")
+    write_into_readme("results", libraries_markdown(startup, libraries, args.runs, args.concurrency))
+    write_into_readme("text-chunks", "\n".join(results_table("Scenario", "Mode", text_chunks)))
+    print((HERE / "README.md").read_text())
 
 
 if __name__ == "__main__":

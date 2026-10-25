@@ -1,43 +1,74 @@
 # Benchmarks
 
 How much time and memory does the agent library itself cost? We compare pyox-agents with
-[pydantic-ai](https://ai.pydantic.dev) on the same tasks, against the same fake model.
+[pydantic-ai](https://ai.pydantic.dev) on the same tasks, against the same fake model, and then pyox-agents with
+each way of grouping streamed text (`text_chunks`).
 
-## Results
+## pyox-agents vs pydantic-ai
 
 <!-- results:start -->
 Python 3.13.17, pyox-agents 0.1.0, pydantic-ai 2.61.0, Linux x86_64 (Intel(R) Xeon(R) Processor @ 2.10GHz). 1000 runs per measurement, 100 at a time for throughput.
 
 | Library | Startup | Memory after startup |
 |---|--:|--:|
-| pyox-agents | 73 ms | 23 MB |
-| pydantic-ai | 1079 ms | 76 MB |
+| pyox-agents | 77 ms | 23 MB |
+| pydantic-ai | 1044 ms | 76 MB |
 
-| Scenario | Library | Latency p50 | Latency p95 | CPU per run | Throughput | Peak memory |
-|---|---|--:|--:|--:|--:|--:|
-| text | pyox-agents | 56.4 ms | 69.0 ms | 65.9 ms | 23 runs/s | 56 MB |
-| text | pydantic-ai | 137.6 ms | 174.5 ms | 137.8 ms | 7 runs/s | 117 MB |
-| tool | pyox-agents | 4.3 ms | 5.9 ms | 4.1 ms | 434 runs/s | 33 MB |
-| tool | pydantic-ai | 20.5 ms | 27.0 ms | 20.1 ms | 52 runs/s | 104 MB |
-| parallel_tools | pyox-agents | 5.4 ms | 7.1 ms | 6.0 ms | 272 runs/s | 35 MB |
-| parallel_tools | pydantic-ai | 31.3 ms | 42.8 ms | 31.3 ms | 31 runs/s | 107 MB |
+| Scenario | Library | First text | Latency p50 | Latency p95 | CPU per run | Throughput | Failed | Peak memory |
+|---|---|--:|--:|--:|--:|--:|--:|--:|
+| text | pyox-agents | 2.3 ms | 56.5 ms | 71.4 ms | 67.0 ms | 24 runs/s | 0 | 59 MB |
+| text | pydantic-ai | 7.2 ms | 143.3 ms | 195.1 ms | 145.7 ms | 6 runs/s | 0 | 117 MB |
+| tool | pyox-agents | 2.0 ms | 4.7 ms | 6.6 ms | 4.4 ms | 395 runs/s | 0 | 34 MB |
+| tool | pydantic-ai | 14.4 ms | 22.4 ms | 31.2 ms | 22.4 ms | 43 runs/s | 0 | 103 MB |
+| parallel_tools | pyox-agents | 3.5 ms | 6.1 ms | 8.1 ms | 6.7 ms | 239 runs/s | 0 | 36 MB |
+| parallel_tools | pydantic-ai | 25.4 ms | 33.6 ms | 45.5 ms | 33.7 ms | 29 runs/s | 0 | 108 MB |
 <!-- results:end -->
 
 - **Startup**: start Python, import the library and create an agent (one process each time).
+- **First text**: time until the first piece of text reaches our code, one run at a time.
 - **Latency**: time of one complete run (all requests, streaming and tool calls), one run at a time.
 - **CPU per run**: CPU time the process spends per run (all threads), one run at a time.
 - **Throughput**: completed runs per second with 100 runs at the same time, in one process.
+- **Failed**: runs that raised an error during the throughput phase (they are not counted as completed).
 - **Peak memory**: highest memory (RSS) of the process during the whole measurement.
 
 What the numbers say:
 
-- With tools, pyox-agents is 5 to 6 times faster and serves 8 times more runs per second, with a third of the memory.
-- Long streamed answers gain less (2.4 times faster): pyox-agents spends about 0.15 ms of CPU per streamed chunk,
-  probably in handing each `TextDelta` from Rust to Python. Batching small deltas is worth trying next.
-- pydantic-ai takes about 1 second to import; pyox-agents about 70 ms.
+- With tools, pyox-agents is 5 times faster and serves 8 to 9 times more runs per second, with a third of the
+  memory. Its first text also arrives about 7 times sooner.
+- Long streamed answers gain less (2.5 times faster) with the default `text_chunks="delta"`: each `TextDelta`
+  event costs pyox-agents about 0.13 ms of CPU, which adds up over ~450 events. See the streaming modes below.
+- pydantic-ai takes about 1 second to import; pyox-agents about 75 ms.
+- Under 100 concurrent streams, pyox-agents occasionally fails a run with `NetworkError` ("error sending request",
+  about 1 in 1,000 runs, not always reproducible). pydantic-ai's OpenAI client retries such errors twice by default,
+  so they would not show there.
 
 The fake model answers instantly, so these numbers are the overhead of each library. With a real model,
 which takes seconds per answer, latencies are dominated by the model; the CPU and memory savings remain.
+
+## Streaming modes (`text_chunks`)
+
+pyox-agents can group streamed text into fewer, bigger `TextDelta` events (see the main README). Here is what each
+mode costs on the long streamed answer (5 markdown paragraphs, ~450 chunks from the API):
+
+<!-- text-chunks:start -->
+| Scenario | Mode | First text | Latency p50 | Latency p95 | CPU per run | Throughput | Failed | Peak memory |
+|---|---|--:|--:|--:|--:|--:|--:|--:|
+| text | text_chunks='delta' | 2.0 ms | 56.0 ms | 67.8 ms | 65.7 ms | 24 runs/s | 1 | 58 MB |
+| text | text_chunks=10 | 1.6 ms | 7.6 ms | 9.9 ms | 8.8 ms | 211 runs/s | 0 | 56 MB |
+| text | text_chunks='paragraph' | 2.6 ms | 4.5 ms | 5.8 ms | 4.6 ms | 740 runs/s | 0 | 51 MB |
+| text | text_chunks='message' | 4.3 ms | 4.7 ms | 6.0 ms | 4.1 ms | 746 runs/s | 0 | 47 MB |
+<!-- text-chunks:end -->
+
+What the numbers say:
+
+- The cost is per event, not per character: grouping every 10 pieces makes the run 7 times faster and about 9 times
+  more runs fit per second.
+- `"paragraph"` is almost as cheap as `"message"` (5 events instead of 1).
+- "First text" is misleading here because the fake model sends everything at once. With a real model (tens of
+  milliseconds between pieces) the wait before the first `TextDelta` grows with the group size: about 10 pieces
+  with `10` (a fraction of a second), one paragraph with `"paragraph"` (can be seconds), the whole answer with
+  `"message"`. So `10` (or a similar number) is the safe choice for live UIs: most of the savings, almost no delay.
 
 ## What is measured
 
@@ -45,7 +76,7 @@ Each scenario is one agent run with streaming on, going through every event (as 
 
 | Scenario         | What the fake model does                                                        | Requests |
 |------------------|---------------------------------------------------------------------------------|---------:|
-| `text`           | Streams a long answer (~1,800 characters in ~450 chunks of 4 characters)        | 1        |
+| `text`           | Streams a long answer (5 paragraphs, ~1,800 characters in ~450 chunks)          | 1        |
 | `tool`           | Asks for one tool call, then answers after getting the result                  | 2        |
 | `parallel_tools` | Asks for five tool calls at once, then answers after getting the results      | 2        |
 
