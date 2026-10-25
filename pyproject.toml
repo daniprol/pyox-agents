@@ -21,16 +21,56 @@ python-source = "src"
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
 
 [dependency-groups]
-dev = ["maturin>=1.9", "pytest>=8", "ruff>=0.14", "ty>=0.0.1"]
+dev = [
+    "maturin>=1.9",
+    "prek>=0.5.7",
+    "pytest>=8",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.14",
+    "ty>=0.0.1",
+]
 
 [tool.ruff]
 line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # import sorting
+    "N",       # naming
+    "UP",      # modern syntax for Python 3.11+
+    "B",       # likely bugs
+    "A",       # shadowing builtins
+    "C4",      # comprehensions
+    "SIM",     # simplifications
+    "RET",     # return statements
+    "PIE",     # misc. clean-ups
+    "PTH",     # pathlib over os.path
+    "PT",      # pytest style
+    "ASYNC",   # asyncio pitfalls
+    "RUF",     # ruff-specific
+]
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["--strict-markers", "--strict-config"]
+
+[tool.coverage.run]
+source = ["pyox_agents"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]

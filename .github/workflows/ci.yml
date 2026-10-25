@@ -6,30 +6,60 @@ on:
   pull_request:
 
 jobs:
-  rust:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-
-  python:
+  checks:
+    name: Checks and tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run ty check
-      - run: uv run pytest
+          enable-cache: true
+      - run: uv sync --frozen
+      # The same hooks developers run on commit and on push (see prek.toml).
+      - name: Commit hooks (ruff, cargo fmt, file checks)
+        run: uv run --frozen prek run --all-files --show-diff-on-failure
+      - name: Push hooks (ty, clippy, cargo test, pytest)
+        run: uv run --frozen prek run --all-files --stage pre-push
+
+  coverage:
+    name: Coverage (Python and Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --frozen
+      # Build the Rust extension with coverage instrumentation, so the Python
+      # tests also measure which Rust lines they run.
+      - name: Run tests with coverage
+        run: |
+          eval "$(cargo llvm-cov show-env --sh)"
+          cargo llvm-cov clean --workspace
+          cargo test
+          uv run --frozen --no-sync maturin develop --uv
+          echo '### Python coverage' >> $GITHUB_STEP_SUMMARY
+          uv run --frozen --no-sync pytest --cov --cov-report=term --cov-report=xml --cov-report=markdown-append:$GITHUB_STEP_SUMMARY
+          cargo llvm-cov report --lcov --output-path rust-coverage.lcov
+          { echo '### Rust coverage'; echo '```text'; cargo llvm-cov report --summary-only; echo '```'; } >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.xml
+            rust-coverage.lcov

@@ -147,11 +147,32 @@ explaining the Rust-specific parts. Start with [`src/lib.rs`](src/lib.rs).
 ## Development
 
 ```bash
-uv run pytest                 # Python tests (against a local fake OpenAI server)
-uv run ruff check . && uv run ruff format .
-uv run ty check
-cargo test                    # Rust unit tests
-cargo clippy --all-targets && cargo fmt
+uv sync                       # build the Rust extension and install the dev tools
+uv run prek install           # install the git hooks (once)
+```
+
+Git hooks ([prek](https://prek.j178.dev), configured in [`prek.toml`](prek.toml)):
+
+| When       | What runs                                                         |
+|------------|-------------------------------------------------------------------|
+| `git commit` | `ruff check --fix`, `ruff format`, `cargo fmt`, basic file checks |
+| `git push`   | `ty check`, `cargo clippy`, `cargo test`, `pytest`              |
+
+Run them by hand with `uv run prek run --all-files` (add `--stage pre-push` for the push hooks).
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs both hook stages on Python 3.11 and 3.14, plus a
+coverage job. The coverage report (Python and Rust, including the Rust code exercised by the Python tests) is
+shown in the run summary and uploaded as an artifact.
+
+Tests talk to a real local HTTP server that imitates the OpenAI API ([`tests/fake_openai.py`](tests/fake_openai.py)),
+so there is no mocking. Build responses with the factories in [`tests/factories.py`](tests/factories.py)
+and create agents with the `make_agent` fixture:
+
+```python
+async def test_example(fake_openai, make_agent):
+    fake_openai.queue(tool_calls_response(tool_call("add", a=1, b=2)), text_response("3"))
+    result = await make_agent(tools=[add]).run("1 + 2?")
+    assert result.text == "3"
 ```
 
 ## Next steps

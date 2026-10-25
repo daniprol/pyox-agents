@@ -9,3 +9,6 @@ dist/
 
 # Rust
 target/
+coverage.xml
+.coverage
+rust-coverage.lcov

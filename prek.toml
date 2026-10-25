@@ -1,0 +1,38 @@
+# Git hooks, run by prek (https://prek.j178.dev). Install once with:
+#     uv run prek install
+#
+# - On every commit: fast checks and auto-fixes on the staged files.
+# - On every push:   slower checks on the whole project (types, lints, tests).
+# CI runs the same hooks, plus the tests with a coverage report.
+#:schema https://www.schemastore.org/prek.json
+
+default_install_hook_types = ["pre-commit", "pre-push"]
+default_stages = ["pre-commit"]
+
+[[repos]]
+repo = "builtin"
+hooks = [
+    { id = "trailing-whitespace" },
+    { id = "end-of-file-fixer" },
+    { id = "check-yaml" },
+    { id = "check-toml" },
+    { id = "check-merge-conflict" },
+    { id = "check-added-large-files" },
+]
+
+# Local hooks use the tool versions pinned in uv.lock, so hooks, CI and your
+# editor always agree.
+[[repos]]
+repo = "local"
+hooks = [
+    # On commit
+    { id = "ruff-check", name = "ruff check", entry = "uv run --frozen ruff check --fix", language = "system", types = ["python"] },
+    { id = "ruff-format", name = "ruff format", entry = "uv run --frozen ruff format", language = "system", types = ["python"] },
+    { id = "cargo-fmt", name = "cargo fmt", entry = "cargo fmt --all --", language = "system", types = ["rust"] },
+
+    # On push
+    { id = "ty", name = "ty check", entry = "uv run --frozen ty check", language = "system", types_or = ["python", "pyi"], pass_filenames = false, stages = ["pre-push"] },
+    { id = "cargo-clippy", name = "cargo clippy", entry = "cargo clippy --all-targets -- -D warnings", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
+    { id = "cargo-test", name = "cargo test", entry = "cargo test", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
+    { id = "pytest", name = "pytest", entry = "uv run --frozen pytest", language = "system", types_or = ["python", "rust"], pass_filenames = false, stages = ["pre-push"] },
+]
