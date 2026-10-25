@@ -1,0 +1,8 @@
+[project]
+name = "pyox-benchmarks"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = ["pyox-agents", "pydantic-ai-slim[openai]"]
+
+[tool.uv.sources]
+pyox-agents = { path = "..", editable = true }

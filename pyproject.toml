@@ -64,6 +64,9 @@ select = [
     "RUF",     # ruff-specific
 ]
 
+[tool.ty.src]
+exclude = ["benchmarks"]  # a separate project with its own dependencies (see benchmarks/README.md)
+
 [tool.ruff.format]
 docstring-code-format = true
 

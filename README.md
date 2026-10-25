@@ -194,8 +194,19 @@ async def test_example(fake_openai, make_agent):
     assert result.text == "3"
 ```
 
+## Benchmarks
+
+Compared with [pydantic-ai](https://ai.pydantic.dev) against the same fake OpenAI server, which answers instantly,
+so this is the overhead of each library (details and how to run them in [`benchmarks/`](benchmarks)):
+
+| Scenario                     | Latency (pyox / pydantic-ai) | Throughput, 100 at once | Peak memory  |
+|------------------------------|-----------------------------:|------------------------:|-------------:|
+| Long streamed answer         | 56 ms / 138 ms               | 23 / 7 runs/s           | 56 / 117 MB  |
+| One tool call                | 4.3 ms / 20.5 ms             | 434 / 52 runs/s         | 33 / 104 MB  |
+| Five tool calls at once      | 5.4 ms / 31.3 ms             | 272 / 31 runs/s         | 35 / 107 MB  |
+| Startup (import + agent)     | 73 ms / 1079 ms              |                         | 23 / 76 MB   |
+
 ## Next steps
 
 - Hooks (before/after tool calls and model requests) that can modify arguments and history.
 - More APIs and providers (Responses, Anthropic, Gemini), each as a new adapter next to `openai_chat.rs`.
-- Benchmarks against pure-Python agent libraries.
