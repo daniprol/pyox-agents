@@ -7,7 +7,7 @@ import fast_history
 from pyox_agents import Agent
 
 # Once, at startup: the store owns the database connection pool.
-store = fast_history.sqlite_history("sqlite://chats.db")
+store = fast_history.sqlite_history("sqlite://chats_sqlx.db")
 agent = Agent(model="gpt-5-mini", prompt="Be brief.", history_store=store)
 
 

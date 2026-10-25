@@ -32,6 +32,7 @@ fast-history = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.21",  # for examples/python_history.py
     "fast-history",
     "fast-tools",
     "maturin>=1.9",
@@ -40,6 +41,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.14",
+    "sqlalchemy[asyncio]>=2.0",  # for examples/python_history.py
     "ty>=0.0.1",
 ]
 

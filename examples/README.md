@@ -26,14 +26,16 @@ uv run examples/rust_tools.py
 Uses `count_words` and `most_common_words` from [`rust_tool_package`](rust_tool_package),
 a separate Rust package. See its README to write your own.
 
-## 4. Conversations stored by a Rust history store
+## 4. Conversations stored in a database
 
 ```bash
-uv run examples/rust_history.py       # run it twice: the agent remembers
+uv run examples/python_history.py     # a Python store using the SQLAlchemy ORM
+uv run examples/rust_history.py       # a Rust store using sqlx: loading never touches Python
 ```
 
-Keeps conversations in SQLite (`chats.db`) with [`rust_history_store`](rust_history_store),
-a separate Rust package using sqlx. See its README to write your own.
+Run each twice: the second time, the agent remembers the first conversation. Both keep conversations in
+SQLite, one row per message. The Rust one comes from [`rust_history_store`](rust_history_store), a separate
+Rust package; see its README to write your own.
 
 ## Using another OpenAI-compatible server
 
