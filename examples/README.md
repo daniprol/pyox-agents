@@ -37,6 +37,14 @@ Run each twice: the second time, the agent remembers the first conversation. Bot
 SQLite, one row per message. The Rust one comes from [`rust_history_store`](rust_history_store), a separate
 Rust package; see its README to write your own.
 
+## 5. Images and PDFs
+
+```bash
+uv run examples/images_and_files.py path/to/some.pdf
+```
+
+Asks about a photo (by web address) and summarizes the PDF (sent inline).
+
 ## Using another OpenAI-compatible server
 
 ```bash

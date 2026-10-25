@@ -129,6 +129,21 @@ saved. Store errors are raised from the run (`HistoryError` when the store retur
 holding your connection pool (sqlx, diesel, SeaORM...). The agent calls it directly in Rust, so loading never
 goes through Python. See [`examples/rust_history_store`](examples/rust_history_store) for a complete SQLite store.
 
+## Images and files
+
+A prompt can be a list of text, images and files (such as PDFs). Paths and bytes are sent inline (base64); a web
+address is sent as is.
+
+```python
+from pyox_agents import file, image
+
+await agent.run(["What is in this picture?", image("cat.png")])
+await agent.run(["Summarize this report", file("report.pdf")])
+```
+
+They stay in the history as parts of the user message: `{"type": "image", "url": ...}` and
+`{"type": "file", "url": ..., "filename": ...}`.
+
 ## Tools
 
 **Python tools.** Decorate a function (sync or async) with `@tool`. The JSON schema comes from the type hints,
@@ -360,5 +375,6 @@ Grouping streamed text makes the long answer much cheaper: 56 ms with `text_chun
 
 ## Next steps
 
+- Let tools return images (e.g. a screenshot tool), as pi does.
 - More APIs and providers (Responses, Anthropic, Gemini), each as a new adapter next to `openai_chat.rs`.
 - Give Rust tools the run context too (`conversation_id`, `turn`), if a use case needs it.

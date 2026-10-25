@@ -5,6 +5,7 @@ and out:
 
 ```python
 {"role": "user", "content": "Hi"}
+{"role": "user", "content": [{"type": "text", "text": "What is this?"}, {"type": "image", "url": "https://..."}]}
 {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "name": "add", "arguments": {"a": 1}}]}
 {"role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3", "is_error": False}
 ```

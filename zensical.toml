@@ -13,6 +13,7 @@ nav = [
   { "Get started" = "index.md" },
   { "Streaming" = "streaming.md" },
   { "Tools" = "tools.md" },
+  { "Images and files" = "images-and-files.md" },
   { "History" = "history.md" },
   { "Hooks" = "hooks.md" },
   { "Client and errors" = "client.md" },

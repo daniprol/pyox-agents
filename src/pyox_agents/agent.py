@@ -5,7 +5,7 @@ from typing import Any, Literal, TypeGuard
 
 from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
 from pyox_agents.hooks import Hooks
-from pyox_agents.messages import History, HistoryStore, LoadHistory
+from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
 from pyox_agents.tools import Tool, ToolLike, tool
 
 TextChunks = Literal["delta", "paragraph", "message"] | int
@@ -70,7 +70,7 @@ class Agent:
 
     def execute(
         self,
-        prompt: str | None = None,
+        prompt: Prompt | None = None,
         *,
         history: History | None = None,
         conversation_id: str | None = None,
@@ -78,6 +78,8 @@ class Agent:
         deps: Any = None,
     ) -> Run:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
+
+        `prompt` is text, or a list of text, images and files: `["What is this?", image("cat.png")]`.
 
         To continue a conversation, either pass `history` (e.g. `RunFinished.messages` of a
         previous run, or its `messages_json()`), or a `conversation_id` to load it from the
@@ -91,7 +93,7 @@ class Agent:
 
     async def run(
         self,
-        prompt: str | None = None,
+        prompt: Prompt | None = None,
         *,
         history: History | None = None,
         conversation_id: str | None = None,

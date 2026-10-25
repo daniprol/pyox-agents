@@ -8,9 +8,32 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 
+class TextPart(TypedDict):
+    type: Literal["text"]
+    text: str
+
+
+class ImagePart(TypedDict):
+    type: Literal["image"]
+    url: str  # a web address, or a `data:` URL with the image bytes
+
+
+class FilePart(TypedDict):
+    type: Literal["file"]
+    url: str  # normally a `data:` URL with the file bytes
+    filename: str
+
+
+ContentPart = TextPart | ImagePart | FilePart
+"""One part of a user message. Make images and files with `image(...)` and `file(...)`."""
+
+Prompt = str | Sequence[str | ContentPart]
+"""Text, or a list of text, images and files: `["What is this?", image("cat.png")]`."""
+
+
 class UserMessage(TypedDict):
     role: Literal["user"]
-    content: str
+    content: str | list[ContentPart]
 
 
 class ToolCall(TypedDict):

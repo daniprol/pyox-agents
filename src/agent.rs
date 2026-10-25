@@ -41,7 +41,7 @@ use crate::events::{AgentEvent, RunFinished, ToolFinished, ToolStarted};
 use crate::history_store::{HistoryStore, messages_from_python};
 use crate::hooks::AgentHooks;
 use crate::json_convert::python_to_json;
-use crate::messages::{Message, TokenUsage, ToolCall};
+use crate::messages::{Message, TokenUsage, ToolCall, UserContent, prompt_from_python};
 use crate::openai_chat::{build_request_body, stream_chat_completion};
 use crate::run_context::Context;
 use crate::text_chunks::{TextChunking, TextOutput};
@@ -135,7 +135,7 @@ impl Engine {
     fn execute(
         &self,
         py: Python<'_>,
-        prompt: Option<String>,
+        prompt: Option<Bound<'_, PyAny>>,
         history: Option<Bound<'_, PyAny>>,
         conversation_id: Option<String>,
         text_chunks: Option<Bound<'_, PyAny>>,
@@ -155,6 +155,7 @@ impl Engine {
                 ));
             }
         }
+        let prompt = prompt.as_ref().map(prompt_from_python).transpose()?;
         let history = match history {
             Some(history) => messages_from_python(&history)?,
             None => Vec::new(),
@@ -187,7 +188,7 @@ struct RunInputs {
     text_chunks: TextChunking,
     /// History given directly with `execute(history=...)`.
     history: Vec<Message>,
-    prompt: Option<String>,
+    prompt: Option<UserContent>,
     /// Set when the history is loaded from (and saved to) the history store.
     conversation_id: Option<String>,
     /// Given to tools and hooks as `ctx.deps`.

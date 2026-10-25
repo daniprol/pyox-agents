@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any, Generic, TypeVar, final
 
-from pyox_agents.messages import History, HistoryStore, LoadHistory, Message
+from pyox_agents.messages import History, HistoryStore, LoadHistory, Message, Prompt
 
 @final
 class Client:
@@ -119,7 +119,7 @@ class Engine:
     ) -> None: ...
     def execute(
         self,
-        prompt: str | None = None,
+        prompt: Prompt | None = None,
         *,
         history: History | None = None,
         conversation_id: str | None = None,

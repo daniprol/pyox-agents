@@ -61,6 +61,7 @@ print(result.text)
 
 - [Streaming](streaming.md): the events of a run and how to group streamed text.
 - [Tools](tools.md): Python functions, built-in Rust tools and your own Rust tools.
+- [Images and files](images-and-files.md): send pictures and PDFs in a prompt.
 - [History](history.md): continue conversations and store them in a database.
 - [Hooks](hooks.md): watch or change a run at fixed points.
 - [Client and errors](client.md): API keys, other servers, timeouts and retries.

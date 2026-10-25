@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 
 use crate::client::ClientSettings;
 use crate::errors::{ApiError, InvalidResponseError, error_for_http_failure, error_for_http_status};
-use crate::messages::{Message, TokenUsage, ToolCall};
+use crate::messages::{ContentPart, Message, TokenUsage, ToolCall, UserContent};
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
 use crate::tools::ToolDefinition;
@@ -73,7 +73,7 @@ fn chat_messages(system_prompt: &str, history: &[Message]) -> Vec<Value> {
 
     for message in history {
         let chat_message = match message {
-            Message::User { content } => json!({"role": "user", "content": content}),
+            Message::User { content } => json!({"role": "user", "content": user_content(content)}),
             Message::Assistant { content, tool_calls } if tool_calls.is_empty() => {
                 json!({"role": "assistant", "content": content})
             }
@@ -95,6 +95,25 @@ fn chat_messages(system_prompt: &str, history: &[Message]) -> Vec<Value> {
         chat_messages.push(chat_message);
     }
     chat_messages
+}
+
+/// Text stays a plain string; parts become the API's list of content parts.
+fn user_content(content: &UserContent) -> Value {
+    match content {
+        UserContent::Text(text) => json!(text),
+        UserContent::Parts(parts) => parts
+            .iter()
+            .map(|part| match part {
+                ContentPart::Text { text } => json!({"type": "text", "text": text}),
+                ContentPart::Image { url } => json!({"type": "image_url", "image_url": {"url": url}}),
+                // OpenAI wants the file bytes as a `data:` URL here; some compatible
+                // servers (e.g. OpenRouter) also accept a web address.
+                ContentPart::File { url, filename } => {
+                    json!({"type": "file", "file": {"file_data": url, "filename": filename}})
+                }
+            })
+            .collect(),
+    }
 }
 
 /// The API wants tool arguments as JSON text. Invalid arguments were stored
@@ -392,5 +411,30 @@ mod tests {
             json!({"role": "tool", "tool_call_id": "c", "content": "1"})
         );
         assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn images_and_files_become_content_parts() {
+        let history = vec![Message::User {
+            content: UserContent::Parts(vec![
+                ContentPart::Text { text: "Compare".into() },
+                ContentPart::Image {
+                    url: "https://example.com/cat.png".into(),
+                },
+                ContentPart::File {
+                    url: "data:application/pdf;base64,JVBERg==".into(),
+                    filename: "a.pdf".into(),
+                },
+            ]),
+        }];
+        let body = build_request_body("m", "", &history, &[], &Map::new());
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!([
+                {"type": "text", "text": "Compare"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}},
+                {"type": "file", "file": {"file_data": "data:application/pdf;base64,JVBERg==", "filename": "a.pdf"}},
+            ])
+        );
     }
 }
