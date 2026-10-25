@@ -18,7 +18,7 @@ python-packages = ["pyox_agents"]
 python-source = "src"
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "crates/pyox-tools/src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
 
 [tool.uv.workspace]
 members = [

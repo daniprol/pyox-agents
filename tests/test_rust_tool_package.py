@@ -15,7 +15,8 @@ def test_schema_and_description_come_from_rust() -> None:
     assert tool.description == "Find the most frequent words in a text, with how many times each appears."
     assert tool.parameters["required"] == ["text"]
     assert tool.parameters["properties"]["text"] == {"type": "string", "description": "The text to analyze."}
-    assert tool.invoke({"text": "b a b"}) == "b: 2\na: 1"
+    assert tool.invoke({"text": "b a b"}) == "b: 2\na: 1"  # callable from Python too
+    assert type(tool.__pyox_native_tool__).__name__ == "PyCapsule"
 
 
 async def test_agent_runs_rust_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
@@ -33,6 +34,8 @@ async def test_agent_runs_rust_tools(fake_openai: FakeOpenAI, make_agent: MakeAg
 
     finished = events_of_type(events, ToolFinished)
     assert [(event.result, event.is_error) for event in finished[:2]] == [("6", False), ("be: 2\nto: 2", False)]
+    # The engine calls the Rust function directly: a Python call would have
+    # wrapped the message in an exception name ("RuntimeError: ...").
     assert finished[2].is_error
-    assert "missing field `text`" in finished[2].result
+    assert finished[2].result.startswith("Invalid arguments: missing field `text`")
     assert fake_openai.requests[0].body["tools"][0]["function"]["description"] == "Count the words in a text."

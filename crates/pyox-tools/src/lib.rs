@@ -31,7 +31,10 @@
 //!
 //! To use it from Python, export it from a PyO3 module with [`add_tool`]:
 //! `add_tool::<CountWords>(module)?` makes `your_package.count_words`, which
-//! can be passed directly in `Agent(tools=[...])`.
+//! can be passed directly in `Agent(tools=[...])`. The agent then calls the
+//! Rust function directly, without going through Python (see [`native`]).
+
+pub mod native;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -88,10 +91,12 @@ fn parse_and_run<Tool: RustTool>(arguments: Value) -> Result<String, String> {
 }
 
 /// The Python object for a Rust tool. pyox-agents reads its `name`,
-/// `description` and `parameters`, and calls `invoke(arguments)`.
+/// `description` and `parameters`, then calls the Rust function directly
+/// through `__pyox_native_tool__`. `invoke(arguments)` lets Python call it too.
 #[pyclass(frozen, name = "RustTool")]
 pub struct PythonRustTool {
     definition: ToolDefinition,
+    native_tool: Py<pyo3::types::PyCapsule>,
 }
 
 #[pymethods]
@@ -123,17 +128,25 @@ impl PythonRustTool {
         py.detach(move || run(arguments)).map_err(PyRuntimeError::new_err)
     }
 
+    /// The capsule with the tool's native functions (see the `native` module).
+    #[getter]
+    fn __pyox_native_tool__(&self, py: Python<'_>) -> Py<pyo3::types::PyCapsule> {
+        self.native_tool.clone_ref(py)
+    }
+
     fn __repr__(&self) -> String {
         format!("RustTool({:?})", self.definition.name)
     }
 }
 
 /// Adds a tool to a PyO3 module, as an attribute named after the tool.
-pub fn add_tool<Tool: RustTool>(module: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn add_tool<Tool: RustTool + 'static>(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = module.py();
     let tool = PythonRustTool {
         definition: ToolDefinition::of::<Tool>(),
+        native_tool: native::capsule_for::<Tool>(py)?.unbind(),
     };
-    module.add(Tool::NAME, Py::new(module.py(), tool)?)
+    module.add(Tool::NAME, Py::new(py, tool)?)
 }
 
 #[cfg(test)]

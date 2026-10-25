@@ -115,6 +115,8 @@ import fast_tools
 agent = Agent(model="gpt-5-mini", tools=[fast_tools.count_words])
 ```
 
+The agent calls these Rust functions directly, like the built-in tools: no Python is involved when the model
+calls them (see [`crates/pyox-tools/src/native.rs`](crates/pyox-tools/src/native.rs) for how).
 See [`examples/rust_tool_package`](examples/rust_tool_package) for a complete package. Built-in tools use the same
 trait. Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
 as a tool too.
@@ -153,8 +155,9 @@ async for event in run  ◄─ events ── agent loop     request → stream �
                                        ├── openai_chat.rs   request body + chunk parsing
                                        ├── sse.rs           server-sent events decoding
                                        └── tools/           Python tools are awaited on
-                                                            Python's event loop; built-in
-                                                            tools run on a Rust thread
+                                                            Python's event loop; Rust tools
+                                                            (built-in or from your own
+                                                            package) run on a Rust thread
 ```
 
 The Rust code is written to be read by Python developers: small files, descriptive names and comments

@@ -6,9 +6,9 @@
 //!   with `name`, `description`, `parameters` and an async `invoke(arguments)`
 //!   method works. That includes Rust functions compiled in a separate PyO3
 //!   package and wrapped with `Tool(...)`.
-//!   Rust tools from a separately compiled package made with the `pyox-tools`
-//!   crate are Python objects of this kind too: their `invoke` is a plain
-//!   (not async) method.
+//! - **Native Rust tools** from a separately compiled package made with the
+//!   `pyox-tools` crate. They carry pointers to their Rust functions, which
+//!   the engine calls directly, without Python (see `pyox_tools::native`).
 //! - **Built-in Rust tools** (`BuiltinTool("read_file")`). They are compiled into
 //!   this library and run entirely in Rust, without touching Python.
 
@@ -20,6 +20,7 @@ use std::pin::Pin;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
+use pyox_tools::native::NativeTool;
 use serde_json::{Map, Value};
 
 pub use builtin::BuiltinTool;
@@ -41,6 +42,8 @@ pub enum ToolImplementation {
     Python(Py<PyAny>),
     /// A tool written in Rust inside this library.
     Builtin(&'static pyox_tools::ToolDefinition),
+    /// A tool written in Rust in a separately compiled package.
+    Native(NativeTool),
 }
 
 /// The result of running a tool, as sent back to the model.
@@ -71,17 +74,21 @@ impl ToolDefinition {
             });
         }
 
-        if !tool.hasattr("invoke")? {
-            return Err(PyValueError::new_err(format!(
-                "{} is not a tool. Use the @tool decorator, Tool(...) or BuiltinTool(...).",
-                tool.repr()?
-            )));
-        }
+        let implementation = match NativeTool::from_python(tool)? {
+            Some(native_tool) => ToolImplementation::Native(native_tool),
+            None if tool.hasattr("invoke")? => ToolImplementation::Python(tool.clone().unbind()),
+            None => {
+                return Err(PyValueError::new_err(format!(
+                    "{} is not a tool. Use the @tool decorator, Tool(...) or BuiltinTool(...).",
+                    tool.repr()?
+                )));
+            }
+        };
         Ok(ToolDefinition {
             name: tool.getattr("name")?.extract()?,
             description: tool.getattr("description")?.extract()?,
             parameters: python_to_json(&tool.getattr("parameters")?)?,
-            implementation: ToolImplementation::Python(tool.clone().unbind()),
+            implementation,
         })
     }
 
@@ -93,7 +100,16 @@ impl ToolDefinition {
         };
 
         match &self.implementation {
-            ToolImplementation::Builtin(definition) => run_builtin_tool(definition, arguments.clone()).await,
+            ToolImplementation::Builtin(definition) => {
+                let run = definition.run;
+                let arguments = Value::Object(arguments.clone());
+                run_rust_tool(&self.name, move || run(arguments)).await
+            }
+            ToolImplementation::Native(native_tool) => {
+                let native_tool = *native_tool;
+                let arguments = Value::Object(arguments.clone());
+                run_rust_tool(&self.name, move || native_tool.call(&arguments)).await
+            }
             ToolImplementation::Python(python_tool) => {
                 match run_python_tool(python_tool, arguments, python_task_locals).await {
                     Ok(content) => ToolOutput {
@@ -110,18 +126,15 @@ impl ToolDefinition {
 
 /// Runs a Rust tool on a thread meant for blocking work, so slow tools
 /// (file access, heavy computation) do not block the network tasks.
-async fn run_builtin_tool(
-    definition: &'static pyox_tools::ToolDefinition,
-    arguments: Map<String, Value>,
-) -> ToolOutput {
-    let result = tokio::task::spawn_blocking(move || (definition.run)(Value::Object(arguments))).await;
-    match result {
+/// No Python is involved.
+async fn run_rust_tool(tool_name: &str, run: impl FnOnce() -> Result<String, String> + Send + 'static) -> ToolOutput {
+    match tokio::task::spawn_blocking(run).await {
         Ok(Ok(content)) => ToolOutput {
             content,
             is_error: false,
         },
         Ok(Err(message)) => ToolOutput::error(message),
-        Err(_) => ToolOutput::error(format!("Tool {} crashed", definition.name)),
+        Err(_) => ToolOutput::error(format!("Tool {tool_name} crashed")),
     }
 }
 

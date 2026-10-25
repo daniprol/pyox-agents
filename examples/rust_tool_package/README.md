@@ -44,5 +44,8 @@ impl RustTool for CountWords {
 The argument schema is generated from the struct, so you don't write it by hand.
 Return `Err(message)` to tell the model something went wrong.
 
+When the model calls the tool, the agent runs your Rust function directly:
+no Python is involved, just like the built-in tools.
+
 Rebuild after changes with `uv pip install ./examples/rust_tool_package` again
 (inside this repo, `uv sync` does it for you).
