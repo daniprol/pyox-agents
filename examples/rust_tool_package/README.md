@@ -1,7 +1,7 @@
-# fast-tools: agent tools written in Rust
+# fast-tools: agent tools and hooks written in Rust
 
-A minimal Python package whose tools are written in Rust, compiled separately
-from pyox-agents. Copy this folder to start your own.
+A minimal Python package whose tools and hooks are written in Rust, compiled
+separately from pyox-agents. Copy this folder to start your own.
 
 ## Use it
 
@@ -13,7 +13,11 @@ uv pip install ./examples/rust_tool_package    # compile and install (needs Rust
 import fast_tools
 from pyox_agents import Agent
 
-agent = Agent(model="gpt-5-mini", tools=[fast_tools.count_words, fast_tools.most_common_words])
+agent = Agent(
+    model="gpt-5-mini",
+    tools=[fast_tools.count_words, fast_tools.most_common_words],
+    hooks=[fast_tools.guard],  # blocks huge texts, sends only recent messages
+)
 ```
 
 ## Add a tool
@@ -46,6 +50,24 @@ Return `Err(message)` to tell the model something went wrong.
 
 When the model calls the tool, the agent runs your Rust function directly:
 no Python is involved, just like the built-in tools.
+
+## Add hooks
+
+Hooks are closures the agent calls at fixed points of a run. Build them with
+`Hooks::new()`, one method per hook, and register them with `add_hooks`:
+
+```rust
+let guard = Hooks::new().before_tool_call(|_context, call| {
+    if call.name == "delete_file" {
+        return Err("Deleting files is not allowed".into()); // the model sees this
+    }
+    Ok(())
+});
+add_hooks(module, "guard", guard)?;
+```
+
+The closures get `&mut` access to what they may change (the messages, the
+tool call, the tool result). See the `pyox_tools::hooks` docs for the list.
 
 Rebuild after changes with `uv pip install ./examples/rust_tool_package` again
 (inside this repo, `uv sync` does it for you).

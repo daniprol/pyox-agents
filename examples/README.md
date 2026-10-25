@@ -24,7 +24,7 @@ uv run examples/rust_tools.py
 ```
 
 Uses `count_words` and `most_common_words` from [`rust_tool_package`](rust_tool_package),
-a separate Rust package. See its README to write your own.
+a separate Rust package, plus its `guard` hooks. See its README to write your own.
 
 ## 4. Conversations stored in a database
 

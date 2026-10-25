@@ -145,6 +145,25 @@ async def search(query: Annotated[str, "What to look for"], order: Literal["new"
 Results that are not `str` are sent to the model as JSON. If a tool raises, the model gets the error message
 (and `ToolFinished.is_error` is `True`); the run continues.
 
+**Run context.** A tool whose first parameter is typed `RunContext` gets the run's context; the model never sees
+that parameter. Pass what your tools need (a database pool, the current user...) as `deps`:
+
+```python
+from pyox_agents import RunContext
+
+
+@tool
+async def my_orders(ctx: RunContext[Database], status: str = "open") -> list[str]:
+    """List the user's orders."""
+    return await ctx.deps.orders(ctx.conversation_id, status)
+
+
+await agent.run("What did I order?", deps=database)
+```
+
+`ctx` has `deps`, `conversation_id`, `turn`, `input_tokens` and `output_tokens` (used so far), and, inside a
+tool, `tool_call_id` and `tool_name`. Hooks get the same `ctx`.
+
 **Built-in Rust tools.** Compiled into the library and run entirely in Rust:
 
 ```python
@@ -189,6 +208,58 @@ See [`examples/rust_tool_package`](examples/rust_tool_package) for a complete pa
 trait. Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
 as a tool too.
 
+## Hooks
+
+Hooks are functions the agent calls at fixed points of every run, to watch it or change what happens next.
+Return `None` to leave things as they are, or a new value to replace them:
+
+| Hook                                   | When                               | Return a new...                         |
+|----------------------------------------|------------------------------------|-----------------------------------------|
+| `before_run(ctx)`                      | a run starts                       | -                                       |
+| `before_model_request(ctx, messages)`  | before each model request          | list of messages, for this request only |
+| `after_model_response(ctx, message)`   | after each model response          | assistant message                       |
+| `before_tool_call(ctx, call)`          | before each tool call              | call (e.g. other `arguments`)           |
+| `after_tool_call(ctx, call, result)`   | after each tool call               | result (`{"content", "is_error"}`)      |
+| `after_run(ctx, result)`               | the run finished (`RunFinished`)   | -                                       |
+
+Raising in `before_tool_call` or `after_tool_call` blocks the call: the model gets the error as the tool result.
+Raising in any other hook stops the run. Changes made in `before_model_request` don't touch the history, so they
+are a safe place to trim long conversations or add reminders.
+
+```python
+from pyox_agents import Hooks, RunContext, RunFinished, ToolCall
+
+
+def no_deletes(ctx: RunContext, call: ToolCall) -> None:
+    if call["name"] == "delete_file":
+        raise PermissionError("Deleting files is not allowed")
+
+
+class Timer:  # any object with hook methods works too
+    def before_run(self, ctx: RunContext) -> None: ...
+    async def after_run(self, ctx: RunContext, result: RunFinished) -> None: ...
+
+
+agent = Agent(model="gpt-5-mini", tools=[...], hooks=[Hooks(before_tool_call=no_deletes), Timer()])
+```
+
+Hooks can be sync or async, and run in the order given: each one sees the changes of the previous ones.
+
+**Hooks in Rust.** Register closures with `Hooks` from [`pyox-tools`](crates/pyox-tools/src/hooks.rs); the agent
+calls them directly in Rust, without Python:
+
+```rust
+let guard = Hooks::new().before_tool_call(|_context, call| {
+    if call.name == "delete_file" {
+        return Err("Deleting files is not allowed".into()); // the model sees this
+    }
+    Ok(())
+});
+add_hooks(module, "guard", guard)?; // Python: Agent(hooks=[your_package.guard])
+```
+
+See `guard` in [`examples/rust_tool_package`](examples/rust_tool_package/src/lib.rs) for a complete example.
+
 ## Client
 
 ```python
@@ -214,7 +285,8 @@ closed) is sent again, up to `max_retries` times. Once the answer starts streami
 
 All exceptions inherit from `AgentError`:
 `ApiError` (with `AuthenticationError` and `RateLimitError`), `RequestTimeoutError`, `NetworkError`,
-`InvalidResponseError`, `MaxTurnsExceededError` (the `max_turns` limit, 20 by default) and `HistoryError`.
+`InvalidResponseError`, `MaxTurnsExceededError` (the `max_turns` limit, 20 by default), `HistoryError` and
+`HookError` (a Rust hook failed, or a hook returned something invalid).
 
 ## How it works
 
@@ -283,5 +355,5 @@ Grouping streamed text makes the long answer much cheaper: 56 ms with `text_chun
 
 ## Next steps
 
-- Hooks (before/after tool calls and model requests) that can modify arguments and history.
 - More APIs and providers (Responses, Anthropic, Gemini), each as a new adapter next to `openai_chat.rs`.
+- Give Rust tools the run context too (`conversation_id`, `turn`), if a use case needs it.

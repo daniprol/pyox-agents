@@ -1,7 +1,7 @@
 """Type stubs for the compiled Rust module (`src/*.rs`)."""
 
 from collections.abc import Mapping, Sequence
-from typing import Any, final
+from typing import Any, Generic, TypeVar, final
 
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Message
 
@@ -33,6 +33,27 @@ class BuiltinTool:
     def name(self) -> str: ...
     @property
     def description(self) -> str: ...
+
+DepsT = TypeVar("DepsT")
+
+@final
+class RunContext(Generic[DepsT]):
+    """The `ctx` given to tools that ask for it and to hooks."""
+
+    @property
+    def deps(self) -> DepsT: ...
+    @property
+    def conversation_id(self) -> str | None: ...
+    @property
+    def turn(self) -> int: ...
+    @property
+    def input_tokens(self) -> int: ...
+    @property
+    def output_tokens(self) -> int: ...
+    @property
+    def tool_call_id(self) -> str | None: ...
+    @property
+    def tool_name(self) -> str | None: ...
 
 @final
 class TextDelta:
@@ -94,6 +115,7 @@ class Engine:
         max_turns: int = 20,
         text_chunks: str | int | None = None,
         history_store: HistoryStore | LoadHistory | None = None,
+        hooks: Sequence[object] = (),
     ) -> None: ...
     def execute(
         self,
@@ -102,6 +124,7 @@ class Engine:
         history: History | None = None,
         conversation_id: str | None = None,
         text_chunks: str | int | None = None,
+        deps: Any = None,
     ) -> Run: ...
 
 class AgentError(Exception): ...
@@ -113,3 +136,4 @@ class NetworkError(AgentError): ...
 class InvalidResponseError(AgentError): ...
 class MaxTurnsExceededError(AgentError): ...
 class HistoryError(AgentError): ...
+class HookError(AgentError): ...

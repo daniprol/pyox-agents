@@ -40,6 +40,7 @@ pub struct ToolFinished {
 }
 
 /// The last event of a run.
+#[derive(Clone)]
 #[pyclass(frozen, module = "pyox_agents")]
 pub struct RunFinished {
     /// Text of the final assistant message.
@@ -125,7 +126,7 @@ impl RunFinished {
 }
 
 impl RunFinished {
-    fn added_messages(&self) -> &[Message] {
+    pub fn added_messages(&self) -> &[Message] {
         &self.messages[self.new_messages_start..]
     }
 }

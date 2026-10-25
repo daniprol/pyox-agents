@@ -14,7 +14,8 @@
 //! ├── NetworkError             could not connect / connection dropped
 //! ├── InvalidResponseError     the API sent something we could not understand
 //! ├── MaxTurnsExceededError    the agent hit its `max_turns` limit
-//! └── HistoryError             a history store failed to load or save
+//! ├── HistoryError             a history store failed to load or save
+//! └── HookError                a Rust hook failed, or a hook returned something invalid
 //! ```
 
 use pyo3::create_exception;
@@ -61,6 +62,12 @@ create_exception!(
     AgentError,
     "A history store failed to load or save a conversation."
 );
+create_exception!(
+    pyox_agents,
+    HookError,
+    AgentError,
+    "A Rust hook failed, or a hook returned something invalid."
+);
 
 /// Picks the right exception for an HTTP error status code.
 pub fn error_for_http_status(status_code: u16, response_body: &str) -> PyErr {
@@ -92,5 +99,6 @@ pub fn add_exceptions_to_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("InvalidResponseError", py.get_type::<InvalidResponseError>())?;
     module.add("MaxTurnsExceededError", py.get_type::<MaxTurnsExceededError>())?;
     module.add("HistoryError", py.get_type::<HistoryError>())?;
+    module.add("HookError", py.get_type::<HookError>())?;
     Ok(())
 }

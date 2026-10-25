@@ -8,12 +8,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, overload
 
+from pyox_agents._core import RunContext
+
 JsonSchema = dict[str, Any]
 
 
 class ToolLike(Protocol):
     """What the agent needs from a tool. `Tool` and Rust tools made with the
-    `pyox-tools` crate both fit; `invoke` may be sync or async."""
+    `pyox-tools` crate both fit; `invoke` may be sync or async. A tool with a
+    `takes_ctx = True` attribute is called as `invoke(arguments, ctx)`."""
 
     @property
     def name(self) -> str: ...
@@ -30,6 +33,7 @@ class Tool:
 
     `function` receives the arguments as keyword arguments. It can be sync or
     async, and may return a `str` or anything `json.dumps` accepts.
+    With `takes_ctx=True` it also gets the run's `RunContext` first.
     Set `run_in_thread=True` for slow sync functions (for example a heavy Rust
     function from a compiled package) so they don't block the event loop.
     """
@@ -39,13 +43,16 @@ class Tool:
     parameters: JsonSchema
     function: Callable[..., Any]
     run_in_thread: bool = False
+    takes_ctx: bool = False
 
-    async def invoke(self, arguments: dict[str, Any]) -> str:
-        """Called by the Rust agent loop with the arguments chosen by the model."""
+    async def invoke(self, arguments: dict[str, Any], ctx: RunContext | None = None) -> str:
+        """Called by the Rust agent loop with the arguments chosen by the model
+        (and the context, when `takes_ctx` is set)."""
+        positional = (ctx,) if self.takes_ctx else ()
         if self.run_in_thread:
-            result = await asyncio.to_thread(self.function, **arguments)
+            result = await asyncio.to_thread(self.function, *positional, **arguments)
         else:
-            result = self.function(**arguments)
+            result = self.function(*positional, **arguments)
             if inspect.isawaitable(result):
                 result = await result
         return result if isinstance(result, str) else json.dumps(result)
@@ -71,11 +78,18 @@ def tool(
 ) -> Tool | Callable[[Callable[..., Any]], Tool]:
     """Turn a function into a `Tool`, building the JSON schema from its signature.
 
-    Use `Annotated[str, "description"]` to describe a parameter.
+    Use `Annotated[str, "description"]` to describe a parameter. A first
+    parameter typed `RunContext` is not shown to the model: it receives the
+    run's context (`ctx.deps`, `ctx.conversation_id`, ...).
 
         @tool
         def get_weather(city: Annotated[str, "City name"], unit: Literal["C", "F"] = "C") -> str:
             '''Get the current weather in a city.'''
+
+        @tool
+        async def my_orders(ctx: RunContext[Database]) -> list[str]:
+            '''List the user's orders.'''
+            return await ctx.deps.orders(ctx.conversation_id)
     """
 
     def make_tool(function: Callable[..., Any]) -> Tool:
@@ -85,17 +99,27 @@ def tool(
             parameters=parameters_schema(function),
             function=function,
             run_in_thread=run_in_thread,
+            takes_ctx=takes_ctx(function),
         )
 
     return make_tool if function is None else make_tool(function)
 
 
+def takes_ctx(function: Callable[..., Any]) -> bool:
+    """Whether the first parameter of `function` is typed `RunContext`."""
+    parameters = list(inspect.signature(function).parameters.values())
+    # `RunContext[Deps]` is `RunContext` itself at runtime.
+    return bool(parameters) and get_type_hints(function).get(parameters[0].name) is RunContext
+
+
 def parameters_schema(function: Callable[..., Any]) -> JsonSchema:
-    """JSON schema of a function's parameters. Parameters without a default are required."""
+    """JSON schema of a function's parameters (without the `RunContext` one).
+    Parameters without a default are required."""
     type_hints = get_type_hints(function, include_extras=True)
     properties: dict[str, JsonSchema] = {}
     required: list[str] = []
-    for parameter in inspect.signature(function).parameters.values():
+    parameters = list(inspect.signature(function).parameters.values())
+    for parameter in parameters[1:] if takes_ctx(function) else parameters:
         properties[parameter.name] = type_schema(type_hints.get(parameter.name, Any))
         if parameter.default is inspect.Parameter.empty:
             required.append(parameter.name)

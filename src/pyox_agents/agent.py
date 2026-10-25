@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeGuard
 
 from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
+from pyox_agents.hooks import Hooks
 from pyox_agents.messages import History, HistoryStore, LoadHistory
 from pyox_agents.tools import Tool, ToolLike, tool
 
@@ -34,6 +35,8 @@ class Agent:
 
         agent = Agent(model="gpt-5-mini", history_store=store)
         await agent.run("Hi again", conversation_id="user-42")
+
+    `hooks` are called at fixed points of each run, to watch or change it (see `Hooks`).
     """
 
     def __init__(
@@ -47,6 +50,7 @@ class Agent:
         max_turns: int = 20,
         text_chunks: TextChunks = "delta",
         history_store: HistoryStore | LoadHistory | None = None,
+        hooks: Sequence[Hooks | object] = (),
     ) -> None:
         self.model = model
         self.prompt = prompt
@@ -61,6 +65,7 @@ class Agent:
             max_turns=max_turns,
             text_chunks=text_chunks,
             history_store=history_store,
+            hooks=list(hooks),
         )
 
     def execute(
@@ -70,22 +75,32 @@ class Agent:
         history: History | None = None,
         conversation_id: str | None = None,
         text_chunks: TextChunks | None = None,
+        deps: Any = None,
     ) -> Run:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
 
         To continue a conversation, either pass `history` (e.g. `RunFinished.messages` of a
         previous run, or its `messages_json()`), or a `conversation_id` to load it from the
         agent's `history_store`. `text_chunks` overrides the agent's setting for this run.
+        `deps` is anything tools and hooks need (a database pool, the user...): they get it
+        as `ctx.deps`.
         """
-        return self._engine.execute(prompt, history=history, conversation_id=conversation_id, text_chunks=text_chunks)
+        return self._engine.execute(
+            prompt, history=history, conversation_id=conversation_id, text_chunks=text_chunks, deps=deps
+        )
 
     async def run(
-        self, prompt: str | None = None, *, history: History | None = None, conversation_id: str | None = None
+        self,
+        prompt: str | None = None,
+        *,
+        history: History | None = None,
+        conversation_id: str | None = None,
+        deps: Any = None,
     ) -> RunFinished:
         """Run to completion and return the final event (with `.text` and `.messages`)."""
         # Nobody reads the text as it streams here, so group it per message: fewer events.
         async for event in self.execute(
-            prompt, history=history, conversation_id=conversation_id, text_chunks="message"
+            prompt, history=history, conversation_id=conversation_id, text_chunks="message", deps=deps
         ):
             if isinstance(event, RunFinished):
                 return event

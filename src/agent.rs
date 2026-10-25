@@ -8,12 +8,18 @@
 //!
 //! ```text
 //! load the conversation from the history store (if the run names one)
+//! before_run hooks
 //! repeat until the model stops calling tools (at most `max_turns` times):
+//!     before_model_request hooks
 //!     stream a model response, forwarding text to Python as it arrives
-//!     add the assistant message to the history
-//!     run the requested tools (concurrently) and add their results
+//!     after_model_response hooks, then add the assistant message to the history
+//!     run the requested tools (concurrently) and add their results;
+//!         each call goes through before_tool_call and after_tool_call hooks
+//! after_run hooks
 //! save the run's new messages to the history store (if any)
 //! ```
+//!
+//! Every step only touches the hooks when the agent has some (see `hooks`).
 
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
@@ -30,14 +36,16 @@ use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
 use crate::client::{Client, ClientSettings};
-use crate::errors::MaxTurnsExceededError;
+use crate::errors::{HookError, MaxTurnsExceededError};
 use crate::events::{AgentEvent, RunFinished, ToolFinished, ToolStarted};
 use crate::history_store::{HistoryStore, messages_from_python};
+use crate::hooks::AgentHooks;
 use crate::json_convert::python_to_json;
 use crate::messages::{Message, TokenUsage, ToolCall};
 use crate::openai_chat::{build_request_body, stream_chat_completion};
+use crate::run_context::Context;
 use crate::text_chunks::{TextChunking, TextOutput};
-use crate::tools::{ToolDefinition, ToolOutput};
+use crate::tools::{ToolDefinition, ToolResult, error_result};
 
 /// How many events can wait in the queue before the agent loop pauses.
 /// A limit keeps memory bounded if Python reads events slowly.
@@ -54,6 +62,7 @@ struct AgentConfig {
     /// How streamed text is grouped into `TextDelta` events (can be changed per run).
     text_chunks: TextChunking,
     history_store: Option<HistoryStore>,
+    hooks: AgentHooks,
 }
 
 /// Python: created by `pyox_agents.Agent`; most users never touch it directly.
@@ -67,7 +76,7 @@ impl Engine {
     #[new]
     #[pyo3(signature = (
         *, client, model, prompt = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
-        text_chunks = None, history_store = None,
+        text_chunks = None, history_store = None, hooks = Vec::new(),
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent(...)`
     fn new(
@@ -79,6 +88,7 @@ impl Engine {
         max_turns: u32,
         text_chunks: Option<Bound<'_, PyAny>>,
         history_store: Option<Bound<'_, PyAny>>,
+        hooks: Vec<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let tools = tools
             .iter()
@@ -111,6 +121,7 @@ impl Engine {
                     None => TextChunking::Delta,
                 },
                 history_store: history_store.as_ref().map(HistoryStore::from_python).transpose()?,
+                hooks: AgentHooks::from_python(&hooks)?,
             }),
         })
     }
@@ -119,13 +130,16 @@ impl Engine {
     ///
     /// The history comes from `history` (message dicts or JSON text), or is
     /// loaded from the agent's history store when `conversation_id` is given.
-    #[pyo3(signature = (prompt = None, *, history = None, conversation_id = None, text_chunks = None))]
+    /// `deps` is any object, given to tools and hooks as `ctx.deps`.
+    #[pyo3(signature = (prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None))]
     fn execute(
         &self,
+        py: Python<'_>,
         prompt: Option<String>,
         history: Option<Bound<'_, PyAny>>,
         conversation_id: Option<String>,
         text_chunks: Option<Bound<'_, PyAny>>,
+        deps: Option<Py<PyAny>>,
     ) -> PyResult<Run> {
         let text_chunks = match text_chunks {
             Some(value) => TextChunking::from_python(&value)?,
@@ -158,6 +172,7 @@ impl Engine {
                 prompt,
                 conversation_id,
                 text_chunks,
+                deps: deps.unwrap_or_else(|| py.None()),
                 event_sender,
             })),
             event_receiver: Arc::new(tokio::sync::Mutex::new(event_receiver)),
@@ -175,6 +190,8 @@ struct RunInputs {
     prompt: Option<String>,
     /// Set when the history is loaded from (and saved to) the history store.
     conversation_id: Option<String>,
+    /// Given to tools and hooks as `ctx.deps`.
+    deps: Py<PyAny>,
     event_sender: Sender<PyResult<AgentEvent>>,
 }
 
@@ -246,6 +263,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         prompt,
         conversation_id,
         text_chunks,
+        deps,
         event_sender,
     } = inputs;
     // The store and the conversation, when this run loads and saves one.
@@ -271,39 +289,64 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
     }
     let mut total_usage = TokenUsage::default();
     let mut text_output = TextOutput::new(text_chunks, event_sender.clone());
+    let hooks = &config.hooks;
+    // What tools and hooks see as `ctx`; updated as the run goes.
+    let mut context = Context {
+        run: pyox_tools::hooks::RunContext {
+            conversation_id: conversation_id.clone(),
+            ..Default::default()
+        },
+        deps: Arc::new(deps),
+    };
+    hooks.before_run(&context, &python_task_locals).await?;
 
     for turn in 1..=config.max_turns {
+        context.run.turn = turn;
+        // Hooks may change the messages of this one request; the history stays as it is.
+        let hooked_messages = hooks
+            .before_model_request(&context, &messages, &python_task_locals)
+            .await?;
         let request_body = build_request_body(
             &config.model,
             &config.system_prompt,
-            &messages,
+            hooked_messages.as_ref().unwrap_or(&messages),
             &config.tools,
             &config.model_parameters,
         );
         let assistant_turn = stream_chat_completion(&config.client, &request_body, &mut text_output).await?;
         text_output.finish().await; // the message ended: send any text still grouped
         total_usage.add(assistant_turn.usage);
+        context.run.input_tokens = total_usage.input_tokens;
+        context.run.output_tokens = total_usage.output_tokens;
 
-        let tool_calls = assistant_turn.tool_calls;
-        messages.push(Message::Assistant {
-            content: assistant_turn.text.clone(),
-            tool_calls: tool_calls.clone(),
-        });
+        let assistant_message = Message::Assistant {
+            content: assistant_turn.text,
+            tool_calls: assistant_turn.tool_calls,
+        };
+        let assistant_message = hooks
+            .after_model_response(&context, assistant_message, &python_task_locals)
+            .await?;
+        let Message::Assistant { content, tool_calls } = &assistant_message else {
+            unreachable!("after_model_response always gives an assistant message");
+        };
+        let (text, tool_calls) = (content.clone(), tool_calls.clone());
+        messages.push(assistant_message);
 
         if tool_calls.is_empty() {
-            if let Some((store, conversation_id)) = stored_conversation {
-                store
-                    .save(conversation_id, &messages[new_messages_start..], &python_task_locals)
-                    .await?;
-            }
             let finished = RunFinished {
-                text: assistant_turn.text,
+                text,
                 turns: turn,
                 input_tokens: total_usage.input_tokens,
                 output_tokens: total_usage.output_tokens,
                 messages,
                 new_messages_start,
             };
+            hooks.after_run(&context, &finished, &python_task_locals).await?;
+            if let Some((store, conversation_id)) = stored_conversation {
+                store
+                    .save(conversation_id, finished.added_messages(), &python_task_locals)
+                    .await?;
+            }
             let _ = event_sender.send(Ok(AgentEvent::RunFinished(finished))).await;
             return Ok(());
         }
@@ -321,7 +364,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         let outputs = join_all(
             tool_calls
                 .iter()
-                .map(|call| run_tool_call(&config, call, &python_task_locals)),
+                .map(|call| run_tool_call(&config, call, &context, &python_task_locals)),
         )
         .await;
 
@@ -348,12 +391,39 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
     )))
 }
 
-async fn run_tool_call(config: &AgentConfig, call: &ToolCall, python_task_locals: &TaskLocals) -> ToolOutput {
-    match config.tools.iter().find(|tool| tool.name == call.name) {
-        Some(tool) => tool.run(&call.arguments, python_task_locals).await,
-        None => ToolOutput {
-            content: format!("Unknown tool {:?}", call.name),
-            is_error: true,
-        },
+/// Runs one tool call, through the `before_tool_call` and `after_tool_call` hooks.
+/// A hook that fails blocks the call: the model gets the error as the result.
+async fn run_tool_call(
+    config: &AgentConfig,
+    call: &ToolCall,
+    context: &Context,
+    python_task_locals: &TaskLocals,
+) -> ToolResult {
+    let hooks = &config.hooks;
+    let call = match hooks.before_tool_call(context, call.clone(), python_task_locals).await {
+        Ok(call) => call,
+        Err(error) => return error_result(message_for_model(error)),
+    };
+
+    let result = match config.tools.iter().find(|tool| tool.name == call.name) {
+        Some(tool) => tool.run(&call, context, python_task_locals).await,
+        None => error_result(format!("Unknown tool {:?}", call.name)),
+    };
+
+    match hooks.after_tool_call(context, &call, result, python_task_locals).await {
+        Ok(result) => result,
+        Err(error) => error_result(message_for_model(error)),
     }
+}
+
+/// The text the model sees when a tool hook fails. A Rust hook's message is
+/// used as is; a Python exception includes its type, like tool errors do.
+fn message_for_model(error: PyErr) -> String {
+    Python::attach(|py| {
+        if error.is_instance_of::<HookError>(py) {
+            error.value(py).to_string()
+        } else {
+            error.to_string()
+        }
+    })
 }
