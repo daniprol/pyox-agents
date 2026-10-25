@@ -77,9 +77,7 @@ class Agent:
         previous run, or its `messages_json()`), or a `conversation_id` to load it from the
         agent's `history_store`. `text_chunks` overrides the agent's setting for this run.
         """
-        return self._engine.execute(
-            prompt, history=history, conversation_id=conversation_id, text_chunks=text_chunks
-        )
+        return self._engine.execute(prompt, history=history, conversation_id=conversation_id, text_chunks=text_chunks)
 
     async def run(
         self, prompt: str | None = None, *, history: History | None = None, conversation_id: str | None = None
