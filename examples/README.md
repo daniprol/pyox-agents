@@ -5,7 +5,7 @@ Run all commands from the root of the repository.
 ## 1. Setup (once)
 
 ```bash
-uv sync                               # builds pyox-agents and the example Rust tools
+uv sync                               # builds pyox-agents and the example Rust packages
 export OPENAI_API_KEY=sk-...
 ```
 
@@ -25,6 +25,15 @@ uv run examples/rust_tools.py
 
 Uses `count_words` and `most_common_words` from [`rust_tool_package`](rust_tool_package),
 a separate Rust package. See its README to write your own.
+
+## 4. Conversations stored by a Rust history store
+
+```bash
+uv run examples/rust_history.py       # run it twice: the agent remembers
+```
+
+Keeps conversations in SQLite (`chats.db`) with [`rust_history_store`](rust_history_store),
+a separate Rust package using sqlx. See its README to write your own.
 
 ## Using another OpenAI-compatible server
 

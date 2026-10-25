@@ -6,6 +6,7 @@ from pyox_agents._core import (
     AuthenticationError,
     BuiltinTool,
     Client,
+    HistoryError,
     InvalidResponseError,
     MaxTurnsExceededError,
     NetworkError,
@@ -18,6 +19,16 @@ from pyox_agents._core import (
     ToolStarted,
 )
 from pyox_agents.agent import Agent, TextChunks
+from pyox_agents.messages import (
+    AssistantMessage,
+    History,
+    HistoryStore,
+    LoadHistory,
+    Message,
+    ToolCall,
+    ToolMessage,
+    UserMessage,
+)
 from pyox_agents.tools import Tool, ToolLike, tool
 
 AgentEvent = TextDelta | ToolStarted | ToolFinished | RunFinished
@@ -28,11 +39,17 @@ __all__ = [
     "AgentError",
     "AgentEvent",
     "ApiError",
+    "AssistantMessage",
     "AuthenticationError",
     "BuiltinTool",
     "Client",
+    "History",
+    "HistoryError",
+    "HistoryStore",
     "InvalidResponseError",
+    "LoadHistory",
     "MaxTurnsExceededError",
+    "Message",
     "NetworkError",
     "RateLimitError",
     "RequestTimeoutError",
@@ -41,8 +58,11 @@ __all__ = [
     "TextChunks",
     "TextDelta",
     "Tool",
+    "ToolCall",
     "ToolFinished",
     "ToolLike",
+    "ToolMessage",
     "ToolStarted",
+    "UserMessage",
     "tool",
 ]

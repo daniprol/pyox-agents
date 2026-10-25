@@ -1,4 +1,7 @@
-//! Write pyox-agents tools in Rust.
+//! Extend pyox-agents in Rust: tools (this page) and history stores
+//! ([`history`]), both called by the agent without going through Python.
+//!
+//! ## Tools
 //!
 //! A tool is a struct describing its arguments, plus a `run` method:
 //!
@@ -34,7 +37,10 @@
 //! can be passed directly in `Agent(tools=[...])`. The agent then calls the
 //! Rust function directly, without going through Python (see [`native`]).
 
+pub mod history;
+pub mod messages;
 pub mod native;
+pub mod native_history;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;

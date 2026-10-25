@@ -52,7 +52,9 @@ pub struct RunFinished {
     pub input_tokens: u64,
     #[pyo3(get)]
     pub output_tokens: u64,
+    /// The whole conversation; the run added the messages from `new_messages_start` on.
     pub messages: Vec<Message>,
+    pub new_messages_start: usize,
 }
 
 #[pymethods]
@@ -94,12 +96,24 @@ impl RunFinished {
     /// Pass it as `history=` to continue the conversation.
     #[getter]
     fn messages<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        let list = PyList::empty(py);
-        for message in &self.messages {
-            let message_json = serde_json::to_value(message).expect("messages always serialize");
-            list.append(json_to_python(py, &message_json)?)?;
-        }
-        Ok(list)
+        messages_to_python(py, &self.messages)
+    }
+
+    /// Only the messages this run added: its prompt, the answers and the tool
+    /// results. Append these to your storage to save the conversation.
+    #[getter]
+    fn new_messages<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+        messages_to_python(py, self.added_messages())
+    }
+
+    /// `messages` as JSON text, made in Rust: store it without building dicts.
+    fn messages_json(&self) -> String {
+        serde_json::to_string(&self.messages).expect("messages always serialize")
+    }
+
+    /// `new_messages` as JSON text, made in Rust.
+    fn new_messages_json(&self) -> String {
+        serde_json::to_string(self.added_messages()).expect("messages always serialize")
     }
 
     fn __repr__(&self) -> String {
@@ -108,6 +122,21 @@ impl RunFinished {
             self.text, self.turns, self.input_tokens, self.output_tokens
         )
     }
+}
+
+impl RunFinished {
+    fn added_messages(&self) -> &[Message] {
+        &self.messages[self.new_messages_start..]
+    }
+}
+
+fn messages_to_python<'py>(py: Python<'py>, messages: &[Message]) -> PyResult<Bound<'py, PyList>> {
+    let list = PyList::empty(py);
+    for message in messages {
+        let message_json = serde_json::to_value(message).expect("messages always serialize");
+        list.append(json_to_python(py, &message_json)?)?;
+    }
+    Ok(list)
 }
 
 /// Any event of a run. The agent loop sends these through a channel; they are

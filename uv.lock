@@ -4,6 +4,7 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
+    "fast-history",
     "fast-tools",
     "pyox-agents",
 ]
@@ -144,6 +145,11 @@ wheels = [
 ]
 
 [[package]]
+name = "fast-history"
+version = "0.1.0"
+source = { editable = "examples/rust_history_store" }
+
+[[package]]
 name = "fast-tools"
 version = "0.1.0"
 source = { editable = "examples/rust_tool_package" }
@@ -229,6 +235,7 @@ source = { editable = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "fast-history" },
     { name = "fast-tools" },
     { name = "maturin" },
     { name = "prek" },
@@ -243,6 +250,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fast-history", editable = "examples/rust_history_store" },
     { name = "fast-tools", editable = "examples/rust_tool_package" },
     { name = "maturin", specifier = ">=1.9" },
     { name = "prek", specifier = ">=0.5.7" },

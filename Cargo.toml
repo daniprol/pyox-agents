@@ -19,4 +19,4 @@ pyox-tools = { path = "crates/pyox-tools" }
 schemars = "1.2"
 
 [workspace]
-members = [".", "crates/pyox-tools", "examples/rust_tool_package"]
+members = [".", "crates/pyox-tools", "examples/rust_tool_package", "examples/rust_history_store"]

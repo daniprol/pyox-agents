@@ -87,7 +87,7 @@ def test_invalid_configuration(client: Client) -> None:
     with pytest.raises(ValueError, match="Two tools"):
         Agent(model="m", client=client, tools=[BuiltinTool("read_file"), BuiltinTool("read_file")])
     with pytest.raises(ValueError, match="Invalid history"):
-        Agent(model="m", client=client).execute(history=[{"role": "robot"}])
+        Agent(model="m", client=client).execute(history=[{"role": "robot"}])  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="prompt"):
         Agent(model="m", client=client).execute()
     with pytest.raises(ValueError, match="header"):
