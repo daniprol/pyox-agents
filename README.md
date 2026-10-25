@@ -200,6 +200,7 @@ client = Client(
     headers={"X-Application": "support"},
     connect_timeout_seconds=10,
     request_timeout_seconds=600,  # covers the whole streamed answer
+    max_retries=2,  # resend requests that failed before any response
 )
 agent = Agent(client=client, model="gpt-5-mini", model_parameters={"temperature": 0.2})
 ```
