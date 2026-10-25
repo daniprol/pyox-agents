@@ -1,45 +1,64 @@
-//! Example of tools written in Rust and compiled as their own Python package.
+//! Example: agent tools written in Rust, compiled as their own Python package.
 //!
-//! Build and install into the current virtual environment with:
-//!     uv pip install ./examples/rust_tool_package     (or: maturin develop --release)
-//!
-//! Then in Python:
-//!     import fast_tools
-//!     from pyox_agents import Tool
-//!     count_words = Tool(name=..., description=..., parameters=..., function=fast_tools.count_words, run_in_thread=True)
+//! Each tool is a struct with its arguments and a `run` method. The JSON
+//! schema the model sees is generated from the struct, and doc comments
+//! become the descriptions, so nothing has to be repeated in Python.
 
 use pyo3::prelude::*;
+use pyox_tools::{RustTool, add_tool};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-/// Counts the words in a text.
-///
-/// `py.detach(...)` releases Python's global lock (the GIL) while Rust works,
-/// so other Python threads keep running during long computations.
-#[pyfunction]
-fn count_words(py: Python<'_>, text: String) -> usize {
-    py.detach(move || text.split_whitespace().count())
+/// Count the words in a text.
+#[derive(Deserialize, JsonSchema)]
+struct CountWords {
+    /// The text to count words in.
+    text: String,
 }
 
-/// Returns the `top` most frequent words with their counts.
-#[pyfunction]
-#[pyo3(signature = (text, top = 5))]
-fn most_common_words(py: Python<'_>, text: String, top: usize) -> Vec<(String, usize)> {
-    py.detach(move || {
+impl RustTool for CountWords {
+    const NAME: &'static str = "count_words";
+
+    fn run(self) -> Result<String, String> {
+        Ok(self.text.split_whitespace().count().to_string())
+    }
+}
+
+/// Find the most frequent words in a text, with how many times each appears.
+#[derive(Deserialize, JsonSchema)]
+struct MostCommonWords {
+    /// The text to analyze.
+    text: String,
+    /// How many words to return (default 5).
+    top: Option<usize>,
+}
+
+impl RustTool for MostCommonWords {
+    const NAME: &'static str = "most_common_words";
+
+    fn run(self) -> Result<String, String> {
         let mut counts = std::collections::HashMap::<String, usize>::new();
-        for word in text.split_whitespace() {
+        for word in self.text.split_whitespace() {
             *counts.entry(word.to_lowercase()).or_default() += 1;
         }
         let mut sorted_counts: Vec<(String, usize)> = counts.into_iter().collect();
         // Most frequent first; ties in alphabetical order so results are stable.
         sorted_counts.sort_by(|first, second| second.1.cmp(&first.1).then(first.0.cmp(&second.0)));
-        sorted_counts.truncate(top);
-        sorted_counts
-    })
+        sorted_counts.truncate(self.top.unwrap_or(5));
+
+        let lines: Vec<String> = sorted_counts
+            .iter()
+            .map(|(word, count)| format!("{word}: {count}"))
+            .collect();
+        Ok(lines.join("\n"))
+    }
 }
 
-/// The Python module: `import fast_tools`.
+/// The Python module: `import fast_tools` gives `fast_tools.count_words`
+/// and `fast_tools.most_common_words`, ready for `Agent(tools=[...])`.
 #[pymodule]
 fn fast_tools(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(count_words, module)?)?;
-    module.add_function(wrap_pyfunction!(most_common_words, module)?)?;
+    add_tool::<CountWords>(module)?;
+    add_tool::<MostCommonWords>(module)?;
     Ok(())
 }

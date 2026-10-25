@@ -1,87 +1,66 @@
 //! Tools written in Rust and compiled into the library.
 //!
-//! To add one:
-//! 1. Write a function `fn my_tool(arguments: &Map<String, Value>) -> Result<String, String>`.
-//!    Return `Ok(text)` for the result or `Err(message)` for an error the model will see.
-//! 2. Add a `BuiltinToolSpec` for it to `BUILTIN_TOOLS` below.
+//! Each tool is a struct holding its arguments plus a `run` method (the
+//! `RustTool` trait from the `pyox-tools` crate). The JSON schema the model
+//! sees is generated from the struct; doc comments become descriptions.
 //!
-//! Python then uses it with `BuiltinTool("my_tool")`.
+//! To add one: write the struct, implement `RustTool`, and add it to
+//! `BUILTIN_TOOLS`. Python then uses it with `BuiltinTool("its_name")`.
+
+use std::sync::LazyLock;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use serde_json::{Map, Value};
+use pyox_tools::{RustTool, ToolDefinition};
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-/// The description of a built-in tool.
-pub struct BuiltinToolSpec {
-    pub name: &'static str,
-    pub description: &'static str,
-    /// JSON schema of the arguments, written as JSON text so it is easy to read.
-    pub parameters_json: &'static str,
-    /// The Rust function that does the work.
-    pub function: fn(&Map<String, Value>) -> Result<String, String>,
+/// All built-in tools. Built once, on first use.
+pub static BUILTIN_TOOLS: LazyLock<Vec<ToolDefinition>> =
+    LazyLock::new(|| vec![ToolDefinition::of::<ReadFile>(), ToolDefinition::of::<WriteFile>()]);
+
+/// Read a UTF-8 text file and return its contents.
+#[derive(Deserialize, JsonSchema)]
+struct ReadFile {
+    /// Path of the file to read.
+    path: String,
 }
 
-impl BuiltinToolSpec {
-    pub fn parameters(&self) -> Value {
-        serde_json::from_str(self.parameters_json).expect("built-in tool schemas are valid JSON")
+impl RustTool for ReadFile {
+    const NAME: &'static str = "read_file";
+
+    fn run(self) -> Result<String, String> {
+        std::fs::read_to_string(&self.path).map_err(|error| format!("Could not read {}: {error}", self.path))
     }
 }
 
-/// All built-in tools.
-pub static BUILTIN_TOOLS: &[BuiltinToolSpec] = &[
-    BuiltinToolSpec {
-        name: "read_file",
-        description: "Read a UTF-8 text file and return its contents.",
-        parameters_json: r#"{
-            "type": "object",
-            "properties": {"path": {"type": "string", "description": "Path of the file to read"}},
-            "required": ["path"]
-        }"#,
-        function: read_file,
-    },
-    BuiltinToolSpec {
-        name: "write_file",
-        description: "Write text to a file, creating parent folders and replacing existing content.",
-        parameters_json: r#"{
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path of the file to write"},
-                "content": {"type": "string", "description": "Text to write"}
-            },
-            "required": ["path", "content"]
-        }"#,
-        function: write_file,
-    },
-];
-
-fn read_file(arguments: &Map<String, Value>) -> Result<String, String> {
-    let path = string_argument(arguments, "path")?;
-    std::fs::read_to_string(path).map_err(|error| format!("Could not read {path}: {error}"))
+/// Write text to a file, creating parent folders and replacing existing content.
+#[derive(Deserialize, JsonSchema)]
+struct WriteFile {
+    /// Path of the file to write.
+    path: String,
+    /// Text to write.
+    content: String,
 }
 
-fn write_file(arguments: &Map<String, Value>) -> Result<String, String> {
-    let path = string_argument(arguments, "path")?;
-    let content = string_argument(arguments, "content")?;
-    if let Some(parent_folder) = std::path::Path::new(path).parent() {
-        std::fs::create_dir_all(parent_folder)
-            .map_err(|error| format!("Could not create folder for {path}: {error}"))?;
+impl RustTool for WriteFile {
+    const NAME: &'static str = "write_file";
+
+    fn run(self) -> Result<String, String> {
+        let path = &self.path;
+        if let Some(parent_folder) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent_folder)
+                .map_err(|error| format!("Could not create folder for {path}: {error}"))?;
+        }
+        std::fs::write(path, &self.content).map_err(|error| format!("Could not write {path}: {error}"))?;
+        Ok(format!("Wrote {} bytes to {path}", self.content.len()))
     }
-    std::fs::write(path, content).map_err(|error| format!("Could not write {path}: {error}"))?;
-    Ok(format!("Wrote {} bytes to {path}", content.len()))
-}
-
-/// Gets a required string argument, or an error message for the model.
-fn string_argument<'a>(arguments: &'a Map<String, Value>, name: &str) -> Result<&'a str, String> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("Missing string argument {name:?}"))
 }
 
 /// Python: `BuiltinTool("read_file")`. Selects a built-in Rust tool by name.
 #[pyclass(frozen, module = "pyox_agents")]
 pub struct BuiltinTool {
-    pub spec: &'static BuiltinToolSpec,
+    pub definition: &'static ToolDefinition,
 }
 
 #[pymethods]
@@ -90,8 +69,8 @@ impl BuiltinTool {
     fn new(name: &str) -> PyResult<Self> {
         BUILTIN_TOOLS
             .iter()
-            .find(|spec| spec.name == name)
-            .map(|spec| BuiltinTool { spec })
+            .find(|definition| definition.name == name)
+            .map(|definition| BuiltinTool { definition })
             .ok_or_else(|| {
                 PyValueError::new_err(format!(
                     "Unknown built-in tool {name:?}. Available: {:?}",
@@ -103,45 +82,50 @@ impl BuiltinTool {
     /// Names of all built-in tools.
     #[staticmethod]
     fn available() -> Vec<&'static str> {
-        BUILTIN_TOOLS.iter().map(|spec| spec.name).collect()
+        BUILTIN_TOOLS.iter().map(|definition| definition.name).collect()
     }
 
     #[getter]
     fn name(&self) -> &'static str {
-        self.spec.name
+        self.definition.name
     }
 
     #[getter]
     fn description(&self) -> &'static str {
-        self.spec.description
+        &self.definition.description
     }
 
     fn __repr__(&self) -> String {
-        format!("BuiltinTool({:?})", self.spec.name)
+        format!("BuiltinTool({:?})", self.definition.name)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
-    fn every_schema_is_valid_json() {
-        for spec in BUILTIN_TOOLS {
-            assert!(spec.parameters().is_object(), "{}", spec.name);
-        }
+    fn schemas_come_from_the_structs() {
+        let write_file = BUILTIN_TOOLS.iter().find(|tool| tool.name == "write_file").unwrap();
+        assert_eq!(write_file.parameters["required"], json!(["path", "content"]));
+        assert_eq!(
+            write_file.parameters["properties"]["content"]["description"],
+            json!("Text to write.")
+        );
     }
 
     #[test]
     fn write_then_read_a_file() {
         let path = std::env::temp_dir().join("pyox_agents_test/hello.txt");
-        let path = path.to_str().unwrap();
-        let mut arguments = Map::new();
-        arguments.insert("path".into(), path.into());
-        arguments.insert("content".into(), "hola".into());
+        let path = path.to_str().unwrap().to_string();
 
-        assert!(write_file(&arguments).is_ok());
-        assert_eq!(read_file(&arguments).unwrap(), "hola");
-        assert!(read_file(&Map::new()).unwrap_err().contains("path"));
+        let written = WriteFile {
+            path: path.clone(),
+            content: "hola".into(),
+        }
+        .run();
+        assert!(written.is_ok());
+        assert_eq!(ReadFile { path }.run().unwrap(), "hola");
     }
 }

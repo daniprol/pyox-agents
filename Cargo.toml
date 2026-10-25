@@ -15,3 +15,8 @@ reqwest = { version = "0.13.5", default-features = false, features = ["json", "s
 futures = "0.3.34"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
+pyox-tools = { path = "crates/pyox-tools" }
+schemars = "1.2"
+
+[workspace]
+members = [".", "crates/pyox-tools", "examples/rust_tool_package"]

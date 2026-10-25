@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.11"
 
+[manifest]
+members = [
+    "fast-tools",
+    "pyox-agents",
+]
+
 [[package]]
 name = "colorama"
 version = "0.4.6"
@@ -138,6 +144,11 @@ wheels = [
 ]
 
 [[package]]
+name = "fast-tools"
+version = "0.1.0"
+source = { editable = "examples/rust_tool_package" }
+
+[[package]]
 name = "iniconfig"
 version = "2.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -218,6 +229,7 @@ source = { editable = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "fast-tools" },
     { name = "maturin" },
     { name = "prek" },
     { name = "pytest" },
@@ -231,6 +243,7 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fast-tools", editable = "examples/rust_tool_package" },
     { name = "maturin", specifier = ">=1.9" },
     { name = "prek", specifier = ">=0.5.7" },
     { name = "pytest", specifier = ">=8" },

@@ -28,6 +28,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Examples and the commands to run them are in [`examples/`](examples).
+
 Status: early. Only the OpenAI Chat Completions API (and compatible servers) is supported for now.
 
 ## Install (development)
@@ -85,23 +87,37 @@ agent = Agent(model="gpt-5-mini", tools=[BuiltinTool("read_file"), BuiltinTool("
 BuiltinTool.available()  # ['read_file', 'write_file']
 ```
 
-Add one in [`src/tools/builtin.rs`](src/tools/builtin.rs): write a function and add it to `BUILTIN_TOOLS`.
+Add one in [`src/tools/builtin.rs`](src/tools/builtin.rs).
 
-**Your own Rust tools, compiled separately.** Write a normal PyO3 package and wrap its functions with `Tool`.
-See [`examples/rust_tool_package`](examples/rust_tool_package) and [`examples/rust_tools.py`](examples/rust_tools.py):
+**Your own Rust tools, compiled separately.** Describe the arguments with a Rust struct and implement the
+`RustTool` trait from the [`pyox-tools`](crates/pyox-tools) crate. The JSON schema is generated from the struct
+(doc comments become descriptions), so nothing is repeated in Python:
+
+```rust
+/// Count the words in a text.
+#[derive(Deserialize, JsonSchema)]
+struct CountWords {
+    /// The text to count words in.
+    text: String,
+}
+
+impl RustTool for CountWords {
+    const NAME: &'static str = "count_words";
+
+    fn run(self) -> Result<String, String> {
+        Ok(self.text.split_whitespace().count().to_string())
+    }
+}
+```
 
 ```python
 import fast_tools
-from pyox_agents import Tool
-
-count_words = Tool(
-    name="count_words",
-    description="Count the words in a text.",
-    parameters={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
-    function=fast_tools.count_words,
-    run_in_thread=True,  # keep heavy work off the event loop
-)
+agent = Agent(model="gpt-5-mini", tools=[fast_tools.count_words])
 ```
+
+See [`examples/rust_tool_package`](examples/rust_tool_package) for a complete package. Built-in tools use the same
+trait. Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
+as a tool too.
 
 ## Client
 

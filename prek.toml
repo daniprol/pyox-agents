@@ -32,7 +32,7 @@ hooks = [
 
     # On push
     { id = "ty", name = "ty check", entry = "uv run --frozen ty check", language = "system", types_or = ["python", "pyi"], pass_filenames = false, stages = ["pre-push"] },
-    { id = "cargo-clippy", name = "cargo clippy", entry = "cargo clippy --all-targets -- -D warnings", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
-    { id = "cargo-test", name = "cargo test", entry = "scripts/cargo-test.sh", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
+    { id = "cargo-clippy", name = "cargo clippy", entry = "cargo clippy --workspace --all-targets -- -D warnings", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
+    { id = "cargo-test", name = "cargo test", entry = "scripts/cargo-test.sh --workspace", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
     { id = "pytest", name = "pytest", entry = "uv run --frozen pytest", language = "system", types_or = ["python", "rust"], pass_filenames = false, stages = ["pre-push"] },
 ]

@@ -116,3 +116,23 @@ def test_builtin_tool_lookup() -> None:
     assert BuiltinTool("read_file").name == "read_file"
     with pytest.raises(ValueError, match="Unknown built-in tool"):
         BuiltinTool("nope")
+
+
+class Greeter:
+    """Any object with name, description, parameters and a sync or async `invoke` is a tool."""
+
+    def __init__(self) -> None:
+        self.name = "greet"
+        self.description = "Greet someone."
+        self.parameters = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+
+    def invoke(self, arguments: dict[str, str]) -> str:
+        return f"Hello {arguments['name']}"
+
+
+async def test_custom_tool_objects_with_sync_invoke(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    fake_openai.queue(tool_calls_response(tool_call("greet", name="Dani")), text_response("."))
+
+    events = await collect_events(make_agent(tools=[Greeter()]).execute("Greet Dani"))
+
+    assert [event.result for event in events_of_type(events, ToolFinished)] == ["Hello Dani"]

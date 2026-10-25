@@ -4,11 +4,24 @@ import asyncio
 import inspect
 import json
 import types
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_type_hints, overload
+from typing import Annotated, Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, overload
 
 JsonSchema = dict[str, Any]
+
+
+class ToolLike(Protocol):
+    """What the agent needs from a tool. `Tool` and Rust tools made with the
+    `pyox-tools` crate both fit; `invoke` may be sync or async."""
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def description(self) -> str: ...
+    @property
+    def parameters(self) -> JsonSchema: ...
+    def invoke(self, arguments: dict[str, Any]) -> str | Awaitable[str]: ...
 
 
 @dataclass(frozen=True, slots=True)

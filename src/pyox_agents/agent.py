@@ -1,10 +1,10 @@
 """`Agent`: the main entry point."""
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, TypeGuard
 
 from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
-from pyox_agents.tools import Tool, tool
+from pyox_agents.tools import Tool, ToolLike, tool
 
 
 class Agent:
@@ -23,7 +23,7 @@ class Agent:
         *,
         model: str,
         prompt: str = "",
-        tools: Sequence[Tool | BuiltinTool | Callable[..., Any]] = (),
+        tools: Sequence[ToolLike | BuiltinTool | Callable[..., Any]] = (),
         client: Client | None = None,
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
@@ -31,9 +31,7 @@ class Agent:
         self.model = model
         self.prompt = prompt
         # Plain functions are accepted too: they are wrapped with `@tool`.
-        self.tools = [
-            item if isinstance(item, (Tool, BuiltinTool)) or not callable(item) else tool(item) for item in tools
-        ]
+        self.tools = [tool(item) if _is_plain_function(item) else item for item in tools]
         self._engine = Engine(
             client=client or Client(),
             model=model,
@@ -58,3 +56,7 @@ class Agent:
             if isinstance(event, RunFinished):
                 return event
         raise RuntimeError("The run ended without a RunFinished event")
+
+
+def _is_plain_function(item: object) -> TypeGuard[Callable[..., Any]]:
+    return callable(item) and not isinstance(item, (Tool, BuiltinTool)) and not hasattr(item, "invoke")

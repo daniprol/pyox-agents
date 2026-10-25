@@ -18,7 +18,7 @@ from pyox_agents._core import (
     ToolStarted,
 )
 from pyox_agents.agent import Agent
-from pyox_agents.tools import Tool, tool
+from pyox_agents.tools import Tool, ToolLike, tool
 
 AgentEvent = TextDelta | ToolStarted | ToolFinished | RunFinished
 """Any event yielded while iterating over a run."""
@@ -41,6 +41,7 @@ __all__ = [
     "TextDelta",
     "Tool",
     "ToolFinished",
+    "ToolLike",
     "ToolStarted",
     "tool",
 ]

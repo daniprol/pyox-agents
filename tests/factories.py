@@ -24,7 +24,7 @@ def text_response(text: str, *, usage: dict[str, int] = DEFAULT_USAGE) -> Stream
     )
 
 
-def tool_call(name: str, **arguments: Any) -> tuple[str, dict[str, Any]]:
+def tool_call(name: str, /, **arguments: Any) -> tuple[str, dict[str, Any]]:
     """One requested tool call, for `tool_calls_response`."""
     return name, arguments
 
