@@ -84,7 +84,7 @@ def libraries_markdown(startup: dict[str, dict[str, float]], results: list[dict]
     versions = ", ".join(f"{library} {version(package)}" for library, package in PACKAGES.items())
     lines = [
         f"Python {platform.python_version()}, {versions}, {platform.system()} {platform.machine()}"
-        f" ({_cpu_name()}). {runs} runs per measurement, {concurrency} at a time for throughput.",
+        f" ({cpu_name()}). {runs} runs per measurement, {concurrency} at a time for throughput.",
         "",
         "| Library | Startup | Memory after startup |",
         "|---|--:|--:|",
@@ -118,7 +118,7 @@ def write_into_readme(section: str, markdown: str) -> None:
     readme.write_text(f"{before}{start}\n{markdown}\n{end}{after}")
 
 
-def _cpu_name() -> str:
+def cpu_name() -> str:
     cpuinfo = Path("/proc/cpuinfo")
     if cpuinfo.exists():
         for line in cpuinfo.read_text().splitlines():

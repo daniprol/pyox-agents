@@ -365,13 +365,20 @@ so this is the overhead of each library (details and how to run them in [`benchm
 
 | Scenario                     | Latency (pyox / pydantic-ai) | Throughput, 100 at once | Peak memory  |
 |------------------------------|-----------------------------:|------------------------:|-------------:|
-| Long streamed answer         | 57 ms / 143 ms               | 24 / 6 runs/s           | 59 / 117 MB  |
-| One tool call                | 4.7 ms / 22.4 ms             | 395 / 43 runs/s         | 34 / 103 MB  |
-| Five tool calls at once      | 6.1 ms / 33.6 ms             | 239 / 29 runs/s         | 36 / 108 MB  |
-| Startup (import + agent)     | 77 ms / 1044 ms              |                         | 23 / 76 MB   |
+| Long streamed answer         | 63 ms / 125 ms               | 21 / 7 runs/s           | 61 / 119 MB  |
+| One tool call                | 5.1 ms / 21.1 ms             | 354 / 47 runs/s         | 34 / 103 MB  |
+| Five tool calls at once      | 6.8 ms / 30.8 ms             | 217 / 30 runs/s         | 36 / 108 MB  |
+| Startup (import + agent)     | 83 ms / 1124 ms              |                         | 24 / 76 MB   |
 
-Grouping streamed text makes the long answer much cheaper: 56 ms with `text_chunks="delta"` (default), 7.6 ms with
-`10`, 4.5 ms with `"paragraph"` and 4.7 ms with `"message"`.
+Grouping streamed text makes the long answer much cheaper: 65 ms with `text_chunks="delta"` (default), 9 ms with
+`10`, 4.4 ms with `"paragraph"` and 4.9 ms with `"message"`.
+
+Behind a FastAPI streaming endpoint (one uvicorn process, 100 concurrent users, load from [k6](https://k6.io)):
+
+| Scenario             | Requests/s (pyox / pydantic-ai) | First byte p50     | Latency p99       | Server memory |
+|----------------------|--------------------------------:|-------------------:|------------------:|--------------:|
+| Long streamed answer | 24 / 5                          | 25 ms / 451 ms     | 6.7 s / 20.5 s    | 86 / 120 MB   |
+| One tool call        | 339 / 36                        | 102 ms / 1.5 s     | 0.63 s / 3.4 s    | 65 / 122 MB   |
 
 ## Next steps
 

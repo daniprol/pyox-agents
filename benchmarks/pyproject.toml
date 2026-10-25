@@ -2,7 +2,12 @@
 name = "pyox-benchmarks"
 version = "0.0.0"
 requires-python = ">=3.11"
-dependencies = ["pyox-agents", "pydantic-ai-slim[openai]"]
+dependencies = [
+    "pyox-agents",
+    "pydantic-ai-slim[openai]",
+    "fastapi>=0.162.0",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [tool.uv.sources]
 pyox-agents = { path = "..", editable = true }

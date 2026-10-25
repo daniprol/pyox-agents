@@ -23,7 +23,7 @@ import statistics
 import sys
 import time
 
-from agents import AGENTS, RunAgent, RunResult
+from agents import AGENTS, StreamText
 
 os.environ["PYDANTIC_AI_NO_BANNER"] = "1"  # pydantic-ai prints a banner on its first run
 
@@ -42,20 +42,29 @@ def peak_memory_mb() -> float:
     return peak / 1024 / 1024 if sys.platform == "darwin" else peak / 1024  # bytes on macOS, KiB on Linux
 
 
-async def run_checked(run: RunAgent, prompt: str, expected_start: str) -> RunResult:
-    """One run; fails loudly if the agent did not reach the expected final answer."""
-    result = await run(prompt)
-    if not result.text.startswith(expected_start):
-        raise RuntimeError(f"Unexpected answer: {result.text[:80]!r}")
-    return result
+async def run_checked(stream: StreamText, prompt: str, expected_start: str) -> float:
+    """One run, reading every piece of text. Returns the seconds until the first piece arrived.
+
+    Fails loudly if the agent did not reach the expected final answer.
+    """
+    start = time.perf_counter()
+    first_text_seconds = 0.0
+    answer = ""
+    async for text in stream(prompt):
+        if not answer:
+            first_text_seconds = time.perf_counter() - start
+        answer += text
+    if not answer.startswith(expected_start):
+        raise RuntimeError(f"Unexpected answer: {answer[:80]!r}")
+    return first_text_seconds
 
 
 async def measure(agent: str, scenario: str, base_url: str, runs: int, concurrency: int) -> dict:
     prompt, expected = SCENARIOS[scenario]
-    run = AGENTS[agent](base_url)
+    stream = AGENTS[agent](base_url)
 
     for _ in range(10):  # warm up connections and lazy imports
-        await run_checked(run, prompt, expected)
+        await run_checked(stream, prompt, expected)
 
     # 1. Sequential
     latencies_ms = []
@@ -63,9 +72,9 @@ async def measure(agent: str, scenario: str, base_url: str, runs: int, concurren
     cpu_start = time.process_time()
     for _ in range(runs):
         start = time.perf_counter()
-        result = await run_checked(run, prompt, expected)
+        first_text_seconds = await run_checked(stream, prompt, expected)
         latencies_ms.append((time.perf_counter() - start) * 1000)
-        first_text_ms.append(result.first_text_seconds * 1000)
+        first_text_ms.append(first_text_seconds * 1000)
     cpu_ms_per_run = (time.process_time() - cpu_start) * 1000 / runs
 
     # 2. Concurrent: `concurrency` runs at once, `runs` in total.
@@ -77,7 +86,7 @@ async def measure(agent: str, scenario: str, base_url: str, runs: int, concurren
         nonlocal failed_runs
         async with limit:
             try:
-                await run_checked(run, prompt, expected)
+                await run_checked(stream, prompt, expected)
             except Exception as error:
                 failed_runs += 1
                 print(f"Run failed: {error!r}", file=sys.stderr)

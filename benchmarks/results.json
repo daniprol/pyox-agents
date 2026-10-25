@@ -1,126 +1,126 @@
 {
   "startup": {
     "pyox-agents": {
-      "time_ms": 77.0620668666667,
-      "memory_mb": 23.475260416666668
+      "time_ms": 82.55035303333334,
+      "memory_mb": 24.211328125
     },
     "pydantic-ai": {
-      "time_ms": 1044.2792810333335,
-      "memory_mb": 75.59401041666666
+      "time_ms": 1124.0313991666667,
+      "memory_mb": 75.66223958333333
     }
   },
   "libraries": [
     {
       "agent": "pyox-agents",
       "scenario": "text",
-      "first_text_p50_ms": 2.315817500061712,
-      "latency_p50_ms": 56.53617549990031,
-      "latency_p95_ms": 71.35434674999033,
-      "cpu_ms_per_run": 66.991468225,
-      "runs_per_second": 24.16148131430182,
+      "first_text_p50_ms": 2.4608164999904147,
+      "latency_p50_ms": 63.25731250001354,
+      "latency_p95_ms": 84.80141090000188,
+      "cpu_ms_per_run": 74.205045538,
+      "runs_per_second": 20.673882303383802,
       "failed_runs": 0,
-      "memory_peak_mb": 59.23046875
+      "memory_peak_mb": 61.11328125
     },
     {
       "agent": "pydantic-ai",
       "scenario": "text",
-      "first_text_p50_ms": 7.239884499995242,
-      "latency_p50_ms": 143.3169155000087,
-      "latency_p95_ms": 195.06085365004537,
-      "cpu_ms_per_run": 145.725053931,
-      "runs_per_second": 6.29713096601634,
+      "first_text_p50_ms": 7.3337489999971694,
+      "latency_p50_ms": 124.4558490000145,
+      "latency_p95_ms": 153.47395035007594,
+      "cpu_ms_per_run": 122.568462424,
+      "runs_per_second": 6.674068868929746,
       "failed_runs": 0,
-      "memory_peak_mb": 117.203125
+      "memory_peak_mb": 119.234375
     },
     {
       "agent": "pyox-agents",
       "scenario": "tool",
-      "first_text_p50_ms": 2.044544499995027,
-      "latency_p50_ms": 4.717482499927428,
-      "latency_p95_ms": 6.554627549940051,
-      "cpu_ms_per_run": 4.401946655000001,
-      "runs_per_second": 395.2010554049756,
+      "first_text_p50_ms": 2.320457500104567,
+      "latency_p50_ms": 5.1052500001560475,
+      "latency_p95_ms": 8.26842159996204,
+      "cpu_ms_per_run": 4.804879016999999,
+      "runs_per_second": 354.4994764693141,
       "failed_runs": 0,
-      "memory_peak_mb": 33.61328125
+      "memory_peak_mb": 34.34375
     },
     {
       "agent": "pydantic-ai",
       "scenario": "tool",
-      "first_text_p50_ms": 14.445661999957338,
-      "latency_p50_ms": 22.408000500035996,
-      "latency_p95_ms": 31.220255200037172,
-      "cpu_ms_per_run": 22.388637219,
-      "runs_per_second": 43.31076384193766,
+      "first_text_p50_ms": 13.967396999987614,
+      "latency_p50_ms": 21.075697499895796,
+      "latency_p95_ms": 27.45053699991331,
+      "cpu_ms_per_run": 20.241104446,
+      "runs_per_second": 46.88113600891834,
       "failed_runs": 0,
-      "memory_peak_mb": 103.44921875
+      "memory_peak_mb": 103.2109375
     },
     {
       "agent": "pyox-agents",
       "scenario": "parallel_tools",
-      "first_text_p50_ms": 3.4680754999953933,
-      "latency_p50_ms": 6.064080999976795,
-      "latency_p95_ms": 8.070483900155523,
-      "cpu_ms_per_run": 6.713276416,
-      "runs_per_second": 239.4631387195859,
+      "first_text_p50_ms": 3.902322000044478,
+      "latency_p50_ms": 6.812495499957549,
+      "latency_p95_ms": 9.641105800051264,
+      "cpu_ms_per_run": 7.534109893,
+      "runs_per_second": 217.281361396004,
       "failed_runs": 0,
-      "memory_peak_mb": 36.02734375
+      "memory_peak_mb": 36.4921875
     },
     {
       "agent": "pydantic-ai",
       "scenario": "parallel_tools",
-      "first_text_p50_ms": 25.405795499864325,
-      "latency_p50_ms": 33.64728850010579,
-      "latency_p95_ms": 45.514458099705735,
-      "cpu_ms_per_run": 33.735517959,
-      "runs_per_second": 28.954762404883226,
+      "first_text_p50_ms": 23.745280500065746,
+      "latency_p50_ms": 30.838016500069898,
+      "latency_p95_ms": 42.350000650003494,
+      "cpu_ms_per_run": 30.806796096000003,
+      "runs_per_second": 30.042930187280145,
       "failed_runs": 0,
-      "memory_peak_mb": 107.96484375
+      "memory_peak_mb": 107.54296875
     }
   ],
   "text_chunks": [
     {
       "agent": "text_chunks='delta'",
       "scenario": "text",
-      "first_text_p50_ms": 2.005823999979839,
-      "latency_p50_ms": 55.96743299997797,
-      "latency_p95_ms": 67.76879940030085,
-      "cpu_ms_per_run": 65.657675308,
-      "runs_per_second": 23.630353970891758,
-      "failed_runs": 1,
-      "memory_peak_mb": 57.69921875
+      "first_text_p50_ms": 2.3047964999705073,
+      "latency_p50_ms": 64.46216500000901,
+      "latency_p95_ms": 85.22514839994528,
+      "cpu_ms_per_run": 75.73132906599999,
+      "runs_per_second": 19.727699027999186,
+      "failed_runs": 0,
+      "memory_peak_mb": 61.16015625
     },
     {
       "agent": "text_chunks=10",
       "scenario": "text",
-      "first_text_p50_ms": 1.5546095000900095,
-      "latency_p50_ms": 7.598175999874002,
-      "latency_p95_ms": 9.929514549753549,
-      "cpu_ms_per_run": 8.786743125000001,
-      "runs_per_second": 210.935502643481,
+      "first_text_p50_ms": 1.8392439999388444,
+      "latency_p50_ms": 9.056128499992155,
+      "latency_p95_ms": 13.332736900088094,
+      "cpu_ms_per_run": 10.155700175,
+      "runs_per_second": 175.70880040557952,
       "failed_runs": 0,
-      "memory_peak_mb": 56.46484375
+      "memory_peak_mb": 57.0234375
     },
     {
       "agent": "text_chunks='paragraph'",
       "scenario": "text",
-      "first_text_p50_ms": 2.5661194999884174,
-      "latency_p50_ms": 4.519681499914441,
-      "latency_p95_ms": 5.8112433501946725,
-      "cpu_ms_per_run": 4.572254185,
-      "runs_per_second": 740.3211398800025,
+      "first_text_p50_ms": 2.6054310000063197,
+      "latency_p50_ms": 4.403321499921731,
+      "latency_p95_ms": 5.89921505007851,
+      "cpu_ms_per_run": 4.532349184,
+      "runs_per_second": 694.9597092903668,
       "failed_runs": 0,
-      "memory_peak_mb": 51.43359375
+      "memory_peak_mb": 50.3359375
     },
     {
       "agent": "text_chunks='message'",
       "scenario": "text",
-      "first_text_p50_ms": 4.310609499952989,
-      "latency_p50_ms": 4.691395000008924,
-      "latency_p95_ms": 6.032978349776386,
-      "cpu_ms_per_run": 4.1410521529999995,
-      "runs_per_second": 745.9408680319577,
+      "first_text_p50_ms": 4.3398425000305,
+      "latency_p50_ms": 4.881129999944278,
+      "latency_p95_ms": 6.296184299969809,
+      "cpu_ms_per_run": 3.97938677,
+      "runs_per_second": 677.535455565948,
       "failed_runs": 0,
-      "memory_peak_mb": 47.36328125
+      "memory_peak_mb": 47.6171875
     }
   ]
 }
