@@ -1,0 +1,37 @@
+[project]
+name = "pyox-agents"
+version = "0.1.0"
+description = "Minimal and fast AI agents for Python, with a Rust core"
+readme = "README.md"
+authors = [{ name = "daniprol" }]
+keywords = ["agents", "llm", "openai", "rust"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.maturin]
+module-name = "pyox_agents._core"
+python-packages = ["pyox_agents"]
+python-source = "src"
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
+
+[dependency-groups]
+dev = ["maturin>=1.9", "pytest>=8", "ruff>=0.14", "ty>=0.0.1"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
