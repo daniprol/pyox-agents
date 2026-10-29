@@ -31,17 +31,18 @@ use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3_async_runtimes::TaskLocals;
+use pyox_tools::usage::Usage;
 use serde_json::{Map, Value};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
 use crate::client::{Client, ClientSettings};
-use crate::errors::{HookError, MaxTurnsExceededError};
+use crate::errors::{HookError, MaxTurnsExceededError, with_usage};
 use crate::events::{AgentEvent, RunFinished, ToolFinished, ToolStarted};
 use crate::history_store::{HistoryStore, messages_from_python};
 use crate::hooks::AgentHooks;
 use crate::json_convert::python_to_json;
-use crate::messages::{Message, TokenUsage, ToolCall, UserContent, prompt_from_python};
+use crate::messages::{Message, ToolCall, UserContent, prompt_from_python};
 use crate::model_api::{Api, ModelRequest, last_response_id, stream_model_turn};
 use crate::run_context::Context;
 use crate::text_chunks::{TextChunking, TextOutput};
@@ -277,20 +278,23 @@ impl Drop for Run {
 /// Runs the agent loop and makes sure any failure reaches Python as an exception.
 async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals) {
     let event_sender = inputs.event_sender.clone();
-    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals))
+    let mut usage = Usage::default();
+    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals, &mut usage))
         .catch_unwind()
         .await;
 
     let error = match loop_result {
         Ok(Ok(())) => return,
-        Ok(Err(python_error)) => python_error,
+        Ok(Err(python_error)) => with_usage(python_error, usage),
         // A panic is a bug in this library; report it instead of ending silently.
         Err(_) => PanicException::new_err("pyox-agents crashed while running the agent (this is a bug)"),
     };
     let _ = event_sender.send(Err(error)).await;
 }
 
-async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> PyResult<()> {
+/// `usage` is kept up to date as the run goes, so the caller knows the tokens
+/// used even when the run fails.
+async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage: &mut Usage) -> PyResult<()> {
     let RunInputs {
         config,
         history,
@@ -322,7 +326,6 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
             conversation_id.unwrap_or_default()
         )));
     }
-    let mut total_usage = TokenUsage::default();
     let mut text_output = TextOutput::new(text_chunks, event_sender.clone());
     let hooks = &config.hooks;
     // What tools and hooks see as `ctx`; updated as the run goes.
@@ -362,9 +365,8 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         };
         let assistant_turn = stream_model_turn(&config.client, config.api, &request, &mut text_output).await?;
         text_output.finish().await; // the message ended: send any text still grouped
-        total_usage.add(assistant_turn.usage);
-        context.run.input_tokens = total_usage.input_tokens;
-        context.run.output_tokens = total_usage.output_tokens;
+        usage.add(assistant_turn.usage);
+        context.run.usage = *usage;
 
         let assistant_message = Message::Assistant {
             content: assistant_turn.text,
@@ -392,9 +394,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
             let finished = RunFinished {
                 text,
                 turns: turn,
-                input_tokens: total_usage.input_tokens,
-                output_tokens: total_usage.output_tokens,
-                cached_input_tokens: total_usage.cached_input_tokens,
+                usage: *usage,
                 response_id,
                 messages,
                 new_messages_start,

@@ -6,10 +6,11 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyox_tools::usage::Usage;
 use serde_json::{Map, Value};
 
 use crate::client::ClientSettings;
-use crate::messages::{Message, Reasoning, TokenUsage, ToolCall};
+use crate::messages::{Message, Reasoning, ToolCall};
 use crate::text_chunks::TextOutput;
 use crate::tools::ToolDefinition;
 use crate::{openai_chat, openai_responses};
@@ -82,7 +83,7 @@ pub struct AssistantTurn {
     /// Only the Responses API returns reasoning and a response id.
     pub reasoning: Vec<Reasoning>,
     pub response_id: Option<String>,
-    pub usage: TokenUsage,
+    pub usage: Usage,
 }
 
 /// Sends one request to the agent's API and streams the answer: each piece of

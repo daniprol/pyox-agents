@@ -16,11 +16,45 @@ Events are small, read-only objects backed by Rust. They work with `isinstance` 
 | `TextDelta`    | the model streams text     | `text`                                                     |
 | `ToolStarted`  | a tool call starts         | `call_id`, `name`, `arguments` (dict)                      |
 | `ToolFinished` | a tool call ends           | `call_id`, `name`, `result`, `is_error`                    |
-| `RunFinished`  | the run ends (always last) | `text`, `turns`, `input_tokens`, `output_tokens`, `cached_input_tokens`, `response_id`, `messages`, `new_messages` |
+| `RunFinished`  | the run ends (always last) | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages` |
 
 `await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event.
 
 One `Agent` can serve many runs at the same time: each run has its own history. Create it once and reuse it.
+
+## Token usage
+
+`RunFinished.usage` holds the tokens used by all the model requests of the run, with both APIs:
+
+| Field                 | Meaning                                                           |
+|-----------------------|-------------------------------------------------------------------|
+| `input_tokens`        | tokens sent to the model                                          |
+| `cached_input_tokens` | the part of `input_tokens` read from the prompt cache (cheaper)   |
+| `output_tokens`       | tokens the model generated                                        |
+| `reasoning_tokens`    | the part of `output_tokens` spent reasoning (reasoning models)    |
+| `requests`            | model requests that reported usage                                |
+
+Counts the API did not report are 0. If `requests` is lower than `turns`, some requests sent no usage (some
+OpenAI-compatible servers don't).
+
+```python
+result = await agent.run("Hi")
+print(result.usage.input_tokens, result.usage.output_tokens)
+
+total = Usage()  # all zeros
+for result in results:
+    total += result.usage
+```
+
+Tools and hooks see the tokens used so far as `ctx.usage`. A failed run still used (and paid for) tokens: an
+`AgentError` raised by a run has them in `error.usage`.
+
+```python
+try:
+    result = await agent.run("Hi")
+except AgentError as error:
+    print("used before failing:", error.usage)
+```
 
 ## Grouping streamed text
 

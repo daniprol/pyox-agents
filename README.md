@@ -53,9 +53,13 @@ After changing Rust code, `uv sync` (or `uv run ...`) rebuilds it automatically.
 | `TextDelta`    | `text`                                                              |
 | `ToolStarted`  | `call_id`, `name`, `arguments` (dict)                               |
 | `ToolFinished` | `call_id`, `name`, `result`, `is_error`                             |
-| `RunFinished`  | `text`, `turns`, `input_tokens`, `output_tokens`, `cached_input_tokens`, `response_id`, `messages`, `new_messages` |
+| `RunFinished`  | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages` |
 
 They work with `match` too: `case TextDelta(text=text): ...`
+
+`usage` is a `Usage` with the tokens of the whole run: `input_tokens`, `cached_input_tokens`, `output_tokens`,
+`reasoning_tokens` and `requests`. Counts the API did not report are 0. Add them up with `+`, and read
+`error.usage` on an `AgentError` to see what a failed run used.
 
 Models stream text in tiny pieces. To get fewer, bigger `TextDelta` events (less work for Python), choose how
 text is grouped with `text_chunks`, on the agent or per run:
@@ -191,7 +195,7 @@ async def my_orders(ctx: RunContext[Database], status: str = "open") -> list[str
 await agent.run("What did I order?", deps=database)
 ```
 
-`ctx` has `deps`, `conversation_id`, `turn`, `input_tokens` and `output_tokens` (used so far), and, inside a
+`ctx` has `deps`, `conversation_id`, `turn`, `usage` (tokens used so far), and, inside a
 tool, `tool_call_id` and `tool_name`. Hooks get the same `ctx`.
 
 **Built-in Rust tools.** Compiled into the library and run entirely in Rust:

@@ -44,6 +44,7 @@ pub mod messages;
 pub mod native;
 pub mod native_history;
 pub mod native_hooks;
+pub mod usage;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;

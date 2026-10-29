@@ -6,6 +6,7 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 use pyox_tools::hooks::RunContext;
+use pyox_tools::usage::Usage;
 
 use crate::messages::ToolCall;
 
@@ -66,13 +67,8 @@ impl PythonRunContext {
 
     /// Tokens used by the run so far.
     #[getter]
-    fn input_tokens(&self) -> u64 {
-        self.context.run.input_tokens
-    }
-
-    #[getter]
-    fn output_tokens(&self) -> u64 {
-        self.context.run.output_tokens
+    fn usage(&self) -> Usage {
+        self.context.run.usage
     }
 
     /// Lets Python write `RunContext[MyDeps]` in type hints; it is the same class.

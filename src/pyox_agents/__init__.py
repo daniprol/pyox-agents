@@ -19,6 +19,7 @@ from pyox_agents._core import (
     TextDelta,
     ToolFinished,
     ToolStarted,
+    Usage,
 )
 from pyox_agents.agent import Agent, Api, TextChunks
 from pyox_agents.content import file, image
@@ -84,6 +85,7 @@ __all__ = [
     "ToolMessage",
     "ToolResult",
     "ToolStarted",
+    "Usage",
     "UserMessage",
     "file",
     "image",

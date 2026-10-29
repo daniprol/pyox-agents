@@ -45,6 +45,34 @@ class BuiltinTool:
     @property
     def description(self) -> str: ...
 
+@final
+class Usage:
+    """Token counts reported by the API; counts it did not report are 0."""
+
+    def __init__(
+        self,
+        *,
+        input_tokens: int = 0,
+        cached_input_tokens: int = 0,
+        output_tokens: int = 0,
+        reasoning_tokens: int = 0,
+        requests: int = 0,
+    ) -> None: ...
+    @property
+    def input_tokens(self) -> int: ...
+    @property
+    def cached_input_tokens(self) -> int:
+        """The part of `input_tokens` read from the prompt cache."""
+    @property
+    def output_tokens(self) -> int: ...
+    @property
+    def reasoning_tokens(self) -> int:
+        """The part of `output_tokens` the model spent reasoning."""
+    @property
+    def requests(self) -> int:
+        """Model requests that reported usage."""
+    def __add__(self, other: Usage) -> Usage: ...
+
 DepsT = TypeVar("DepsT")
 
 @final
@@ -58,9 +86,8 @@ class RunContext(Generic[DepsT]):
     @property
     def turn(self) -> int: ...
     @property
-    def input_tokens(self) -> int: ...
-    @property
-    def output_tokens(self) -> int: ...
+    def usage(self) -> Usage:
+        """Tokens used by the run so far."""
     @property
     def tool_call_id(self) -> str | None: ...
     @property
@@ -98,11 +125,7 @@ class RunFinished:
     @property
     def turns(self) -> int: ...
     @property
-    def input_tokens(self) -> int: ...
-    @property
-    def output_tokens(self) -> int: ...
-    @property
-    def cached_input_tokens(self) -> int: ...
+    def usage(self) -> Usage: ...
     @property
     def response_id(self) -> str | None: ...
     @property
@@ -146,7 +169,10 @@ class Engine:
         previous_response_id: str | None = None,
     ) -> Run: ...
 
-class AgentError(Exception): ...
+class AgentError(Exception):
+    usage: Usage | None
+    """Tokens the run used before it failed; `None` if raised outside a run."""
+
 class ApiError(AgentError): ...
 class AuthenticationError(ApiError): ...
 class RateLimitError(ApiError): ...

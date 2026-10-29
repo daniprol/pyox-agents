@@ -22,14 +22,13 @@
 
 use futures::StreamExt;
 use pyo3::prelude::*;
+use pyox_tools::usage::Usage;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::client::ClientSettings;
 use crate::errors::{ApiError, InvalidResponseError, error_for_http_failure, error_for_http_status};
-use crate::messages::{
-    ContentPart, Message, Reasoning, TokenUsage, ToolCall, UserContent, arguments_as_text, arguments_from_text,
-};
+use crate::messages::{ContentPart, Message, Reasoning, ToolCall, UserContent, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions};
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
@@ -267,16 +266,20 @@ struct SummaryPart {
     text: String,
 }
 
-#[derive(Deserialize)]
+/// `#[serde(default)]`: a missing count is read as 0 instead of failing the run.
+#[derive(Default, Deserialize)]
+#[serde(default)]
 struct ResponseUsage {
     input_tokens: u64,
     output_tokens: u64,
-    input_tokens_details: Option<InputTokensDetails>,
+    input_tokens_details: Option<TokensDetails>,
+    output_tokens_details: Option<TokensDetails>,
 }
 
 #[derive(Deserialize)]
-struct InputTokensDetails {
+struct TokensDetails {
     cached_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
 }
 
 /// Reads the events of one response until it is complete.
@@ -353,13 +356,18 @@ fn turn_from_response(response: FinishedResponse) -> AssistantTurn {
         }
     }
     if let Some(usage) = response.usage {
-        turn.usage = TokenUsage {
+        turn.usage = Usage {
             input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
             cached_input_tokens: usage
                 .input_tokens_details
                 .and_then(|details| details.cached_tokens)
                 .unwrap_or(0),
+            output_tokens: usage.output_tokens,
+            reasoning_tokens: usage
+                .output_tokens_details
+                .and_then(|details| details.reasoning_tokens)
+                .unwrap_or(0),
+            requests: 1,
         };
     }
     turn
@@ -572,7 +580,7 @@ mod tests {
                 {"type":"message","content":[{"type":"output_text","text":"Hi"}]},
                 {"type":"web_search_call","id":"ws_1"},
                 {"type":"function_call","call_id":"call_1","name":"add","arguments":"{\"a\":1}"}
-              ],"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":64}}}}"#,
+              ],"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":64},"output_tokens_details":{"reasoning_tokens":3}}}}"#,
         ];
         let texts: Vec<_> = events.iter().map(|event| reader.add_event(event).unwrap()).collect();
         assert_eq!(texts, vec![None, Some("Hi".to_string()), None, None]);
@@ -592,10 +600,12 @@ mod tests {
                     encrypted_content: Some("secret".into()),
                 }],
                 response_id: Some("resp_9".into()),
-                usage: TokenUsage {
+                usage: Usage {
                     input_tokens: 100,
-                    output_tokens: 5,
                     cached_input_tokens: 64,
+                    output_tokens: 5,
+                    reasoning_tokens: 3,
+                    requests: 1,
                 },
             }
         );

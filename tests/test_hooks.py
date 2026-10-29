@@ -134,7 +134,7 @@ async def test_hook_objects_run_in_order_and_see_the_run(fake_openai: FakeOpenAI
             return {**call, "arguments": {"a": 10, "b": 1}}
 
         async def after_run(self, ctx: RunContext, result: RunFinished) -> None:
-            calls.append(f"after_run {result.text} turns={ctx.turn} tokens={ctx.input_tokens}")
+            calls.append(f"after_run {result.text} turns={ctx.turn} tokens={ctx.usage.input_tokens}")
 
     def second(ctx: RunContext, call: ToolCall) -> None:
         calls.append(f"second sees a={call['arguments']['a']}")
@@ -148,7 +148,7 @@ async def test_hook_objects_run_in_order_and_see_the_run(fake_openai: FakeOpenAI
         "before_run None Shop",
         "recorder sees a=1",
         "second sees a=10",
-        "after_run 11 turns=2 tokens=10",  # only the last response reports usage
+        "after_run 11 turns=2 tokens=20",
     ]
 
 

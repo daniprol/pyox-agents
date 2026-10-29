@@ -45,7 +45,7 @@ async def my_orders(ctx: RunContext[Database], status: str = "open") -> list[str
 await agent.run("What did I order?", deps=database)
 ```
 
-`ctx` has `deps`, `conversation_id`, `turn`, `input_tokens` and `output_tokens` (used so far), and, inside a
+`ctx` has `deps`, `conversation_id`, `turn`, `usage` (tokens used so far), and, inside a
 tool, `tool_call_id` and `tool_name`. [Hooks](hooks.md) get the same `ctx`.
 
 ## Built-in Rust tools

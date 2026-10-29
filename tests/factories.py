@@ -36,7 +36,9 @@ def tool_call(name: str, /, **arguments: Any) -> tuple[str, dict[str, Any]]:
     return name, arguments
 
 
-def tool_calls_response(*calls: tuple[str, dict[str, Any]], text_pieces: tuple[str, ...] = ()) -> StreamResponse:
+def tool_calls_response(
+    *calls: tuple[str, dict[str, Any]], text_pieces: tuple[str, ...] = (), usage: dict[str, Any] = DEFAULT_USAGE
+) -> StreamResponse:
     """An answer requesting tool calls, optionally after some text. Call ids are `call_0`, `call_1`, ...
 
     The arguments JSON of each call is split in two chunks, as real APIs do.
@@ -54,6 +56,7 @@ def tool_calls_response(*calls: tuple[str, dict[str, Any]], text_pieces: tuple[s
         chunks.append({"choices": [{"delta": {"tool_calls": [first_piece]}}]})
         chunks.append({"choices": [{"delta": {"tool_calls": [second_piece]}}]})
     chunks.append({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
+    chunks.append({"choices": [], "usage": usage})
     return StreamResponse(chunks)
 
 

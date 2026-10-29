@@ -7,7 +7,7 @@ import pytest
 from conftest import MakeAgent
 from factories import collect_events, error_response, events_of_type, responses_answer, text_response, tool_call
 from fake_openai import ErrorResponse, FakeOpenAI, StreamResponse
-from pyox_agents import ApiError, Hooks, InvalidResponseError, Message, RunContext, RunFinished, TextDelta, image
+from pyox_agents import ApiError, Hooks, InvalidResponseError, Message, RunContext, RunFinished, TextDelta, Usage, image
 
 
 def add(a: int, b: int) -> int:
@@ -88,13 +88,25 @@ async def test_prompt_images_become_input_parts(fake_openai: FakeOpenAI, make_re
     ]
 
 
-async def test_cached_tokens_are_reported(fake_openai: FakeOpenAI, make_responses_agent: MakeAgent) -> None:
-    usage = {"input_tokens": 1000, "output_tokens": 20, "input_tokens_details": {"cached_tokens": 900}}
-    fake_openai.queue(responses_answer("Hi", usage=usage))
+async def test_usage_is_reported_and_summed_over_turns(
+    fake_openai: FakeOpenAI, make_responses_agent: MakeAgent
+) -> None:
+    first_usage = {
+        "input_tokens": 1000,
+        "output_tokens": 20,
+        "input_tokens_details": {"cached_tokens": 900},
+        "output_tokens_details": {"reasoning_tokens": 12},
+    }
+    fake_openai.queue(
+        responses_answer(tool_calls=(tool_call("add", a=1, b=2),), usage=first_usage),
+        responses_answer("3", response_id="resp_2", usage={"input_tokens": 1050, "output_tokens": 5}),
+    )
 
-    result = await make_responses_agent().run("Hi")
+    result = await make_responses_agent(tools=[add]).run("Add")
 
-    assert (result.input_tokens, result.output_tokens, result.cached_input_tokens) == (1000, 20, 900)
+    assert result.usage == Usage(
+        input_tokens=2050, cached_input_tokens=900, output_tokens=25, reasoning_tokens=12, requests=2
+    )
 
 
 async def test_model_parameters_are_passed_through(fake_openai: FakeOpenAI, make_responses_agent: MakeAgent) -> None:

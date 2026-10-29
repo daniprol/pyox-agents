@@ -25,7 +25,7 @@ use crate::hooks::{Hooks, RunContext};
 use crate::native::{NativeResult, free_result};
 
 /// Bump when `NativeHooksFunctions`, `Hook` or the hook arguments change.
-pub const INTERFACE_VERSION: u32 = 1;
+pub const INTERFACE_VERSION: u32 = 2;
 
 /// The capsule name; checked when reading, so a wrong capsule is rejected.
 pub const CAPSULE_NAME: &CStr = c"pyox_tools.native_hooks.v1";
@@ -253,7 +253,11 @@ mod tests {
             .after_run(|_, _| Ok(()));
         let functions = functions_for(Box::new(hooks));
         let native_hooks = NativeHooks { functions };
-        let context = r#"{"conversation_id":null,"turn":2,"input_tokens":0,"output_tokens":0}"#;
+        let context = serde_json::to_string(&RunContext {
+            turn: 2,
+            ..Default::default()
+        })
+        .unwrap();
 
         assert!(native_hooks.has(Hook::BeforeToolCall));
         assert!(native_hooks.has(Hook::AfterRun));
@@ -261,7 +265,7 @@ mod tests {
 
         let call = |name: &str| {
             let arguments = json!([{"id": "call_1", "name": name, "arguments": {}}]).to_string();
-            native_hooks.call(Hook::BeforeToolCall, context, &arguments)
+            native_hooks.call(Hook::BeforeToolCall, &context, &arguments)
         };
         assert_eq!(
             call("add"),
@@ -271,11 +275,11 @@ mod tests {
         assert_eq!(call("bug"), Err("A Rust hook crashed".into()));
         assert!(
             native_hooks
-                .call(Hook::BeforeToolCall, context, "[]")
+                .call(Hook::BeforeToolCall, &context, "[]")
                 .unwrap_err()
                 .contains("missing")
         );
-        assert_eq!(native_hooks.call(Hook::AfterRun, context, "[[]]"), Ok(String::new()));
+        assert_eq!(native_hooks.call(Hook::AfterRun, &context, "[[]]"), Ok(String::new()));
 
         // SAFETY: made by `functions_for` above, freed once.
         unsafe { free_hooks(functions.hooks) };

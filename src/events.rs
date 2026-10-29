@@ -9,6 +9,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use pyox_tools::usage::Usage;
 use serde_json::Value;
 
 use crate::json_convert::json_to_python;
@@ -49,13 +50,9 @@ pub struct RunFinished {
     /// Number of model requests made during the run.
     #[pyo3(get)]
     pub turns: u32,
+    /// Tokens used by all the model requests of the run.
     #[pyo3(get)]
-    pub input_tokens: u64,
-    #[pyo3(get)]
-    pub output_tokens: u64,
-    /// The part of `input_tokens` that came from OpenAI's prompt cache.
-    #[pyo3(get)]
-    pub cached_input_tokens: u64,
+    pub usage: Usage,
     /// Responses API: the id of the last response. With `store=True`, pass it
     /// as `previous_response_id` to continue the conversation.
     #[pyo3(get)]
@@ -126,8 +123,10 @@ impl RunFinished {
 
     fn __repr__(&self) -> String {
         format!(
-            "RunFinished(text={:?}, turns={}, input_tokens={}, output_tokens={}, cached_input_tokens={})",
-            self.text, self.turns, self.input_tokens, self.output_tokens, self.cached_input_tokens
+            "RunFinished(text={:?}, turns={}, usage={})",
+            self.text,
+            self.turns,
+            self.usage.__repr__()
         )
     }
 }

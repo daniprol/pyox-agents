@@ -50,20 +50,3 @@ pub fn arguments_from_text(arguments_text: String) -> Value {
     }
     serde_json::from_str(&arguments_text).unwrap_or(Value::String(arguments_text))
 }
-
-/// Token counts reported by the API.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct TokenUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    /// The part of `input_tokens` read from OpenAI's prompt cache (cheaper and faster).
-    pub cached_input_tokens: u64,
-}
-
-impl TokenUsage {
-    pub fn add(&mut self, other: TokenUsage) {
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
-        self.cached_input_tokens += other.cached_input_tokens;
-    }
-}

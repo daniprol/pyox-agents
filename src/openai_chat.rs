@@ -11,14 +11,13 @@
 
 use futures::StreamExt;
 use pyo3::prelude::*;
+use pyox_tools::usage::Usage;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client::ClientSettings;
 use crate::errors::{ApiError, InvalidResponseError, error_for_http_failure, error_for_http_status};
-use crate::messages::{
-    ContentPart, Message, TokenUsage, ToolCall, UserContent, arguments_as_text, arguments_from_text,
-};
+use crate::messages::{ContentPart, Message, ToolCall, UserContent, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest};
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
@@ -156,16 +155,20 @@ struct FunctionDelta {
     arguments: Option<String>,
 }
 
-#[derive(Deserialize)]
+/// `#[serde(default)]`: a missing count is read as 0 instead of failing the run.
+#[derive(Default, Deserialize)]
+#[serde(default)]
 struct ChunkUsage {
     prompt_tokens: u64,
     completion_tokens: u64,
-    prompt_tokens_details: Option<PromptTokensDetails>,
+    prompt_tokens_details: Option<TokensDetails>,
+    completion_tokens_details: Option<TokensDetails>,
 }
 
 #[derive(Deserialize)]
-struct PromptTokensDetails {
+struct TokensDetails {
     cached_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
 }
 
 /// A tool call being assembled from pieces.
@@ -181,7 +184,7 @@ struct PartialToolCall {
 pub struct ChunkAccumulator {
     text: String,
     tool_calls: Vec<PartialToolCall>,
-    usage: TokenUsage,
+    usage: Usage,
     /// True once the API said why it stopped; used to detect cut-off streams.
     finished: bool,
 }
@@ -196,13 +199,18 @@ impl ChunkAccumulator {
             return Err(ApiError::new_err(error.to_string()));
         }
         if let Some(usage) = chunk.usage {
-            self.usage = TokenUsage {
+            self.usage = Usage {
                 input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
                 cached_input_tokens: usage
                     .prompt_tokens_details
                     .and_then(|details| details.cached_tokens)
                     .unwrap_or(0),
+                output_tokens: usage.completion_tokens,
+                reasoning_tokens: usage
+                    .completion_tokens_details
+                    .and_then(|details| details.reasoning_tokens)
+                    .unwrap_or(0),
+                requests: 1,
             };
         }
 
@@ -352,10 +360,11 @@ mod tests {
         );
         assert_eq!(
             turn.usage,
-            TokenUsage {
+            Usage {
                 input_tokens: 10,
                 output_tokens: 5,
-                cached_input_tokens: 0,
+                requests: 1,
+                ..Default::default()
             }
         );
     }
@@ -370,12 +379,24 @@ mod tests {
     }
 
     #[test]
-    fn cached_tokens_are_read_from_usage_details() {
+    fn cached_and_reasoning_tokens_are_read_from_usage_details() {
         let mut accumulator = ChunkAccumulator::default();
         accumulator
-            .add_chunk(r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":64}}}"#)
+            .add_chunk(r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":64},"completion_tokens_details":{"reasoning_tokens":30}}}"#)
             .unwrap();
-        assert_eq!(accumulator.into_turn().usage.cached_input_tokens, 64);
+        let usage = accumulator.into_turn().usage;
+        assert_eq!((usage.cached_input_tokens, usage.reasoning_tokens), (64, 30));
+    }
+
+    #[test]
+    fn missing_usage_counts_are_zero() {
+        let mut accumulator = ChunkAccumulator::default();
+        accumulator.add_chunk(r#"{"choices":[],"usage":{}}"#).unwrap();
+        let expected = Usage {
+            requests: 1,
+            ..Default::default()
+        };
+        assert_eq!(accumulator.into_turn().usage, expected);
     }
 
     #[test]

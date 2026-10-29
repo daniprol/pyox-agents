@@ -21,6 +21,7 @@
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use pyox_tools::usage::Usage;
 
 create_exception!(
     pyox_agents,
@@ -69,6 +70,18 @@ create_exception!(
     "A Rust hook failed, or a hook returned something invalid."
 );
 
+/// An `AgentError` raised during a run gets the tokens the run used before it
+/// failed, as `error.usage`: those tokens are billed even if the run failed.
+pub fn with_usage(error: PyErr, usage: Usage) -> PyErr {
+    Python::attach(|py| {
+        if error.is_instance_of::<AgentError>(py) {
+            // `let _ =` ignores a failure: the error itself matters more than its usage.
+            let _ = error.value(py).setattr("usage", usage);
+        }
+    });
+    error
+}
+
 /// Picks the right exception for an HTTP error status code.
 pub fn error_for_http_status(status_code: u16, response_body: &str) -> PyErr {
     let message = format!("HTTP {status_code}: {response_body}");
@@ -90,7 +103,10 @@ pub fn error_for_http_failure(error: reqwest::Error) -> PyErr {
 
 pub fn add_exceptions_to_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = module.py();
-    module.add("AgentError", py.get_type::<AgentError>())?;
+    let agent_error = py.get_type::<AgentError>();
+    // `None` unless the error was raised during a run (see `with_usage`).
+    agent_error.setattr("usage", py.None())?;
+    module.add("AgentError", agent_error)?;
     module.add("ApiError", py.get_type::<ApiError>())?;
     module.add("AuthenticationError", py.get_type::<AuthenticationError>())?;
     module.add("RateLimitError", py.get_type::<RateLimitError>())?;

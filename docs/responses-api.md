@@ -27,7 +27,7 @@ it, but sending it back lets the model build on it in the next request. pyox-age
 ```
 
 Because the reasoning goes back byte for byte, the start of each request stays the same and OpenAI's prompt cache
-keeps working. `RunFinished.cached_input_tokens` shows how many input tokens came from the cache.
+keeps working. `RunFinished.usage.cached_input_tokens` shows how many input tokens came from the cache.
 
 Reasoning is only sent back to the model that wrote it (the message's `model`); for any other model it is left out.
 `summary` holds the readable summaries, if you ask for them:

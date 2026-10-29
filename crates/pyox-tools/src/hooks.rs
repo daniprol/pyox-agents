@@ -46,6 +46,7 @@ use serde_json::Value;
 
 use crate::messages::{Message, ToolCall};
 use crate::native_hooks::{self, Hook};
+use crate::usage::Usage;
 
 /// What a hook knows about the run it is part of.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -55,8 +56,7 @@ pub struct RunContext {
     /// The current turn: 1 during the first model request, 2 during the second...
     pub turn: u32,
     /// Tokens used by the run so far.
-    pub input_tokens: u64,
-    pub output_tokens: u64,
+    pub usage: Usage,
 }
 
 /// The result of a tool, as sent back to the model.

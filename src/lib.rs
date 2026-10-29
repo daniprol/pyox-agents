@@ -58,6 +58,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<events::ToolStarted>()?;
     module.add_class::<events::ToolFinished>()?;
     module.add_class::<events::RunFinished>()?;
+    module.add_class::<pyox_tools::usage::Usage>()?;
 
     errors::add_exceptions_to_module(module)?;
     Ok(())
