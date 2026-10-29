@@ -12,3 +12,6 @@ target/
 coverage.xml
 .coverage
 rust-coverage.lcov
+
+# Docs
+site/

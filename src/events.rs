@@ -9,6 +9,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use pyox_tools::usage::Usage;
 use serde_json::Value;
 
 use crate::json_convert::json_to_python;
@@ -40,6 +41,7 @@ pub struct ToolFinished {
 }
 
 /// The last event of a run.
+#[derive(Clone)]
 #[pyclass(frozen, module = "pyox_agents")]
 pub struct RunFinished {
     /// Text of the final assistant message.
@@ -48,10 +50,13 @@ pub struct RunFinished {
     /// Number of model requests made during the run.
     #[pyo3(get)]
     pub turns: u32,
+    /// Tokens used by all the model requests of the run.
     #[pyo3(get)]
-    pub input_tokens: u64,
+    pub usage: Usage,
+    /// Responses API: the id of the last response. With `store=True`, pass it
+    /// as `previous_response_id` to continue the conversation.
     #[pyo3(get)]
-    pub output_tokens: u64,
+    pub response_id: Option<String>,
     /// The whole conversation; the run added the messages from `new_messages_start` on.
     pub messages: Vec<Message>,
     pub new_messages_start: usize,
@@ -118,14 +123,16 @@ impl RunFinished {
 
     fn __repr__(&self) -> String {
         format!(
-            "RunFinished(text={:?}, turns={}, input_tokens={}, output_tokens={})",
-            self.text, self.turns, self.input_tokens, self.output_tokens
+            "RunFinished(text={:?}, turns={}, usage={})",
+            self.text,
+            self.turns,
+            self.usage.__repr__()
         )
     }
 }
 
 impl RunFinished {
-    fn added_messages(&self) -> &[Message] {
+    pub fn added_messages(&self) -> &[Message] {
         &self.messages[self.new_messages_start..]
     }
 }

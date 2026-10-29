@@ -8,12 +8,18 @@
 //!
 //! ```text
 //! load the conversation from the history store (if the run names one)
+//! before_run hooks
 //! repeat until the model stops calling tools (at most `max_turns` times):
-//!     stream a model response, forwarding text to Python as it arrives
-//!     add the assistant message to the history
-//!     run the requested tools (concurrently) and add their results
+//!     before_model_request hooks
+//!     stream a model response (Chat or Responses API), forwarding text to Python as it arrives
+//!     after_model_response hooks, then add the assistant message to the history
+//!     run the requested tools (concurrently) and add their results;
+//!         each call goes through before_tool_call and after_tool_call hooks
+//! after_run hooks
 //! save the run's new messages to the history store (if any)
 //! ```
+//!
+//! Every step only touches the hooks when the agent has some (see `hooks`).
 
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
@@ -25,19 +31,22 @@ use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3_async_runtimes::TaskLocals;
+use pyox_tools::usage::Usage;
 use serde_json::{Map, Value};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
 use crate::client::{Client, ClientSettings};
-use crate::errors::MaxTurnsExceededError;
+use crate::errors::{HookError, MaxTurnsExceededError, with_usage};
 use crate::events::{AgentEvent, RunFinished, ToolFinished, ToolStarted};
 use crate::history_store::{HistoryStore, messages_from_python};
+use crate::hooks::AgentHooks;
 use crate::json_convert::python_to_json;
-use crate::messages::{Message, TokenUsage, ToolCall};
-use crate::openai_chat::{build_request_body, stream_chat_completion};
+use crate::messages::{Message, ToolCall, UserContent, prompt_from_python};
+use crate::model_api::{Api, ModelRequest, last_response_id, stream_model_turn};
+use crate::run_context::Context;
 use crate::text_chunks::{TextChunking, TextOutput};
-use crate::tools::{ToolDefinition, ToolOutput};
+use crate::tools::{ToolDefinition, ToolResult, error_result};
 
 /// How many events can wait in the queue before the agent loop pauses.
 /// A limit keeps memory bounded if Python reads events slowly.
@@ -46,6 +55,8 @@ const EVENT_QUEUE_CAPACITY: usize = 64;
 /// The configuration shared (read-only) by every run of an agent.
 struct AgentConfig {
     client: ClientSettings,
+    /// Chat Completions or Responses, with its settings.
+    api: Api,
     model: String,
     system_prompt: String,
     tools: Vec<ToolDefinition>,
@@ -54,6 +65,7 @@ struct AgentConfig {
     /// How streamed text is grouped into `TextDelta` events (can be changed per run).
     text_chunks: TextChunking,
     history_store: Option<HistoryStore>,
+    hooks: AgentHooks,
 }
 
 /// Python: created by `pyox_agents.Agent`; most users never touch it directly.
@@ -67,7 +79,8 @@ impl Engine {
     #[new]
     #[pyo3(signature = (
         *, client, model, prompt = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
-        text_chunks = None, history_store = None,
+        text_chunks = None, history_store = None, hooks = Vec::new(),
+        api = "chat", store = false, encrypted_reasoning = true,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent(...)`
     fn new(
@@ -79,7 +92,12 @@ impl Engine {
         max_turns: u32,
         text_chunks: Option<Bound<'_, PyAny>>,
         history_store: Option<Bound<'_, PyAny>>,
+        hooks: Vec<Bound<'_, PyAny>>,
+        api: &str,
+        store: bool,
+        encrypted_reasoning: bool,
     ) -> PyResult<Self> {
+        let api = Api::from_python(api, store, encrypted_reasoning)?;
         let tools = tools
             .iter()
             .map(ToolDefinition::from_python)
@@ -101,6 +119,7 @@ impl Engine {
         Ok(Engine {
             config: Arc::new(AgentConfig {
                 client: client.settings.clone(),
+                api,
                 model,
                 system_prompt: prompt,
                 tools,
@@ -111,6 +130,7 @@ impl Engine {
                     None => TextChunking::Delta,
                 },
                 history_store: history_store.as_ref().map(HistoryStore::from_python).transpose()?,
+                hooks: AgentHooks::from_python(&hooks)?,
             }),
         })
     }
@@ -119,13 +139,22 @@ impl Engine {
     ///
     /// The history comes from `history` (message dicts or JSON text), or is
     /// loaded from the agent's history store when `conversation_id` is given.
-    #[pyo3(signature = (prompt = None, *, history = None, conversation_id = None, text_chunks = None))]
+    /// `deps` is any object, given to tools and hooks as `ctx.deps`.
+    /// `previous_response_id` continues a conversation OpenAI stored (Responses API with `store`).
+    #[pyo3(signature = (
+        prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None,
+        previous_response_id = None,
+    ))]
+    #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
     fn execute(
         &self,
-        prompt: Option<String>,
+        py: Python<'_>,
+        prompt: Option<Bound<'_, PyAny>>,
         history: Option<Bound<'_, PyAny>>,
         conversation_id: Option<String>,
         text_chunks: Option<Bound<'_, PyAny>>,
+        deps: Option<Py<PyAny>>,
+        previous_response_id: Option<String>,
     ) -> PyResult<Run> {
         let text_chunks = match text_chunks {
             Some(value) => TextChunking::from_python(&value)?,
@@ -141,6 +170,23 @@ impl Engine {
                 ));
             }
         }
+        if previous_response_id.is_some() {
+            if !self.config.api.stores_responses() {
+                return Err(PyValueError::new_err(
+                    "`previous_response_id` needs an agent with `api=\"responses\"` and `store=True`",
+                ));
+            }
+            // The stored response already holds the conversation.
+            if history.is_some() || conversation_id.is_some() {
+                return Err(PyValueError::new_err(
+                    "Give `previous_response_id` or a history (`history`, `conversation_id`), not both",
+                ));
+            }
+            if prompt.is_none() {
+                return Err(PyValueError::new_err("`previous_response_id` needs a prompt"));
+            }
+        }
+        let prompt = prompt.as_ref().map(prompt_from_python).transpose()?;
         let history = match history {
             Some(history) => messages_from_python(&history)?,
             None => Vec::new(),
@@ -157,7 +203,9 @@ impl Engine {
                 history,
                 prompt,
                 conversation_id,
+                previous_response_id,
                 text_chunks,
+                deps: deps.unwrap_or_else(|| py.None()),
                 event_sender,
             })),
             event_receiver: Arc::new(tokio::sync::Mutex::new(event_receiver)),
@@ -172,9 +220,13 @@ struct RunInputs {
     text_chunks: TextChunking,
     /// History given directly with `execute(history=...)`.
     history: Vec<Message>,
-    prompt: Option<String>,
+    prompt: Option<UserContent>,
     /// Set when the history is loaded from (and saved to) the history store.
     conversation_id: Option<String>,
+    /// The stored response this run continues, from `execute(previous_response_id=...)`.
+    previous_response_id: Option<String>,
+    /// Given to tools and hooks as `ctx.deps`.
+    deps: Py<PyAny>,
     event_sender: Sender<PyResult<AgentEvent>>,
 }
 
@@ -226,26 +278,31 @@ impl Drop for Run {
 /// Runs the agent loop and makes sure any failure reaches Python as an exception.
 async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals) {
     let event_sender = inputs.event_sender.clone();
-    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals))
+    let mut usage = Usage::default();
+    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals, &mut usage))
         .catch_unwind()
         .await;
 
     let error = match loop_result {
         Ok(Ok(())) => return,
-        Ok(Err(python_error)) => python_error,
+        Ok(Err(python_error)) => with_usage(python_error, usage),
         // A panic is a bug in this library; report it instead of ending silently.
         Err(_) => PanicException::new_err("pyox-agents crashed while running the agent (this is a bug)"),
     };
     let _ = event_sender.send(Err(error)).await;
 }
 
-async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> PyResult<()> {
+/// `usage` is kept up to date as the run goes, so the caller knows the tokens
+/// used even when the run fails.
+async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage: &mut Usage) -> PyResult<()> {
     let RunInputs {
         config,
         history,
         prompt,
         conversation_id,
+        previous_response_id: run_start_response_id,
         text_chunks,
+        deps,
         event_sender,
     } = inputs;
     // The store and the conversation, when this run loads and saves one.
@@ -269,41 +326,85 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
             conversation_id.unwrap_or_default()
         )));
     }
-    let mut total_usage = TokenUsage::default();
     let mut text_output = TextOutput::new(text_chunks, event_sender.clone());
+    let hooks = &config.hooks;
+    // What tools and hooks see as `ctx`; updated as the run goes.
+    let mut context = Context {
+        run: pyox_tools::hooks::RunContext {
+            conversation_id: conversation_id.clone(),
+            ..Default::default()
+        },
+        deps: Arc::new(deps),
+    };
+    hooks.before_run(&context, &python_task_locals).await?;
 
     for turn in 1..=config.max_turns {
-        let request_body = build_request_body(
-            &config.model,
-            &config.system_prompt,
-            &messages,
-            &config.tools,
-            &config.model_parameters,
-        );
-        let assistant_turn = stream_chat_completion(&config.client, &request_body, &mut text_output).await?;
+        context.run.turn = turn;
+        // Hooks may change the messages of this one request; the history stays as it is.
+        let hooked_messages = hooks
+            .before_model_request(&context, &messages, &python_task_locals)
+            .await?;
+        // With `store`, OpenAI keeps every response, so the request continues
+        // from the newest one and sends only the messages after it. If hooks
+        // changed the messages, OpenAI's copy no longer matches them: send
+        // them all (on top of the response the run started from, if any).
+        let previous_response_id = if !config.api.stores_responses() {
+            None
+        } else if hooked_messages.is_some() {
+            run_start_response_id.as_deref()
+        } else {
+            last_response_id(&messages).or(run_start_response_id.as_deref())
+        };
+        let request = ModelRequest {
+            model: &config.model,
+            system_prompt: &config.system_prompt,
+            messages: hooked_messages.as_ref().unwrap_or(&messages),
+            tools: &config.tools,
+            model_parameters: &config.model_parameters,
+            previous_response_id,
+        };
+        let assistant_turn = stream_model_turn(&config.client, config.api, &request, &mut text_output).await?;
         text_output.finish().await; // the message ended: send any text still grouped
-        total_usage.add(assistant_turn.usage);
+        usage.add(assistant_turn.usage);
+        context.run.usage = *usage;
 
-        let tool_calls = assistant_turn.tool_calls;
-        messages.push(Message::Assistant {
-            content: assistant_turn.text.clone(),
-            tool_calls: tool_calls.clone(),
-        });
+        let assistant_message = Message::Assistant {
+            content: assistant_turn.text,
+            tool_calls: assistant_turn.tool_calls,
+            reasoning: assistant_turn.reasoning,
+            response_id: assistant_turn.response_id,
+            model: Some(config.model.clone()),
+        };
+        let assistant_message = hooks
+            .after_model_response(&context, assistant_message, &python_task_locals)
+            .await?;
+        let Message::Assistant {
+            content,
+            tool_calls,
+            response_id,
+            ..
+        } = &assistant_message
+        else {
+            unreachable!("after_model_response always gives an assistant message");
+        };
+        let (text, tool_calls, response_id) = (content.clone(), tool_calls.clone(), response_id.clone());
+        messages.push(assistant_message);
 
         if tool_calls.is_empty() {
-            if let Some((store, conversation_id)) = stored_conversation {
-                store
-                    .save(conversation_id, &messages[new_messages_start..], &python_task_locals)
-                    .await?;
-            }
             let finished = RunFinished {
-                text: assistant_turn.text,
+                text,
                 turns: turn,
-                input_tokens: total_usage.input_tokens,
-                output_tokens: total_usage.output_tokens,
+                usage: *usage,
+                response_id,
                 messages,
                 new_messages_start,
             };
+            hooks.after_run(&context, &finished, &python_task_locals).await?;
+            if let Some((store, conversation_id)) = stored_conversation {
+                store
+                    .save(conversation_id, finished.added_messages(), &python_task_locals)
+                    .await?;
+            }
             let _ = event_sender.send(Ok(AgentEvent::RunFinished(finished))).await;
             return Ok(());
         }
@@ -321,7 +422,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         let outputs = join_all(
             tool_calls
                 .iter()
-                .map(|call| run_tool_call(&config, call, &python_task_locals)),
+                .map(|call| run_tool_call(&config, call, &context, &python_task_locals)),
         )
         .await;
 
@@ -348,12 +449,39 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
     )))
 }
 
-async fn run_tool_call(config: &AgentConfig, call: &ToolCall, python_task_locals: &TaskLocals) -> ToolOutput {
-    match config.tools.iter().find(|tool| tool.name == call.name) {
-        Some(tool) => tool.run(&call.arguments, python_task_locals).await,
-        None => ToolOutput {
-            content: format!("Unknown tool {:?}", call.name),
-            is_error: true,
-        },
+/// Runs one tool call, through the `before_tool_call` and `after_tool_call` hooks.
+/// A hook that fails blocks the call: the model gets the error as the result.
+async fn run_tool_call(
+    config: &AgentConfig,
+    call: &ToolCall,
+    context: &Context,
+    python_task_locals: &TaskLocals,
+) -> ToolResult {
+    let hooks = &config.hooks;
+    let call = match hooks.before_tool_call(context, call.clone(), python_task_locals).await {
+        Ok(call) => call,
+        Err(error) => return error_result(message_for_model(error)),
+    };
+
+    let result = match config.tools.iter().find(|tool| tool.name == call.name) {
+        Some(tool) => tool.run(&call, context, python_task_locals).await,
+        None => error_result(format!("Unknown tool {:?}", call.name)),
+    };
+
+    match hooks.after_tool_call(context, &call, result, python_task_locals).await {
+        Ok(result) => result,
+        Err(error) => error_result(message_for_model(error)),
     }
+}
+
+/// The text the model sees when a tool hook fails. A Rust hook's message is
+/// used as is; a Python exception includes its type, like tool errors do.
+fn message_for_model(error: PyErr) -> String {
+    Python::attach(|py| {
+        if error.is_instance_of::<HookError>(py) {
+            error.value(py).to_string()
+        } else {
+            error.to_string()
+        }
+    })
 }

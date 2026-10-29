@@ -28,9 +28,10 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Documentation: **[daniprol.github.io/pyox-agents](https://daniprol.github.io/pyox-agents/)**.
 Examples and the commands to run them are in [`examples/`](examples).
 
-Status: early. Only the OpenAI Chat Completions API (and compatible servers) is supported for now.
+Status: early. It supports the OpenAI Chat Completions API (and compatible servers), the Responses API, and Azure OpenAI.
 
 ## Install (development)
 
@@ -52,9 +53,13 @@ After changing Rust code, `uv sync` (or `uv run ...`) rebuilds it automatically.
 | `TextDelta`    | `text`                                                              |
 | `ToolStarted`  | `call_id`, `name`, `arguments` (dict)                               |
 | `ToolFinished` | `call_id`, `name`, `result`, `is_error`                             |
-| `RunFinished`  | `text`, `turns`, `input_tokens`, `output_tokens`, `messages`, `new_messages` |
+| `RunFinished`  | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages` |
 
 They work with `match` too: `case TextDelta(text=text): ...`
+
+`usage` is a `Usage` with the tokens of the whole run: `input_tokens`, `cached_input_tokens`, `output_tokens`,
+`reasoning_tokens` and `requests`. Counts the API did not report are 0. Add them up with `+`, and read
+`error.usage` on an `AgentError` to see what a failed run used.
 
 Models stream text in tiny pieces. To get fewer, bigger `TextDelta` events (less work for Python), choose how
 text is grouped with `text_chunks`, on the agent or per run:
@@ -128,6 +133,35 @@ saved. Store errors are raised from the run (`HistoryError` when the store retur
 holding your connection pool (sqlx, diesel, SeaORM...). The agent calls it directly in Rust, so loading never
 goes through Python. See [`examples/rust_history_store`](examples/rust_history_store) for a complete SQLite store.
 
+## Responses API
+
+`api="responses"` uses OpenAI's Responses API. The model's encrypted reasoning is kept in the history and sent back
+unchanged, so the model builds on it and the prompt cache keeps working. With `store=True`, OpenAI keeps each
+response and requests send only the new messages (`previous_response_id`), inside a run and across runs:
+
+```python
+agent = Agent(model="gpt-5-mini", api="responses", store=True)
+first = await agent.run("I am Dani")
+await agent.run("What is my name?", previous_response_id=first.response_id)
+```
+
+Details in the [Responses API docs](https://daniprol.github.io/pyox-agents/responses-api/).
+
+## Images and files
+
+A prompt can be a list of text, images and files (such as PDFs). Paths and bytes are sent inline (base64); a web
+address is sent as is.
+
+```python
+from pyox_agents import file, image
+
+await agent.run(["What is in this picture?", image("cat.png")])
+await agent.run(["Summarize this report", file("report.pdf")])
+```
+
+They stay in the history as parts of the user message: `{"type": "image", "url": ...}` and
+`{"type": "file", "url": ..., "filename": ...}`.
+
 ## Tools
 
 **Python tools.** Decorate a function (sync or async) with `@tool`. The JSON schema comes from the type hints,
@@ -144,6 +178,25 @@ async def search(query: Annotated[str, "What to look for"], order: Literal["new"
 
 Results that are not `str` are sent to the model as JSON. If a tool raises, the model gets the error message
 (and `ToolFinished.is_error` is `True`); the run continues.
+
+**Run context.** A tool whose first parameter is typed `RunContext` gets the run's context; the model never sees
+that parameter. Pass what your tools need (a database pool, the current user...) as `deps`:
+
+```python
+from pyox_agents import RunContext
+
+
+@tool
+async def my_orders(ctx: RunContext[Database], status: str = "open") -> list[str]:
+    """List the user's orders."""
+    return await ctx.deps.orders(ctx.conversation_id, status)
+
+
+await agent.run("What did I order?", deps=database)
+```
+
+`ctx` has `deps`, `conversation_id`, `turn`, `usage` (tokens used so far), and, inside a
+tool, `tool_call_id` and `tool_name`. Hooks get the same `ctx`.
 
 **Built-in Rust tools.** Compiled into the library and run entirely in Rust:
 
@@ -189,6 +242,58 @@ See [`examples/rust_tool_package`](examples/rust_tool_package) for a complete pa
 trait. Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
 as a tool too.
 
+## Hooks
+
+Hooks are functions the agent calls at fixed points of every run, to watch it or change what happens next.
+Return `None` to leave things as they are, or a new value to replace them:
+
+| Hook                                   | When                               | Return a new...                         |
+|----------------------------------------|------------------------------------|-----------------------------------------|
+| `before_run(ctx)`                      | a run starts                       | -                                       |
+| `before_model_request(ctx, messages)`  | before each model request          | list of messages, for this request only |
+| `after_model_response(ctx, message)`   | after each model response          | assistant message                       |
+| `before_tool_call(ctx, call)`          | before each tool call              | call (e.g. other `arguments`)           |
+| `after_tool_call(ctx, call, result)`   | after each tool call               | result (`{"content", "is_error"}`)      |
+| `after_run(ctx, result)`               | the run finished (`RunFinished`)   | -                                       |
+
+Raising in `before_tool_call` or `after_tool_call` blocks the call: the model gets the error as the tool result.
+Raising in any other hook stops the run. Changes made in `before_model_request` don't touch the history, so they
+are a safe place to trim long conversations or add reminders.
+
+```python
+from pyox_agents import Hooks, RunContext, RunFinished, ToolCall
+
+
+def no_deletes(ctx: RunContext, call: ToolCall) -> None:
+    if call["name"] == "delete_file":
+        raise PermissionError("Deleting files is not allowed")
+
+
+class Timer:  # any object with hook methods works too
+    def before_run(self, ctx: RunContext) -> None: ...
+    async def after_run(self, ctx: RunContext, result: RunFinished) -> None: ...
+
+
+agent = Agent(model="gpt-5-mini", tools=[...], hooks=[Hooks(before_tool_call=no_deletes), Timer()])
+```
+
+Hooks can be sync or async, and run in the order given: each one sees the changes of the previous ones.
+
+**Hooks in Rust.** Register closures with `Hooks` from [`pyox-tools`](crates/pyox-tools/src/hooks.rs); the agent
+calls them directly in Rust, without Python:
+
+```rust
+let guard = Hooks::new().before_tool_call(|_context, call| {
+    if call.name == "delete_file" {
+        return Err("Deleting files is not allowed".into()); // the model sees this
+    }
+    Ok(())
+});
+add_hooks(module, "guard", guard)?; // Python: Agent(hooks=[your_package.guard])
+```
+
+See `guard` in [`examples/rust_tool_package`](examples/rust_tool_package/src/lib.rs) for a complete example.
+
 ## Client
 
 ```python
@@ -210,11 +315,16 @@ Share one `Client` between agents to reuse its connection pool.
 A request that fails before any response arrives (for example on a pooled connection the server had already
 closed) is sent again, up to `max_retries` times. Once the answer starts streaming it is never retried.
 
+**Azure OpenAI** (Microsoft Foundry, v1 API): `Client.azure("https://my-resource.openai.azure.com", api_key=...)`
+(defaults: `$AZURE_OPENAI_ENDPOINT`, `$AZURE_OPENAI_API_KEY`). No `api-version` is needed, and the agent's
+`model` is your deployment name.
+
 ## Errors
 
 All exceptions inherit from `AgentError`:
 `ApiError` (with `AuthenticationError` and `RateLimitError`), `RequestTimeoutError`, `NetworkError`,
-`InvalidResponseError`, `MaxTurnsExceededError` (the `max_turns` limit, 20 by default) and `HistoryError`.
+`InvalidResponseError`, `MaxTurnsExceededError` (the `max_turns` limit, 20 by default), `HistoryError` and
+`HookError` (a Rust hook failed, or a hook returned something invalid).
 
 ## How it works
 
@@ -224,7 +334,9 @@ Python                               Rust (src/)
 Agent(...)  ───────────────────────► Engine         config shared by all runs (agent.rs)
 agent.execute("...")  ─────────────► Run            one run: history + event queue
 async for event in run  ◄─ events ── agent loop     request → stream → tools → repeat
-                                       ├── openai_chat.rs   request body + chunk parsing
+                                       ├── model_api.rs     picks the API adapter
+                                       ├── openai_chat.rs   Chat Completions: request body + chunk parsing
+                                       ├── openai_responses.rs  Responses: request body + event parsing
                                        ├── sse.rs           server-sent events decoding
                                        └── tools/           Python tools are awaited on
                                                             Python's event loop; Rust tools
@@ -251,6 +363,10 @@ Git hooks ([prek](https://prek.j178.dev), configured in [`prek.toml`](prek.toml)
 
 Run them by hand with `uv run prek run --all-files` (add `--stage pre-push` for the push hooks).
 
+The documentation site lives in [`docs/`](docs) and [`zensical.toml`](zensical.toml), built with
+[Zensical](https://zensical.org). Preview it with `uv run --only-group docs zensical serve`; every push to `main`
+publishes it to GitHub Pages ([`.github/workflows/docs.yml`](.github/workflows/docs.yml)).
+
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs both hook stages on Python 3.11 and 3.14, plus a
 coverage job. The coverage report (Python and Rust, including the Rust code exercised by the Python tests) is
 shown in the run summary and uploaded as an artifact.
@@ -268,20 +384,30 @@ async def test_example(fake_openai, make_agent):
 
 ## Benchmarks
 
-Compared with [pydantic-ai](https://ai.pydantic.dev) against the same fake OpenAI server, which answers instantly,
-so this is the overhead of each library (details and how to run them in [`benchmarks/`](benchmarks)):
+Compared with seven other agent frameworks (pydantic-ai, OpenAI Agents SDK, Microsoft Agent Framework, LangGraph,
+LangChain, LlamaIndex and Agno) against the same fake OpenAI server, which answers instantly, so this is the
+overhead of each library. "Others" is the range from the best to the worst of the seven (details, every number
+and how to run them in [`benchmarks/`](benchmarks)):
 
-| Scenario                     | Latency (pyox / pydantic-ai) | Throughput, 100 at once | Peak memory  |
-|------------------------------|-----------------------------:|------------------------:|-------------:|
-| Long streamed answer         | 57 ms / 143 ms               | 24 / 6 runs/s           | 59 / 117 MB  |
-| One tool call                | 4.7 ms / 22.4 ms             | 395 / 43 runs/s         | 34 / 103 MB  |
-| Five tool calls at once      | 6.1 ms / 33.6 ms             | 239 / 29 runs/s         | 36 / 108 MB  |
-| Startup (import + agent)     | 77 ms / 1044 ms              |                         | 23 / 76 MB   |
+| Scenario                 | Latency p50 (pyox / others) | Throughput, 100 at once   | Peak memory        |
+|--------------------------|----------------------------:|--------------------------:|-------------------:|
+| Long streamed answer     | 105 ms / 112-213 ms         | 14 / 4-9 runs/s           | 50 / 100-381 MB    |
+| One tool call            | 8.3 ms / 17.6-41.0 ms       | 230 / 23-57 runs/s        | 35 / 94-196 MB     |
+| Five tool calls at once  | 10.9 ms / 28.1-65.8 ms      | 147 / 14-37 runs/s        | 36 / 99-204 MB     |
+| Startup (import + agent) | 0.13 s / 1.5-3.2 s          |                           | 25 / 67-132 MB     |
 
-Grouping streamed text makes the long answer much cheaper: 56 ms with `text_chunks="delta"` (default), 7.6 ms with
-`10`, 4.5 ms with `"paragraph"` and 4.7 ms with `"message"`.
+Grouping streamed text makes the long answer much cheaper: 111 ms with `text_chunks="delta"` (default), 15 ms with
+`10`, 6.7 ms with `"paragraph"` and 7.6 ms with `"message"`.
+
+Behind a FastAPI streaming endpoint (one uvicorn process, 100 concurrent users, load from [k6](https://k6.io)):
+
+| Scenario             | Requests/s (pyox / others) | First byte p50       | Latency avg          | Server memory    |
+|----------------------|---------------------------:|---------------------:|---------------------:|-----------------:|
+| Long streamed answer | 17 / 3-8                   | 49 ms / 0.9-10.4 s   | 5.6 s / 11.1-28.7 s  | 83 / 105-216 MB  |
+| One tool call        | 247 / 24-56                | 118 ms / 1.6-3.3 s   | 0.4 s / 1.7-4.1 s    | 65 / 107-200 MB  |
 
 ## Next steps
 
-- Hooks (before/after tool calls and model requests) that can modify arguments and history.
+- Let tools return images (e.g. a screenshot tool), as pi does.
 - More APIs and providers (Responses, Anthropic, Gemini), each as a new adapter next to `openai_chat.rs`.
+- Give Rust tools the run context too (`conversation_id`, `turn`), if a use case needs it.

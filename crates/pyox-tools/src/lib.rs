@@ -1,5 +1,6 @@
-//! Extend pyox-agents in Rust: tools (this page) and history stores
-//! ([`history`]), both called by the agent without going through Python.
+//! Extend pyox-agents in Rust: tools (this page), history stores
+//! ([`history`]) and hooks ([`hooks`]), all called by the agent without
+//! going through Python.
 //!
 //! ## Tools
 //!
@@ -38,9 +39,12 @@
 //! Rust function directly, without going through Python (see [`native`]).
 
 pub mod history;
+pub mod hooks;
 pub mod messages;
 pub mod native;
 pub mod native_history;
+pub mod native_hooks;
+pub mod usage;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;

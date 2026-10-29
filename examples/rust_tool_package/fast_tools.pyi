@@ -9,3 +9,8 @@ class RustTool:
 
 count_words: RustTool
 most_common_words: RustTool
+
+class RustHooks:
+    __pyox_hooks__: object  # capsule the agent uses to call the Rust hooks directly
+
+guard: RustHooks

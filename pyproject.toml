@@ -44,11 +44,12 @@ dev = [
     "sqlalchemy[asyncio]>=2.0",  # for examples/python_history.py
     "ty>=0.0.1",
 ]
+docs = ["zensical>=0.0.72"]  # uv run --only-group docs zensical serve
 
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "benchmarks"]
 
 [tool.ruff.lint]
 select = [

@@ -13,7 +13,11 @@
 //! | `events`        | The event classes Python receives (`TextDelta`, ...)          |
 //! | `messages`      | Our own conversation history format                           |
 //! | `history_store` | Reading given history; loading/saving it with history stores  |
+//! | `hooks`         | Calling Python or Rust hooks at fixed points of a run         |
+//! | `run_context`   | `RunContext`: the `ctx` given to tools and hooks              |
+//! | `model_api`     | Picks the API adapter; what a model request and answer hold   |
 //! | `openai_chat`   | Adapter for the OpenAI Chat Completions API                   |
+//! | `openai_responses` | Adapter for the OpenAI Responses API                       |
 //! | `sse`           | Splits a byte stream into server-sent events                  |
 //! | `text_chunks`   | Groups streamed text (deltas, paragraphs, whole messages)     |
 //! | `tools`         | Tool definitions and how to call Python or Rust tools         |
@@ -28,10 +32,14 @@ mod client;
 mod errors;
 mod events;
 mod history_store;
+mod hooks;
 mod json_convert;
 mod messages;
+mod model_api;
 mod openai_chat;
+mod openai_responses;
 mod python_call;
+mod run_context;
 mod sse;
 mod text_chunks;
 mod tools;
@@ -44,11 +52,13 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<agent::Engine>()?;
     module.add_class::<agent::Run>()?;
     module.add_class::<tools::BuiltinTool>()?;
+    module.add_class::<run_context::PythonRunContext>()?;
 
     module.add_class::<events::TextDelta>()?;
     module.add_class::<events::ToolStarted>()?;
     module.add_class::<events::ToolFinished>()?;
     module.add_class::<events::RunFinished>()?;
+    module.add_class::<pyox_tools::usage::Usage>()?;
 
     errors::add_exceptions_to_module(module)?;
     Ok(())

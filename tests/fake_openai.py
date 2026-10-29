@@ -1,4 +1,4 @@
-"""A real local HTTP server that imitates the streaming Chat Completions API.
+"""A real local HTTP server that imitates the streaming OpenAI APIs (Chat Completions and Responses).
 
 Tests talk to it over HTTP exactly like they would talk to OpenAI, so the
 whole Rust stack (HTTP, SSE decoding, parsing) is exercised without mocks.
@@ -17,10 +17,15 @@ Chunk = dict[str, Any]
 
 @dataclass(frozen=True)
 class StreamResponse:
-    """A successful streamed answer: chunks sent as SSE events, then `[DONE]`."""
+    """A successful streamed answer: chunks sent as SSE events, then `[DONE]`.
+
+    A chunk with a `"type"` (a Responses API event) is also named in an `event:`
+    line, as OpenAI does. The Responses API does not end with `[DONE]`.
+    """
 
     chunks: list[Chunk]
     delay_seconds: float = 0  # wait before answering, to test timeouts
+    end_with_done: bool = True
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,7 @@ Response = StreamResponse | ErrorResponse | DroppedConnection
 
 @dataclass(frozen=True)
 class RecordedRequest:
+    path: str  # e.g. "/v1/responses"
     body: dict[str, Any]
     headers: dict[str, str]  # names in lowercase
 
@@ -84,7 +90,7 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             headers = {name.lower(): value for name, value in self.headers.items()}
-            response = fake._next_response(RecordedRequest(body=body, headers=headers))
+            response = fake._next_response(RecordedRequest(path=self.path, body=body, headers=headers))
 
             if isinstance(response, DroppedConnection):
                 self.close_connection = True
@@ -102,8 +108,10 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
             for chunk in response.chunks:
-                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                event_line = f"event: {chunk['type']}\n" if "type" in chunk else ""
+                self.wfile.write(f"{event_line}data: {json.dumps(chunk)}\n\n".encode())
                 self.wfile.flush()
-            self.wfile.write(b"data: [DONE]\n\n")
+            if response.end_with_done:
+                self.wfile.write(b"data: [DONE]\n\n")
 
     return Handler

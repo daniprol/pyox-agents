@@ -31,8 +31,8 @@ async def main() -> None:
                 print(f"\n[calling {name} with {arguments}]")
             case ToolFinished(name=name, result=result):
                 print(f"[{name} returned {result!r}]")
-            case RunFinished(input_tokens=input_tokens, output_tokens=output_tokens):
-                print(f"\n\nTokens: {input_tokens} in, {output_tokens} out")
+            case RunFinished(usage=usage):
+                print(f"\n\nTokens: {usage.input_tokens} in, {usage.output_tokens} out")
 
 
 asyncio.run(main())

@@ -19,6 +19,7 @@ from pyox_agents import (
     NetworkError,
     RateLimitError,
     RequestTimeoutError,
+    Usage,
 )
 
 
@@ -59,8 +60,15 @@ async def test_unparseable_chunk(fake_openai: FakeOpenAI, make_agent: MakeAgent)
 async def test_max_turns(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(*(tool_calls_response(tool_call("ping")) for _ in range(2)))
 
-    with pytest.raises(MaxTurnsExceededError):
+    with pytest.raises(MaxTurnsExceededError) as error:
         await make_agent(tools=[lambda: "pong"], max_turns=2).run("Loop forever")
+
+    # The tokens of a failed run were still used (and billed).
+    assert error.value.usage == Usage(input_tokens=20, output_tokens=10, requests=2)
+
+
+def test_errors_raised_outside_a_run_have_no_usage() -> None:
+    assert AgentError("not from a run").usage is None
 
 
 async def test_request_timeout(fake_openai: FakeOpenAI) -> None:
