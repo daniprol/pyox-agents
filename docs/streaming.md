@@ -16,7 +16,7 @@ Events are small, read-only objects backed by Rust. They work with `isinstance` 
 | `TextDelta`    | the model streams text     | `text`                                                     |
 | `ToolStarted`  | a tool call starts         | `call_id`, `name`, `arguments` (dict)                      |
 | `ToolFinished` | a tool call ends           | `call_id`, `name`, `result`, `is_error`                    |
-| `RunFinished`  | the run ends (always last) | `text`, `turns`, `input_tokens`, `output_tokens`, `messages`, `new_messages` |
+| `RunFinished`  | the run ends (always last) | `text`, `turns`, `input_tokens`, `output_tokens`, `cached_input_tokens`, `response_id`, `messages`, `new_messages` |
 
 `await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event.
 

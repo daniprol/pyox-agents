@@ -104,7 +104,7 @@ async def test_before_model_request_changes_only_the_request(fake_openai: FakeOp
     assert [message["content"] for message in sent] == ["Hello", "(reminder for turn 1: be brief)"]
     assert result.messages == [
         {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hi", "tool_calls": []},
+        {"role": "assistant", "content": "Hi", "tool_calls": [], "model": "test-model"},
     ]
 
 

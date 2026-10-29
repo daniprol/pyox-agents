@@ -53,6 +53,13 @@ pub struct RunFinished {
     pub input_tokens: u64,
     #[pyo3(get)]
     pub output_tokens: u64,
+    /// The part of `input_tokens` that came from OpenAI's prompt cache.
+    #[pyo3(get)]
+    pub cached_input_tokens: u64,
+    /// Responses API: the id of the last response. With `store=True`, pass it
+    /// as `previous_response_id` to continue the conversation.
+    #[pyo3(get)]
+    pub response_id: Option<String>,
     /// The whole conversation; the run added the messages from `new_messages_start` on.
     pub messages: Vec<Message>,
     pub new_messages_start: usize,
@@ -119,8 +126,8 @@ impl RunFinished {
 
     fn __repr__(&self) -> String {
         format!(
-            "RunFinished(text={:?}, turns={}, input_tokens={}, output_tokens={})",
-            self.text, self.turns, self.input_tokens, self.output_tokens
+            "RunFinished(text={:?}, turns={}, input_tokens={}, output_tokens={}, cached_input_tokens={})",
+            self.text, self.turns, self.input_tokens, self.output_tokens, self.cached_input_tokens
         )
     }
 }

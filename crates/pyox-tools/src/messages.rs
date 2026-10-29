@@ -13,6 +13,8 @@
 //! {"role": "user", "content": "Hi"}
 //! {"role": "user", "content": [{"type": "text", "text": "What is this?"}, {"type": "image", "url": "https://..."}]}
 //! {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "name": "add", "arguments": {"a": 1}}]}
+//! {"role": "assistant", "content": "3", "model": "gpt-5-mini", "response_id": "resp_1",
+//!  "reasoning": [{"id": "rs_1", "summary": ["Adding..."], "encrypted_content": "gAAAA..."}]}
 //! {"role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3", "is_error": False}
 //! ```
 //!
@@ -35,6 +37,20 @@ pub enum Message {
         content: String,
         #[serde(default)]
         tool_calls: Vec<ToolCall>,
+        /// The model's reasoning (Responses API only), kept to send back
+        /// unchanged on the next request. `skip_serializing_if` leaves the
+        /// field out of the dict when it is empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reasoning: Vec<Reasoning>,
+        /// The id the Responses API gave this answer. With `store=True` the
+        /// next request can send it as `previous_response_id` instead of the
+        /// whole history.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        response_id: Option<String>,
+        /// The model that wrote this message. Reasoning is only sent back to
+        /// this same model: other models cannot read it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     Tool {
         tool_call_id: String,
@@ -98,10 +114,47 @@ pub struct ToolCall {
     pub arguments: Value,
 }
 
+/// One reasoning step of the model, as the Responses API returns it.
+///
+/// The readable part is only a summary. The full reasoning comes encrypted:
+/// we cannot read it, but sending it back lets the model continue from it
+/// without the server storing anything (`store=False`). Sending it back
+/// unchanged also keeps the start of the prompt identical, so OpenAI's prompt
+/// cache keeps working.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Reasoning {
+    pub id: String,
+    /// The summary parts, kept apart (not joined) so they go back exactly as they came.
+    #[serde(default)]
+    pub summary: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn old_assistant_messages_load_and_new_fields_are_left_out_when_empty() {
+        // Stored before `reasoning`, `response_id` and `model` existed.
+        let message: Message = serde_json::from_value(json!({"role": "assistant", "content": "Hi"})).unwrap();
+        let Message::Assistant {
+            reasoning,
+            response_id,
+            model,
+            ..
+        } = &message
+        else {
+            panic!("expected an assistant message, got {message:?}");
+        };
+        assert!(reasoning.is_empty() && response_id.is_none() && model.is_none());
+        assert_eq!(
+            serde_json::to_value(&message).unwrap(),
+            json!({"role": "assistant", "content": "Hi", "tool_calls": []})
+        );
+    }
 
     #[test]
     fn user_content_is_text_or_a_list_of_parts() {

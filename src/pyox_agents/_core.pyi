@@ -19,6 +19,17 @@ class Client:
         request_timeout_seconds: float | None = 600.0,
         max_retries: int = 2,
     ) -> None: ...
+    @staticmethod
+    def azure(
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        *,
+        headers: Mapping[str, str] | None = None,
+        connect_timeout_seconds: float = 10.0,
+        request_timeout_seconds: float | None = 600.0,
+        max_retries: int = 2,
+    ) -> Client:
+        """Azure OpenAI (Microsoft Foundry) v1 API; `model` is then your deployment name."""
     @property
     def base_url(self) -> str: ...
 
@@ -91,6 +102,10 @@ class RunFinished:
     @property
     def output_tokens(self) -> int: ...
     @property
+    def cached_input_tokens(self) -> int: ...
+    @property
+    def response_id(self) -> str | None: ...
+    @property
     def messages(self) -> list[Message]: ...
     @property
     def new_messages(self) -> list[Message]: ...
@@ -116,6 +131,9 @@ class Engine:
         text_chunks: str | int | None = None,
         history_store: HistoryStore | LoadHistory | None = None,
         hooks: Sequence[object] = (),
+        api: str = "chat",
+        store: bool = False,
+        encrypted_reasoning: bool = True,
     ) -> None: ...
     def execute(
         self,
@@ -125,6 +143,7 @@ class Engine:
         conversation_id: str | None = None,
         text_chunks: str | int | None = None,
         deps: Any = None,
+        previous_response_id: str | None = None,
     ) -> Run: ...
 
 class AgentError(Exception): ...

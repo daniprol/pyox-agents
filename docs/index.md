@@ -6,7 +6,8 @@ You define the agent (model, prompt, tools) in Python and iterate over its event
 Rust does the heavy lifting: HTTP, streaming decoding, JSON parsing and the agent loop.
 
 !!! note "Status: early"
-    Only the OpenAI Chat Completions API (and compatible servers, like Ollama) is supported for now.
+    It supports the OpenAI Chat Completions API (and compatible servers, like Ollama), the
+    [Responses API](responses-api.md), and Azure OpenAI.
 
 ## Install
 

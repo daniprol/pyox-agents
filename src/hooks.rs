@@ -103,7 +103,7 @@ impl AgentHooks {
         Ok(())
     }
 
-    /// Returns the messages to send instead of `messages`, if there are hooks.
+    /// Returns the messages to send instead of `messages`, if hooks changed them.
     pub async fn before_model_request(
         &self,
         context: &Context,
@@ -115,7 +115,9 @@ impl AgentHooks {
         }
         let arguments = vec![to_json(&messages)];
         let changed = self.run(Hook::BeforeModelRequest, context, arguments, python_task_locals);
-        Ok(Some(from_json(Hook::BeforeModelRequest, changed.await?)?))
+        let hooked_messages: Vec<Message> = from_json(Hook::BeforeModelRequest, changed.await?)?;
+        // `None` tells the agent loop nothing changed (it then may send only new messages).
+        Ok((hooked_messages != messages).then_some(hooked_messages))
     }
 
     pub async fn after_model_response(

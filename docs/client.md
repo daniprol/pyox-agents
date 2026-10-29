@@ -33,6 +33,25 @@ client = Client(base_url="http://localhost:11434/v1", api_key="ollama")  # e.g. 
 agent = Agent(client=client, model="llama3.2")
 ```
 
+### Azure OpenAI
+
+`Client.azure(...)` talks to Azure OpenAI (Microsoft Foundry) through its
+[v1 API](https://learn.microsoft.com/azure/foundry/openai/api-version-lifecycle), which speaks the same protocol as
+OpenAI. There is no `api-version` to pick, and the agent's `model` is the name of your deployment:
+
+```python
+client = Client.azure(
+    "https://my-resource.openai.azure.com",  # default: $AZURE_OPENAI_ENDPOINT
+    api_key="...",  # default: $AZURE_OPENAI_API_KEY
+)
+agent = Agent(client=client, model="my-gpt-5-mini-deployment", api="responses")
+```
+
+It is a normal `Client` whose `base_url` is `https://my-resource.openai.azure.com/openai/v1`, so it takes the
+same options (`headers`, timeouts, `max_retries`). `Client(base_url=".../openai/v1", api_key=...)` does the same.
+Both APIs work (`api="chat"` and `api="responses"`). For Microsoft Entra ID, pass a token as `api_key`; tokens
+expire, so create a new client with a fresh one.
+
 ## Errors
 
 All exceptions inherit from `AgentError`, so one `except` catches them all:

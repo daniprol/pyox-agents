@@ -10,6 +10,10 @@ and out:
 {"role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3", "is_error": False}
 ```
 
+Assistant messages also record the `model` that wrote them. With the [Responses API](responses-api.md) they also
+keep the model's encrypted `reasoning` and the `response_id`. Keep these fields when you store the history: they
+are what lets the next request reuse the reasoning and the prompt cache.
+
 ## Continue a conversation
 
 Pass the messages of a previous run as `history=`:

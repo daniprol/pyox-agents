@@ -20,7 +20,7 @@ from pyox_agents._core import (
     ToolFinished,
     ToolStarted,
 )
-from pyox_agents.agent import Agent, TextChunks
+from pyox_agents.agent import Agent, Api, TextChunks
 from pyox_agents.content import file, image
 from pyox_agents.hooks import Hooks, ToolResult
 from pyox_agents.messages import (
@@ -33,6 +33,7 @@ from pyox_agents.messages import (
     LoadHistory,
     Message,
     Prompt,
+    Reasoning,
     TextPart,
     ToolCall,
     ToolMessage,
@@ -47,6 +48,7 @@ __all__ = [
     "Agent",
     "AgentError",
     "AgentEvent",
+    "Api",
     "ApiError",
     "AssistantMessage",
     "AuthenticationError",
@@ -67,6 +69,7 @@ __all__ = [
     "NetworkError",
     "Prompt",
     "RateLimitError",
+    "Reasoning",
     "RequestTimeoutError",
     "Run",
     "RunContext",

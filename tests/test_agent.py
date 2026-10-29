@@ -26,7 +26,7 @@ async def test_run_finished_has_text_usage_and_messages(fake_openai: FakeOpenAI,
     assert (result.text, result.turns, result.input_tokens, result.output_tokens) == ("Hello!", 1, 7, 3)
     assert result.messages == [
         {"role": "user", "content": "Hi"},
-        {"role": "assistant", "content": "Hello!", "tool_calls": []},
+        {"role": "assistant", "content": "Hello!", "tool_calls": [], "model": "test-model"},
     ]
 
 
@@ -85,3 +85,12 @@ async def test_stopping_early_does_not_hang(fake_openai: FakeOpenAI, make_agent:
     async for event in make_agent().execute("Hi"):
         assert isinstance(event, TextDelta)
         break
+
+
+async def test_cached_tokens_are_reported(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    usage = {"prompt_tokens": 1000, "completion_tokens": 20, "prompt_tokens_details": {"cached_tokens": 900}}
+    fake_openai.queue(text_response("Hi", usage=usage))
+
+    result = await make_agent().run("Hi")
+
+    assert (result.input_tokens, result.cached_input_tokens, result.response_id) == (1000, 900, None)

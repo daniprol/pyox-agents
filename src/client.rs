@@ -121,6 +121,53 @@ impl Client {
         })
     }
 
+    /// A client for Azure OpenAI (Microsoft Foundry), through its v1 API.
+    ///
+    /// The v1 API speaks the same protocol as OpenAI, so this is a normal
+    /// `Client` with Azure's address: `https://<resource>.openai.azure.com/openai/v1`.
+    /// No `api-version` is needed, and an agent's `model` is the name of your
+    /// deployment. `api_key` is the resource key, or a Microsoft Entra ID token.
+    ///
+    /// `endpoint` and `api_key` default to the `AZURE_OPENAI_ENDPOINT` and
+    /// `AZURE_OPENAI_API_KEY` environment variables. The endpoint may end in
+    /// `/openai/v1` or not.
+    #[staticmethod]
+    #[pyo3(signature = (
+        endpoint = None,
+        api_key = None,
+        *,
+        headers = None,
+        connect_timeout_seconds = 10.0,
+        request_timeout_seconds = 600.0,
+        max_retries = 2,
+    ))]
+    fn azure(
+        endpoint: Option<String>,
+        api_key: Option<String>,
+        headers: Option<HashMap<String, String>>,
+        connect_timeout_seconds: f64,
+        request_timeout_seconds: Option<f64>,
+        max_retries: u32,
+    ) -> PyResult<Self> {
+        let Some(endpoint) = endpoint.or_else(|| std::env::var("AZURE_OPENAI_ENDPOINT").ok()) else {
+            return Err(PyValueError::new_err(
+                "Give `endpoint` or set AZURE_OPENAI_ENDPOINT (e.g. https://my-resource.openai.azure.com)",
+            ));
+        };
+        // Never fall back to OPENAI_API_KEY here: an OpenAI key is no use on Azure.
+        let Some(api_key) = api_key.or_else(|| std::env::var("AZURE_OPENAI_API_KEY").ok()) else {
+            return Err(PyValueError::new_err("Give `api_key` or set AZURE_OPENAI_API_KEY"));
+        };
+        Client::new(
+            Some(api_key),
+            Some(azure_v1_base_url(&endpoint)),
+            headers,
+            connect_timeout_seconds,
+            request_timeout_seconds,
+            max_retries,
+        )
+    }
+
     #[getter]
     fn base_url(&self) -> &str {
         &self.settings.base_url
@@ -128,5 +175,33 @@ impl Client {
 
     fn __repr__(&self) -> String {
         format!("Client(base_url={:?})", self.settings.base_url)
+    }
+}
+
+/// The address of Azure OpenAI's v1 API for a resource endpoint, which may
+/// already end in `/openai/v1` (or `/openai`).
+fn azure_v1_base_url(endpoint: &str) -> String {
+    let endpoint = endpoint.trim_end_matches('/');
+    let resource_url = endpoint
+        .strip_suffix("/openai/v1")
+        .or_else(|| endpoint.strip_suffix("/openai"))
+        .unwrap_or(endpoint);
+    format!("{resource_url}/openai/v1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn azure_endpoints_get_the_v1_path_once() {
+        for endpoint in [
+            "https://res.openai.azure.com",
+            "https://res.openai.azure.com/",
+            "https://res.openai.azure.com/openai",
+            "https://res.openai.azure.com/openai/v1/",
+        ] {
+            assert_eq!(azure_v1_base_url(endpoint), "https://res.openai.azure.com/openai/v1");
+        }
     }
 }

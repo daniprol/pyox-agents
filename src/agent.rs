@@ -11,7 +11,7 @@
 //! before_run hooks
 //! repeat until the model stops calling tools (at most `max_turns` times):
 //!     before_model_request hooks
-//!     stream a model response, forwarding text to Python as it arrives
+//!     stream a model response (Chat or Responses API), forwarding text to Python as it arrives
 //!     after_model_response hooks, then add the assistant message to the history
 //!     run the requested tools (concurrently) and add their results;
 //!         each call goes through before_tool_call and after_tool_call hooks
@@ -42,7 +42,7 @@ use crate::history_store::{HistoryStore, messages_from_python};
 use crate::hooks::AgentHooks;
 use crate::json_convert::python_to_json;
 use crate::messages::{Message, TokenUsage, ToolCall, UserContent, prompt_from_python};
-use crate::openai_chat::{build_request_body, stream_chat_completion};
+use crate::model_api::{Api, ModelRequest, last_response_id, stream_model_turn};
 use crate::run_context::Context;
 use crate::text_chunks::{TextChunking, TextOutput};
 use crate::tools::{ToolDefinition, ToolResult, error_result};
@@ -54,6 +54,8 @@ const EVENT_QUEUE_CAPACITY: usize = 64;
 /// The configuration shared (read-only) by every run of an agent.
 struct AgentConfig {
     client: ClientSettings,
+    /// Chat Completions or Responses, with its settings.
+    api: Api,
     model: String,
     system_prompt: String,
     tools: Vec<ToolDefinition>,
@@ -77,6 +79,7 @@ impl Engine {
     #[pyo3(signature = (
         *, client, model, prompt = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
         text_chunks = None, history_store = None, hooks = Vec::new(),
+        api = "chat", store = false, encrypted_reasoning = true,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent(...)`
     fn new(
@@ -89,7 +92,11 @@ impl Engine {
         text_chunks: Option<Bound<'_, PyAny>>,
         history_store: Option<Bound<'_, PyAny>>,
         hooks: Vec<Bound<'_, PyAny>>,
+        api: &str,
+        store: bool,
+        encrypted_reasoning: bool,
     ) -> PyResult<Self> {
+        let api = Api::from_python(api, store, encrypted_reasoning)?;
         let tools = tools
             .iter()
             .map(ToolDefinition::from_python)
@@ -111,6 +118,7 @@ impl Engine {
         Ok(Engine {
             config: Arc::new(AgentConfig {
                 client: client.settings.clone(),
+                api,
                 model,
                 system_prompt: prompt,
                 tools,
@@ -131,7 +139,12 @@ impl Engine {
     /// The history comes from `history` (message dicts or JSON text), or is
     /// loaded from the agent's history store when `conversation_id` is given.
     /// `deps` is any object, given to tools and hooks as `ctx.deps`.
-    #[pyo3(signature = (prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None))]
+    /// `previous_response_id` continues a conversation OpenAI stored (Responses API with `store`).
+    #[pyo3(signature = (
+        prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None,
+        previous_response_id = None,
+    ))]
+    #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
     fn execute(
         &self,
         py: Python<'_>,
@@ -140,6 +153,7 @@ impl Engine {
         conversation_id: Option<String>,
         text_chunks: Option<Bound<'_, PyAny>>,
         deps: Option<Py<PyAny>>,
+        previous_response_id: Option<String>,
     ) -> PyResult<Run> {
         let text_chunks = match text_chunks {
             Some(value) => TextChunking::from_python(&value)?,
@@ -153,6 +167,22 @@ impl Engine {
                 return Err(PyValueError::new_err(
                     "`conversation_id` needs an agent with a `history_store`",
                 ));
+            }
+        }
+        if previous_response_id.is_some() {
+            if !self.config.api.stores_responses() {
+                return Err(PyValueError::new_err(
+                    "`previous_response_id` needs an agent with `api=\"responses\"` and `store=True`",
+                ));
+            }
+            // The stored response already holds the conversation.
+            if history.is_some() || conversation_id.is_some() {
+                return Err(PyValueError::new_err(
+                    "Give `previous_response_id` or a history (`history`, `conversation_id`), not both",
+                ));
+            }
+            if prompt.is_none() {
+                return Err(PyValueError::new_err("`previous_response_id` needs a prompt"));
             }
         }
         let prompt = prompt.as_ref().map(prompt_from_python).transpose()?;
@@ -172,6 +202,7 @@ impl Engine {
                 history,
                 prompt,
                 conversation_id,
+                previous_response_id,
                 text_chunks,
                 deps: deps.unwrap_or_else(|| py.None()),
                 event_sender,
@@ -191,6 +222,8 @@ struct RunInputs {
     prompt: Option<UserContent>,
     /// Set when the history is loaded from (and saved to) the history store.
     conversation_id: Option<String>,
+    /// The stored response this run continues, from `execute(previous_response_id=...)`.
+    previous_response_id: Option<String>,
     /// Given to tools and hooks as `ctx.deps`.
     deps: Py<PyAny>,
     event_sender: Sender<PyResult<AgentEvent>>,
@@ -263,6 +296,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         history,
         prompt,
         conversation_id,
+        previous_response_id: run_start_response_id,
         text_chunks,
         deps,
         event_sender,
@@ -307,14 +341,26 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         let hooked_messages = hooks
             .before_model_request(&context, &messages, &python_task_locals)
             .await?;
-        let request_body = build_request_body(
-            &config.model,
-            &config.system_prompt,
-            hooked_messages.as_ref().unwrap_or(&messages),
-            &config.tools,
-            &config.model_parameters,
-        );
-        let assistant_turn = stream_chat_completion(&config.client, &request_body, &mut text_output).await?;
+        // With `store`, OpenAI keeps every response, so the request continues
+        // from the newest one and sends only the messages after it. If hooks
+        // changed the messages, OpenAI's copy no longer matches them: send
+        // them all (on top of the response the run started from, if any).
+        let previous_response_id = if !config.api.stores_responses() {
+            None
+        } else if hooked_messages.is_some() {
+            run_start_response_id.as_deref()
+        } else {
+            last_response_id(&messages).or(run_start_response_id.as_deref())
+        };
+        let request = ModelRequest {
+            model: &config.model,
+            system_prompt: &config.system_prompt,
+            messages: hooked_messages.as_ref().unwrap_or(&messages),
+            tools: &config.tools,
+            model_parameters: &config.model_parameters,
+            previous_response_id,
+        };
+        let assistant_turn = stream_model_turn(&config.client, config.api, &request, &mut text_output).await?;
         text_output.finish().await; // the message ended: send any text still grouped
         total_usage.add(assistant_turn.usage);
         context.run.input_tokens = total_usage.input_tokens;
@@ -323,14 +369,23 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
         let assistant_message = Message::Assistant {
             content: assistant_turn.text,
             tool_calls: assistant_turn.tool_calls,
+            reasoning: assistant_turn.reasoning,
+            response_id: assistant_turn.response_id,
+            model: Some(config.model.clone()),
         };
         let assistant_message = hooks
             .after_model_response(&context, assistant_message, &python_task_locals)
             .await?;
-        let Message::Assistant { content, tool_calls } = &assistant_message else {
+        let Message::Assistant {
+            content,
+            tool_calls,
+            response_id,
+            ..
+        } = &assistant_message
+        else {
             unreachable!("after_model_response always gives an assistant message");
         };
-        let (text, tool_calls) = (content.clone(), tool_calls.clone());
+        let (text, tool_calls, response_id) = (content.clone(), tool_calls.clone(), response_id.clone());
         messages.push(assistant_message);
 
         if tool_calls.is_empty() {
@@ -339,6 +394,8 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals) -> Py
                 turns: turn,
                 input_tokens: total_usage.input_tokens,
                 output_tokens: total_usage.output_tokens,
+                cached_input_tokens: total_usage.cached_input_tokens,
+                response_id,
                 messages,
                 new_messages_start,
             };

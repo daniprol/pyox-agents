@@ -15,6 +15,7 @@ nav = [
   { "Tools" = "tools.md" },
   { "Images and files" = "images-and-files.md" },
   { "History" = "history.md" },
+  { "Responses API" = "responses-api.md" },
   { "Hooks" = "hooks.md" },
   { "Client and errors" = "client.md" },
   { "Benchmarks" = "benchmarks.md" },

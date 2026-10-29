@@ -31,7 +31,7 @@ asyncio.run(main())
 Documentation: **[daniprol.github.io/pyox-agents](https://daniprol.github.io/pyox-agents/)**.
 Examples and the commands to run them are in [`examples/`](examples).
 
-Status: early. Only the OpenAI Chat Completions API (and compatible servers) is supported for now.
+Status: early. It supports the OpenAI Chat Completions API (and compatible servers), the Responses API, and Azure OpenAI.
 
 ## Install (development)
 
@@ -53,7 +53,7 @@ After changing Rust code, `uv sync` (or `uv run ...`) rebuilds it automatically.
 | `TextDelta`    | `text`                                                              |
 | `ToolStarted`  | `call_id`, `name`, `arguments` (dict)                               |
 | `ToolFinished` | `call_id`, `name`, `result`, `is_error`                             |
-| `RunFinished`  | `text`, `turns`, `input_tokens`, `output_tokens`, `messages`, `new_messages` |
+| `RunFinished`  | `text`, `turns`, `input_tokens`, `output_tokens`, `cached_input_tokens`, `response_id`, `messages`, `new_messages` |
 
 They work with `match` too: `case TextDelta(text=text): ...`
 
@@ -128,6 +128,20 @@ saved. Store errors are raised from the run (`HistoryError` when the store retur
 **History stores in Rust.** Implement the `HistoryStore` trait from [`pyox-tools`](crates/pyox-tools) on a struct
 holding your connection pool (sqlx, diesel, SeaORM...). The agent calls it directly in Rust, so loading never
 goes through Python. See [`examples/rust_history_store`](examples/rust_history_store) for a complete SQLite store.
+
+## Responses API
+
+`api="responses"` uses OpenAI's Responses API. The model's encrypted reasoning is kept in the history and sent back
+unchanged, so the model builds on it and the prompt cache keeps working. With `store=True`, OpenAI keeps each
+response and requests send only the new messages (`previous_response_id`), inside a run and across runs:
+
+```python
+agent = Agent(model="gpt-5-mini", api="responses", store=True)
+first = await agent.run("I am Dani")
+await agent.run("What is my name?", previous_response_id=first.response_id)
+```
+
+Details in the [Responses API docs](https://daniprol.github.io/pyox-agents/responses-api/).
 
 ## Images and files
 
@@ -297,6 +311,10 @@ Share one `Client` between agents to reuse its connection pool.
 A request that fails before any response arrives (for example on a pooled connection the server had already
 closed) is sent again, up to `max_retries` times. Once the answer starts streaming it is never retried.
 
+**Azure OpenAI** (Microsoft Foundry, v1 API): `Client.azure("https://my-resource.openai.azure.com", api_key=...)`
+(defaults: `$AZURE_OPENAI_ENDPOINT`, `$AZURE_OPENAI_API_KEY`). No `api-version` is needed, and the agent's
+`model` is your deployment name.
+
 ## Errors
 
 All exceptions inherit from `AgentError`:
@@ -312,7 +330,9 @@ Python                               Rust (src/)
 Agent(...)  ───────────────────────► Engine         config shared by all runs (agent.rs)
 agent.execute("...")  ─────────────► Run            one run: history + event queue
 async for event in run  ◄─ events ── agent loop     request → stream → tools → repeat
-                                       ├── openai_chat.rs   request body + chunk parsing
+                                       ├── model_api.rs     picks the API adapter
+                                       ├── openai_chat.rs   Chat Completions: request body + chunk parsing
+                                       ├── openai_responses.rs  Responses: request body + event parsing
                                        ├── sse.rs           server-sent events decoding
                                        └── tools/           Python tools are awaited on
                                                             Python's event loop; Rust tools

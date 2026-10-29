@@ -42,7 +42,7 @@ async def test_new_messages_and_json_cover_only_this_run(fake_openai: FakeOpenAI
 
     assert second.new_messages == [
         {"role": "user", "content": "My name?"},
-        {"role": "assistant", "content": "Dani", "tool_calls": []},
+        {"role": "assistant", "content": "Dani", "tool_calls": [], "model": "test-model"},
     ]
     assert json.loads(second.new_messages_json()) == second.new_messages
     assert json.loads(second.messages_json()) == second.messages
@@ -96,7 +96,7 @@ async def test_sync_load_function_without_save(fake_openai: FakeOpenAI, make_age
     result = await make_agent(history_store=load).run(conversation_id="chat-2")
 
     assert loaded_ids == ["chat-2"]
-    assert result.new_messages == [{"role": "assistant", "content": "Fine", "tool_calls": []}]
+    assert result.new_messages == [{"role": "assistant", "content": "Fine", "tool_calls": [], "model": "test-model"}]
 
 
 async def test_a_run_without_conversation_id_skips_the_store(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
