@@ -96,6 +96,7 @@ def load_test(library: str, scenario: str, users: int, duration: str) -> dict:
         "requests_per_second": metrics["iterations"]["values"]["rate"],
         "first_byte_p50_ms": first_byte_ms["p(50)"],
         "first_byte_p99_ms": first_byte_ms["p(99)"],
+        "latency_avg_ms": duration_ms["avg"],
         "latency_p50_ms": duration_ms["p(50)"],
         "latency_p90_ms": duration_ms["p(90)"],
         "latency_p99_ms": duration_ms["p(99)"],
@@ -123,30 +124,39 @@ def summary_table(results: list[dict], scenario: str) -> list[str]:
         if r["scenario"] == scenario:
             by_library.setdefault(r["library"], {})[r["users"]] = r
     headers = ["Library", *(f"Req/s, {users} user{'s' if users > 1 else ''}" for users in CONCURRENT_USERS)]
-    headers += [
-        f"First byte p50, {most} users",
-        f"Latency p50, {most} users",
-        "CPU per request",
-        "Peak memory",
-        "Failed",
-    ]
-    rows = [
-        [
-            library,
-            *(f"{runs[users]['requests_per_second']:.0f}" for users in CONCURRENT_USERS),
-            f"{runs[most]['first_byte_p50_ms']:.0f} ms",
-            f"{runs[most]['latency_p50_ms']:.0f} ms",
-            f"{runs[most]['cpu_ms_per_request']:.1f} ms",
-            f"{max(r['memory_peak_mb'] for r in runs.values()):.0f} MB",
-            str(sum(r["failed_requests"] for r in runs.values())),
-        ]
-        for library, runs in sorted(by_library.items(), key=lambda item: -item[1][most]["requests_per_second"])
-    ]
+    headers += [f"First byte p50, {most} users", f"Latency avg / p50 / p90 / p99, {most} users"]
+    headers += ["CPU per request", "Peak memory", "Failed"]
+    rows = []
+    for library, runs in sorted(by_library.items(), key=lambda item: -item[1][most]["requests_per_second"]):
+        busiest = runs[most]
+        latencies = [busiest[f"latency_{stat}_ms"] / 1000 for stat in ("avg", "p50", "p90", "p99")]
+        rows.append(
+            [
+                library,
+                *(f"{runs[users]['requests_per_second']:.0f}" for users in CONCURRENT_USERS),
+                f"{busiest['first_byte_p50_ms']:.0f} ms",
+                " / ".join(f"{seconds:.1f}" for seconds in latencies) + " s",
+                f"{busiest['cpu_ms_per_request']:.1f} ms",
+                f"{max(r['memory_peak_mb'] for r in runs.values()):.0f} MB",
+                str(sum(r["failed_requests"] for r in runs.values())),
+            ]
+        )
     return markdown_table(headers, rows)
 
 
 def details_table(results: list[dict]) -> list[str]:
-    headers = ["Scenario", "Library", "Users", "Requests/s", "First byte p50", "p99", "Latency p50", "p90", "p99"]
+    headers = [
+        "Scenario",
+        "Library",
+        "Users",
+        "Requests/s",
+        "First byte p50",
+        "p99",
+        "Latency avg",
+        "p50",
+        "p90",
+        "p99",
+    ]
     headers += ["Failed", "Server CPU per request", "Server peak memory"]
     rows = [
         [
@@ -156,6 +166,7 @@ def details_table(results: list[dict]) -> list[str]:
             f"{r['requests_per_second']:.0f}",
             f"{r['first_byte_p50_ms']:.1f} ms",
             f"{r['first_byte_p99_ms']:.1f} ms",
+            f"{r['latency_avg_ms']:.1f} ms",
             f"{r['latency_p50_ms']:.1f} ms",
             f"{r['latency_p90_ms']:.1f} ms",
             f"{r['latency_p99_ms']:.1f} ms",

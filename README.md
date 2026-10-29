@@ -401,10 +401,10 @@ Grouping streamed text makes the long answer much cheaper: 111 ms with `text_chu
 
 Behind a FastAPI streaming endpoint (one uvicorn process, 100 concurrent users, load from [k6](https://k6.io)):
 
-| Scenario             | Requests/s (pyox / others) | First byte p50       | Latency p99            | Server memory    |
-|----------------------|---------------------------:|---------------------:|-----------------------:|-----------------:|
-| Long streamed answer | 15 / 3-8                   | 61 ms / 0.6-13.4 s   | 10.7 s / 20.0-38.3 s   | 80 / 102-279 MB  |
-| One tool call        | 220 / 22-51                | 138 ms / 1.9-3.6 s   | 1.1 s / 2.6-7.0 s      | 65 / 109-209 MB  |
+| Scenario             | Requests/s (pyox / others) | First byte p50       | Latency avg          | Server memory    |
+|----------------------|---------------------------:|---------------------:|---------------------:|-----------------:|
+| Long streamed answer | 17 / 3-8                   | 49 ms / 0.9-10.4 s   | 5.6 s / 11.1-28.7 s  | 83 / 105-216 MB  |
+| One tool call        | 247 / 24-56                | 118 ms / 1.6-3.3 s   | 0.4 s / 1.7-4.1 s    | 65 / 107-200 MB  |
 
 ## Next steps
 

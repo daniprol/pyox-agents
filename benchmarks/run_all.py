@@ -86,40 +86,46 @@ def measure(agent: str, scenario: str, runs: int, concurrency: int) -> dict:
 
 
 def libraries_markdown(startup: dict[str, dict[str, float]], results: list[dict], runs: int, concurrency: int) -> str:
+    """An overview table, then all the numbers in a collapsed block."""
     libraries = list(startup)
     versions = ", ".join(f"{library} {version(PACKAGES[library])}" for library in libraries)
     lines = [
         f"Python {platform.python_version()}, {platform.system()} {platform.machine()} ({cpu_name()})."
         f" {runs} runs per measurement, {concurrency} at a time for throughput. Versions: {versions}.",
         "",
-        "### Overview",
-        "",
-        "Latency p50 of one run, fastest first; in parentheses, how many times the pyox-agents time it is."
-        " Lower is better.",
+        "Latency p50 of one run, and in parentheses how many times the pyox-agents time it is. Fastest first.",
         "",
     ]
-    latency = {(r["agent"], r["scenario"]): r["latency_p50_ms"] for r in results}
+    by_key = {(r["agent"], r["scenario"]): r for r in results}
     scenarios = list(dict.fromkeys(r["scenario"] for r in results))
-    rows = [
-        [library, f"{startup[library]['time_ms']:.0f} ms"]
-        + [f"{latency[library, s]:.1f} ms ({latency[library, s] / latency[BASELINE, s]:.1f}x)" for s in scenarios]
-        for library in sorted(libraries, key=lambda library: latency[library, "tool"])
-    ]
-    lines += markdown_table(["Library", "Startup", *scenarios], rows)
+    rows = []
+    for library in sorted(libraries, key=lambda library: by_key[library, "tool"]["latency_p50_ms"]):
+        latencies = [by_key[library, s]["latency_p50_ms"] for s in scenarios]
+        baselines = [by_key[BASELINE, s]["latency_p50_ms"] for s in scenarios]
+        tool = by_key[library, "tool"]
+        rows.append(
+            [library, f"{startup[library]['time_ms']:.0f} ms"]
+            + [f"{ms:.1f} ms ({ms / baseline:.1f}x)" for ms, baseline in zip(latencies, baselines, strict=True)]
+            + [f"{tool['runs_per_second']:.0f} runs/s", f"{tool['memory_peak_mb']:.0f} MB"]
+        )
+    headers = ["Library", "Startup", *(f"`{s}`" for s in scenarios), "Throughput, `tool`", "Peak memory, `tool`"]
+    lines += markdown_table(headers, rows)
+    lines += ["", "<details><summary>All the numbers</summary>"]
     for scenario in scenarios:
-        description = SCENARIO_DESCRIPTIONS[scenario]
-        lines += [
-            "",
-            f"### `{scenario}`: {description}",
-            "",
-            *results_table("Library", [r for r in results if r["scenario"] == scenario]),
-        ]
-    lines += ["", "### Startup", ""]
+        lines += ["", f"`{scenario}`: {SCENARIO_DESCRIPTIONS[scenario]}", ""]
+        lines += results_table("Library", [r for r in results if r["scenario"] == scenario])
     rows = [
         [library, f"{startup[library]['time_ms']:.0f} ms", f"{startup[library]['memory_mb']:.0f} MB"]
         for library in sorted(libraries, key=lambda library: startup[library]["time_ms"])
     ]
-    lines += markdown_table(["Library", "Startup", "Memory after startup"], rows)
+    lines += [
+        "",
+        "Startup",
+        "",
+        *markdown_table(["Library", "Startup", "Memory after startup"], rows),
+        "",
+        "</details>",
+    ]
     return "\n".join(lines)
 
 

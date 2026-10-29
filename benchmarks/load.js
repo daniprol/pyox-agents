@@ -13,7 +13,7 @@ import { check } from "k6";
 export const options = {
   vus: Number(__ENV.VUS),
   duration: __ENV.DURATION || "20s",
-  summaryTrendStats: ["p(50)", "p(90)", "p(99)", "max"],
+  summaryTrendStats: ["avg", "p(50)", "p(90)", "p(99)", "max"],
 };
 
 const body = JSON.stringify({ prompt: __ENV.PROMPT });
