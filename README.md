@@ -384,25 +384,27 @@ async def test_example(fake_openai, make_agent):
 
 ## Benchmarks
 
-Compared with [pydantic-ai](https://ai.pydantic.dev) against the same fake OpenAI server, which answers instantly,
-so this is the overhead of each library (details and how to run them in [`benchmarks/`](benchmarks)):
+Compared with seven other agent frameworks (pydantic-ai, OpenAI Agents SDK, Microsoft Agent Framework, LangGraph,
+LangChain, LlamaIndex and Agno) against the same fake OpenAI server, which answers instantly, so this is the
+overhead of each library. "Others" is the range from the best to the worst of the seven (details, every number
+and how to run them in [`benchmarks/`](benchmarks)):
 
-| Scenario                     | Latency (pyox / pydantic-ai) | Throughput, 100 at once | Peak memory  |
-|------------------------------|-----------------------------:|------------------------:|-------------:|
-| Long streamed answer         | 63 ms / 125 ms               | 21 / 7 runs/s           | 61 / 119 MB  |
-| One tool call                | 5.1 ms / 21.1 ms             | 354 / 47 runs/s         | 34 / 103 MB  |
-| Five tool calls at once      | 6.8 ms / 30.8 ms             | 217 / 30 runs/s         | 36 / 108 MB  |
-| Startup (import + agent)     | 83 ms / 1124 ms              |                         | 24 / 76 MB   |
+| Scenario                 | Latency p50 (pyox / others) | Throughput, 100 at once   | Peak memory        |
+|--------------------------|----------------------------:|--------------------------:|-------------------:|
+| Long streamed answer     | 105 ms / 112-213 ms         | 14 / 4-9 runs/s           | 50 / 100-381 MB    |
+| One tool call            | 8.3 ms / 17.6-41.0 ms       | 230 / 23-57 runs/s        | 35 / 94-196 MB     |
+| Five tool calls at once  | 10.9 ms / 28.1-65.8 ms      | 147 / 14-37 runs/s        | 36 / 99-204 MB     |
+| Startup (import + agent) | 0.13 s / 1.5-3.2 s          |                           | 25 / 67-132 MB     |
 
-Grouping streamed text makes the long answer much cheaper: 65 ms with `text_chunks="delta"` (default), 9 ms with
-`10`, 4.4 ms with `"paragraph"` and 4.9 ms with `"message"`.
+Grouping streamed text makes the long answer much cheaper: 111 ms with `text_chunks="delta"` (default), 15 ms with
+`10`, 6.7 ms with `"paragraph"` and 7.6 ms with `"message"`.
 
 Behind a FastAPI streaming endpoint (one uvicorn process, 100 concurrent users, load from [k6](https://k6.io)):
 
-| Scenario             | Requests/s (pyox / pydantic-ai) | First byte p50     | Latency p99       | Server memory |
-|----------------------|--------------------------------:|-------------------:|------------------:|--------------:|
-| Long streamed answer | 24 / 5                          | 25 ms / 451 ms     | 6.7 s / 20.5 s    | 86 / 120 MB   |
-| One tool call        | 339 / 36                        | 102 ms / 1.5 s     | 0.63 s / 3.4 s    | 65 / 122 MB   |
+| Scenario             | Requests/s (pyox / others) | First byte p50       | Latency p99            | Server memory    |
+|----------------------|---------------------------:|---------------------:|-----------------------:|-----------------:|
+| Long streamed answer | 15 / 3-8                   | 61 ms / 0.6-13.4 s   | 10.7 s / 20.0-38.3 s   | 80 / 102-279 MB  |
+| One tool call        | 220 / 22-51                | 138 ms / 1.9-3.6 s   | 1.1 s / 2.6-7.0 s      | 65 / 109-209 MB  |
 
 ## Next steps
 

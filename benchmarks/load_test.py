@@ -20,9 +20,18 @@ import time
 import urllib.request
 from pathlib import Path
 
-from agents import LIBRARIES
+from libraries import LIBRARIES
 from measure import SCENARIOS
-from run_all import BASE_URL, HERE, cpu_name, start_mock_server, stop_mock_server, write_into_readme
+from run_all import (
+    BASE_URL,
+    HERE,
+    SCENARIO_DESCRIPTIONS,
+    cpu_name,
+    markdown_table,
+    start_mock_server,
+    stop_mock_server,
+    write_into_readme,
+)
 
 SERVER_PORT = 8000
 SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}"
@@ -98,26 +107,73 @@ def load_test(library: str, scenario: str, users: int, duration: str) -> dict:
 
 def results_markdown(results: list[dict], duration: str) -> str:
     lines = [
-        f"Python {sys.version.split()[0]}, one uvicorn process, {cpu_name()}. Each row: {duration} of load.",
-        "",
-        "| Scenario | Users | Library | Requests/s | First byte p50 | p99 | Latency p50 | p90 | p99 | Failed"
-        " | Server CPU per request | Server peak memory |",
-        "|---|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
+        f"Python {sys.version.split()[0]}, one uvicorn process, {cpu_name()}. Each measurement: {duration} of load."
     ]
-    for r in results:
-        lines.append(
-            f"| {r['scenario']} | {r['users']} | {r['library']} | {r['requests_per_second']:.0f}"
-            f" | {r['first_byte_p50_ms']:.1f} ms | {r['first_byte_p99_ms']:.1f} ms"
-            f" | {r['latency_p50_ms']:.1f} ms | {r['latency_p90_ms']:.1f} ms | {r['latency_p99_ms']:.1f} ms"
-            f" | {r['failed_requests']} | {r['cpu_ms_per_request']:.1f} ms | {r['memory_peak_mb']:.0f} MB |"
-        )
+    for scenario in LOAD_SCENARIOS:
+        lines += ["", f"### `{scenario}`: {SCENARIO_DESCRIPTIONS[scenario]}", "", *summary_table(results, scenario)]
+    lines += ["", "<details><summary>All the numbers</summary>", "", *details_table(results), "", "</details>"]
     return "\n".join(lines)
+
+
+def summary_table(results: list[dict], scenario: str) -> list[str]:
+    """Requests per second as users grow, and what users wait for with the most users. Fastest first."""
+    most = CONCURRENT_USERS[-1]
+    by_library: dict[str, dict[int, dict]] = {}
+    for r in results:
+        if r["scenario"] == scenario:
+            by_library.setdefault(r["library"], {})[r["users"]] = r
+    headers = ["Library", *(f"Req/s, {users} user{'s' if users > 1 else ''}" for users in CONCURRENT_USERS)]
+    headers += [
+        f"First byte p50, {most} users",
+        f"Latency p50, {most} users",
+        "CPU per request",
+        "Peak memory",
+        "Failed",
+    ]
+    rows = [
+        [
+            library,
+            *(f"{runs[users]['requests_per_second']:.0f}" for users in CONCURRENT_USERS),
+            f"{runs[most]['first_byte_p50_ms']:.0f} ms",
+            f"{runs[most]['latency_p50_ms']:.0f} ms",
+            f"{runs[most]['cpu_ms_per_request']:.1f} ms",
+            f"{max(r['memory_peak_mb'] for r in runs.values()):.0f} MB",
+            str(sum(r["failed_requests"] for r in runs.values())),
+        ]
+        for library, runs in sorted(by_library.items(), key=lambda item: -item[1][most]["requests_per_second"])
+    ]
+    return markdown_table(headers, rows)
+
+
+def details_table(results: list[dict]) -> list[str]:
+    headers = ["Scenario", "Library", "Users", "Requests/s", "First byte p50", "p99", "Latency p50", "p90", "p99"]
+    headers += ["Failed", "Server CPU per request", "Server peak memory"]
+    rows = [
+        [
+            r["scenario"],
+            r["library"],
+            str(r["users"]),
+            f"{r['requests_per_second']:.0f}",
+            f"{r['first_byte_p50_ms']:.1f} ms",
+            f"{r['first_byte_p99_ms']:.1f} ms",
+            f"{r['latency_p50_ms']:.1f} ms",
+            f"{r['latency_p90_ms']:.1f} ms",
+            f"{r['latency_p99_ms']:.1f} ms",
+            str(r["failed_requests"]),
+            f"{r['cpu_ms_per_request']:.1f} ms",
+            f"{r['memory_peak_mb']:.0f} MB",
+        ]
+        for r in results
+    ]
+    return markdown_table(headers, rows, text_columns=2)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--duration", default="20s", help="how long each load test runs (k6 format)")
+    parser.add_argument("--only", nargs="+", choices=LIBRARIES, help="test only these libraries (README unchanged)")
     args = parser.parse_args()
+    libraries = args.only or list(LIBRARIES)
 
     mock_server = start_mock_server()
     try:
@@ -125,14 +181,16 @@ def main() -> None:
             load_test(library, scenario, users, args.duration)
             for scenario in LOAD_SCENARIOS
             for users in CONCURRENT_USERS
-            for library in LIBRARIES
+            for library in libraries
         ]
     finally:
         stop_mock_server(mock_server)
 
-    (HERE / "load_test_results.json").write_text(json.dumps(results, indent=2) + "\n")
-    write_into_readme("server", results_markdown(results, args.duration))
-    print(results_markdown(results, args.duration))
+    markdown = results_markdown(results, args.duration)
+    print(markdown)
+    if not args.only:
+        (HERE / "load_test_results.json").write_text(json.dumps(results, indent=2) + "\n")
+        write_into_readme("server", markdown)
 
 
 if __name__ == "__main__":

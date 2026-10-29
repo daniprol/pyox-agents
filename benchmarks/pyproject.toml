@@ -4,10 +4,23 @@ version = "0.0.0"
 requires-python = ">=3.11"
 dependencies = [
     "pyox-agents",
-    "pydantic-ai-slim[openai]",
+    "pydantic-ai-slim[openai]>=2.61.0",
     "fastapi>=0.162.0",
     "uvicorn[standard]>=0.54.0",
+    "openai-agents>=0.20.0",
+    "agent-framework-core>=1.23.0",
+    "langgraph>=1.2.18",
+    "langchain>=1.4.7",
+    "langchain-openai>=1.7.3",
+    "llama-index-core>=0.14.25",
+    "llama-index-llms-openai>=0.8.3",
+    "agno>=3.1.12",
+    "agent-framework-openai>=1.17.0",
 ]
+
+[tool.uv]
+# llama-index-llms-openai asks for openai<3, but works with openai 3 (which pydantic-ai needs).
+override-dependencies = ["openai>=3.31.0"]
 
 [tool.uv.sources]
 pyox-agents = { path = "..", editable = true }

@@ -23,7 +23,7 @@ import statistics
 import sys
 import time
 
-from agents import AGENTS, StreamText
+from libraries import AGENTS, StreamText
 
 os.environ["PYDANTIC_AI_NO_BANNER"] = "1"  # pydantic-ai prints a banner on its first run
 
