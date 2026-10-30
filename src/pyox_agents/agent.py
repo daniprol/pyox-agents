@@ -58,8 +58,7 @@ class Agent:
     history and sent back unchanged, which also keeps the prompt cache working.
     Turn `encrypted_reasoning` off for models that do not reason (e.g. gpt-4.1).
     With `store=True`, OpenAI keeps each response and requests send only the
-    new messages (`previous_response_id`). A run can also add to a conversation OpenAI keeps:
-    `execute(..., openai_conversation="conv_...")`.
+    new messages (`previous_response_id`).
 
     Tool calls can wait for a person: approvals, `ctx.ask(...)` questions and
     frontend tools (see `pyox_agents.human_input`). `unanswered` says what
@@ -113,7 +112,6 @@ class Agent:
         text_chunks: TextChunks | None = None,
         deps: Any = None,
         previous_response_id: str | None = None,
-        openai_conversation: str | None = None,
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
@@ -130,10 +128,6 @@ class Agent:
 
         With `api="responses"` and `store=True`, a conversation OpenAI stored can also continue
         from its last response alone: `previous_response_id=result.response_id`.
-
-        With `api="responses"`, `openai_conversation="conv_..."` adds the run to a conversation
-        OpenAI keeps (create it with the OpenAI SDK: `client.conversations.create()`). Each request
-        sends only the messages the conversation does not have yet.
 
         When tool calls wait for a person, the run stops and `RunFinished.pending` lists their
         requests. Continue with the same history and `answers={call_id: Answer(...) | Approve(...)
@@ -153,7 +147,6 @@ class Agent:
             text_chunks=text_chunks,
             deps=deps,
             previous_response_id=previous_response_id,
-            openai_conversation=openai_conversation,
             answers=dict(answers) if answers else None,
             on_request=on_request,
             frontend_tools=[dict(tool) for tool in frontend_tools] if frontend_tools else None,
@@ -167,7 +160,6 @@ class Agent:
         conversation_id: str | None = None,
         deps: Any = None,
         previous_response_id: str | None = None,
-        openai_conversation: str | None = None,
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
@@ -182,7 +174,6 @@ class Agent:
             text_chunks="message",
             deps=deps,
             previous_response_id=previous_response_id,
-            openai_conversation=openai_conversation,
             answers=answers,
             on_request=on_request,
             frontend_tools=frontend_tools,

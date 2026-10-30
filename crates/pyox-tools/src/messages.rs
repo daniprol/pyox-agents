@@ -14,8 +14,7 @@
 //! {"role": "user", "content": [{"type": "text", "text": "What is this?"}, {"type": "image", "url": "https://..."}]}
 //! {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "name": "add", "arguments": {"a": 1}}]}
 //! {"role": "assistant", "content": "3", "model": "gpt-5-mini", "response_id": "resp_1",
-//!  "reasoning": [{"id": "rs_1", "summary": ["Adding..."], "encrypted_content": "gAAAA..."}],
-//!  "openai_conversation": "conv_1"}
+//!  "reasoning": [{"id": "rs_1", "summary": ["Adding..."], "encrypted_content": "gAAAA..."}]}
 //! {"role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3", "is_error": False}
 //! ```
 //!
@@ -59,12 +58,6 @@ pub enum Message {
         /// this same model: other models cannot read it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
-        /// The OpenAI conversation (`"conv_..."`) this answer was added to, when
-        /// the run used one (`execute(openai_conversation=...)`). Later requests
-        /// to that conversation send only the messages after it: OpenAI already
-        /// has the rest.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        openai_conversation: Option<String>,
     },
     Tool {
         tool_call_id: String,
@@ -257,19 +250,18 @@ mod tests {
 
     #[test]
     fn old_assistant_messages_load_and_new_fields_are_left_out_when_empty() {
-        // Stored before `reasoning`, `response_id`, `model` and `openai_conversation` existed.
+        // Stored before `reasoning`, `response_id` and `model` existed.
         let message: Message = serde_json::from_value(json!({"role": "assistant", "content": "Hi"})).unwrap();
         let Message::Assistant {
             reasoning,
             response_id,
             model,
-            openai_conversation,
             ..
         } = &message
         else {
             panic!("expected an assistant message, got {message:?}");
         };
-        assert!(reasoning.is_empty() && response_id.is_none() && model.is_none() && openai_conversation.is_none());
+        assert!(reasoning.is_empty() && response_id.is_none() && model.is_none());
         assert_eq!(
             serde_json::to_value(&message).unwrap(),
             json!({"role": "assistant", "content": "Hi", "tool_calls": []})

@@ -57,7 +57,6 @@ class AssistantMessage(TypedDict):
     reasoning: NotRequired[list[Reasoning]]  # Responses API only
     response_id: NotRequired[str]  # Responses API only, for `previous_response_id`
     model: NotRequired[str]  # the model that wrote it; reasoning is only sent back to it
-    openai_conversation: NotRequired[str]  # the OpenAI conversation it was added to (Responses API only)
 
 
 RequestKind = Literal["approval", "input", "frontend"]

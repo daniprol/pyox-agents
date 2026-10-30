@@ -179,15 +179,13 @@ impl Engine {
     /// loaded from the agent's history store when `conversation_id` is given.
     /// `deps` is any object, given to tools and hooks as `ctx.deps`.
     /// `previous_response_id` continues a conversation OpenAI stored (Responses API with `store`).
-    /// `openai_conversation` adds the run to a conversation OpenAI keeps (`"conv_..."`, Responses API).
     /// `answers` replies to the tool calls the last run left waiting (`{call_id: reply}`);
     /// `on_request` replies live, while the run waits (see `human_input`).
     /// `frontend_tools` adds tools the app runs, for this run only (dicts with
     /// `name`, `description` and `parameters`, as AG-UI clients send them).
     #[pyo3(signature = (
         prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None,
-        previous_response_id = None, openai_conversation = None, answers = None, on_request = None,
-        frontend_tools = None,
+        previous_response_id = None, answers = None, on_request = None, frontend_tools = None,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
     fn execute(
@@ -199,7 +197,6 @@ impl Engine {
         text_chunks: Option<Bound<'_, PyAny>>,
         deps: Option<Py<PyAny>>,
         previous_response_id: Option<String>,
-        openai_conversation: Option<String>,
         answers: Option<Bound<'_, PyDict>>,
         on_request: Option<Py<PyAny>>,
         frontend_tools: Option<Vec<Bound<'_, PyAny>>>,
@@ -232,19 +229,6 @@ impl Engine {
             }
             if prompt.is_none() {
                 return Err(PyValueError::new_err("`previous_response_id` needs a prompt"));
-            }
-        }
-        if openai_conversation.is_some() {
-            if !matches!(self.config.api, Api::Responses(_)) {
-                return Err(PyValueError::new_err(
-                    "`openai_conversation` needs an agent with `api=\"responses\"`",
-                ));
-            }
-            // The API accepts one or the other: both say what the request continues.
-            if previous_response_id.is_some() {
-                return Err(PyValueError::new_err(
-                    "Give `openai_conversation` or `previous_response_id`, not both",
-                ));
             }
         }
         let mut replies = HashMap::new();
@@ -296,7 +280,6 @@ impl Engine {
             prompt,
             conversation_id,
             previous_response_id,
-            openai_conversation,
             text_chunks,
             deps: deps.unwrap_or_else(|| py.None()),
             answers: replies,
@@ -319,8 +302,6 @@ pub struct RunInputs {
     conversation_id: Option<String>,
     /// The stored response this run continues, from `execute(previous_response_id=...)`.
     previous_response_id: Option<String>,
-    /// The OpenAI conversation this run adds to, from `execute(openai_conversation=...)`.
-    openai_conversation: Option<String>,
     /// Given to tools and hooks as `ctx.deps`.
     deps: Py<PyAny>,
     /// Replies to the tool calls the last run left waiting, by call id.
@@ -358,7 +339,6 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
         prompt,
         conversation_id,
         previous_response_id: run_start_response_id,
-        openai_conversation,
         text_chunks,
         deps,
         answers,
@@ -480,7 +460,6 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
             tools: &tools,
             model_parameters: &config.model_parameters,
             previous_response_id,
-            openai_conversation: openai_conversation.as_deref(),
         };
         let assistant_turn =
             stream_model_turn(&config.client, config.api, &request, &mut run_socket, &mut text_output).await?;
@@ -494,8 +473,6 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
             reasoning: assistant_turn.reasoning,
             response_id: assistant_turn.response_id,
             model: Some(config.model.clone()),
-            // OpenAI added this answer to the conversation: later requests start after it.
-            openai_conversation: openai_conversation.clone(),
         };
         let assistant_message = hooks
             .after_model_response(&context, assistant_message, &python_task_locals)

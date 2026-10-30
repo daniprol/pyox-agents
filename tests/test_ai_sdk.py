@@ -6,7 +6,6 @@ import pytest
 
 from conftest import CheckStream, MakeAgent
 from factories import (
-    MemoryHistory,
     error_response,
     read_text,
     sse_data,
@@ -360,9 +359,19 @@ async def test_a_new_message_closes_unanswered_calls(fake_openai: FakeOpenAI, ma
 
 
 async def test_the_server_can_keep_the_conversation(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
-    history_store = MemoryHistory()
+    conversations: dict[str, list[Any]] = {}
+
+    class MemoryHistory:
+        async def load(self, conversation_id: str) -> list[Any]:
+            return conversations.get(conversation_id, [])
+
+        async def save(self, conversation_id: str, new_messages_json: str) -> None:
+            import json
+
+            conversations.setdefault(conversation_id, []).extend(json.loads(new_messages_json))
+
     fake_openai.queue(tool_calls_response(tool_call("pick_city")), text_response("Done"))
-    agent = make_agent(tools=[pick_city], history_store=history_store)
+    agent = make_agent(tools=[pick_city], history_store=MemoryHistory())
     await read_text(ai_sdk.stream(agent, chat_body(user_ui_message("Book a trip")), conversation_id="chat-1"))
     answered = {
         "id": "a1",
@@ -386,7 +395,7 @@ async def test_the_server_can_keep_the_conversation(fake_openai: FakeOpenAI, mak
     await read_text(ai_sdk.stream(agent, chat_body(answered), conversation_id="chat-1"))
 
     assert fake_openai.requests[1].body["messages"][-1]["content"] == "Booked Oslo"
-    assert [message["role"] for message in history_store.conversations["chat-1"]] == [
+    assert [message["role"] for message in conversations["chat-1"]] == [
         "user",
         "assistant",
         "tool",

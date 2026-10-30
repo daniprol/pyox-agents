@@ -5,9 +5,22 @@ import json
 import pytest
 
 from conftest import MakeAgent
-from factories import MemoryHistory, text_response, tool_call, tool_calls_response
+from factories import text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
 from pyox_agents import HistoryError, Message, tool
+
+
+class MemoryHistory:
+    """A Python history store keeping conversations in a dict."""
+
+    def __init__(self, conversations: dict[str, list[Message]] | None = None) -> None:
+        self.conversations = conversations or {}
+
+    async def load(self, conversation_id: str) -> list[Message]:
+        return self.conversations.get(conversation_id, [])
+
+    async def save(self, conversation_id: str, new_messages_json: str) -> None:
+        self.conversations.setdefault(conversation_id, []).extend(json.loads(new_messages_json))
 
 
 @tool

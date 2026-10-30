@@ -78,11 +78,6 @@ pub struct ModelRequest<'a> {
     /// server still has it (with `store`, or on the WebSocket connection that
     /// made it) and sends only the messages after it. The Chat API ignores it.
     pub previous_response_id: Option<&'a str>,
-    /// The OpenAI conversation (`"conv_..."`) the run adds to, from
-    /// `execute(openai_conversation=...)`. OpenAI keeps the conversation and
-    /// puts it in front of each request, so the Responses API sends only the
-    /// messages it does not have yet. The Chat API never gets one.
-    pub openai_conversation: Option<&'a str>,
 }
 
 /// What the model answered in one turn.
@@ -147,7 +142,6 @@ pub mod test_helpers {
             tools: &[],
             model_parameters,
             previous_response_id: None,
-            openai_conversation: None,
         }
     }
 }

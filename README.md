@@ -145,16 +145,6 @@ first = await agent.run("I am Dani")
 await agent.run("What is my name?", previous_response_id=first.response_id)
 ```
 
-**Conversations.** A run can also add to a conversation OpenAI keeps (its
-[Conversations API](https://platform.openai.com/docs/api-reference/conversations)): create one with the OpenAI SDK
-and pass its id. Each request sends only the messages the conversation does not have yet:
-
-```python
-conversation = openai.OpenAI().conversations.create()
-await agent.run("I am Dani", openai_conversation=conversation.id)
-await agent.run("What is my name?", openai_conversation=conversation.id)
-```
-
 **WebSocket mode.** With `Client(transport="websocket")`, Responses API requests travel over WebSocket
 connections that Rust pools per `Client`. A run keeps one connection for all its turns, so after the first turn
 each request sends only the new tool results, even without `store` (the server caches the latest response of each
