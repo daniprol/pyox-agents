@@ -18,7 +18,21 @@ import pytest
 
 from conftest import MakeAgent
 from factories import collect_events, events_of_type
-from pyox_agents import AuthenticationError, BuiltinTool, Client, RunFinished, TextDelta, ToolFinished, tool
+from pyox_agents import (
+    ApiError,
+    AuthenticationError,
+    BuiltinTool,
+    Choice,
+    ChoiceAnswer,
+    Client,
+    Predicate,
+    PredicateAnswer,
+    RunFinished,
+    TextDelta,
+    ToolFinished,
+    decide,
+    tool,
+)
 
 pytestmark = pytest.mark.live
 
@@ -116,3 +130,27 @@ async def test_rejects_a_wrong_key(make_agent: MakeAgent) -> None:
 
     with pytest.raises(AuthenticationError):
         await make_agent(client=bad_client).run("Hi")
+
+
+async def test_answers_a_decision(client: Client, model: str) -> None:
+    try:
+        decision = await decide(
+            "Customer: my order arrived with a broken screen.",
+            {
+                "damaged": Predicate("Does the customer report a damaged item?"),
+                "mood": Choice("How does the customer feel?", ["happy", "upset"]),
+            },
+            client=client,
+            model=model,
+        )
+    except ApiError as error:
+        if "HTTP 404" in str(error):
+            pytest.skip("This endpoint does not serve the Decisions API")
+        raise
+
+    damaged, mood = decision["damaged"], decision["mood"]
+    assert isinstance(damaged, PredicateAnswer)
+    assert damaged.probability > 0.5
+    assert isinstance(mood, ChoiceAnswer)
+    assert mood.choice == "upset"
+    assert decision.usage.input_tokens > 0

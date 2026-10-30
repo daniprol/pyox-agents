@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
-from fake_openai import ErrorResponse, StreamResponse
+from fake_openai import ErrorResponse, JsonResponse, StreamResponse
 from pyox_agents import AgentEvent, Run
 
 DEFAULT_USAGE = {"prompt_tokens": 10, "completion_tokens": 5}
@@ -67,6 +67,23 @@ def error_response(status: int, message: str, *, code: str | None = None) -> Err
     if code is not None:
         error["code"] = code
     return ErrorResponse(status, json.dumps({"error": error}))
+
+
+def decision_response(*answers: dict[str, Any], request_id: str = "req_1") -> JsonResponse:
+    """A Decisions API answer, shaped like OpenAI's: `decision_response(predicate_answer("urgent", 0.9))`."""
+    usage = {
+        "input_tokens": 42,
+        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+        "output_tokens": 0,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 42,
+    }
+    body = {"model": "gpt-6-luna", "answers": list(answers), "usage": usage}
+    return JsonResponse(body, headers={"x-request-id": request_id})
+
+
+def predicate_answer(name: str, probability: float) -> dict[str, Any]:
+    return {"type": "predicate", "name": name, "probability": probability}
 
 
 async def collect_events(run: Run) -> list[AgentEvent]:

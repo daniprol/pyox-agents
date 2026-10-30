@@ -188,6 +188,75 @@ class Run:
         """The run as an AG-UI event stream (server-sent events text)."""
 
 @final
+class PredicateAnswer:
+    @property
+    def name(self) -> str: ...
+    @property
+    def probability(self) -> float:
+        """How likely the statement is true, from 0 to 1."""
+
+@final
+class ChoiceAnswer:
+    @property
+    def name(self) -> str: ...
+    @property
+    def choice(self) -> str | bool:
+        """The most likely option."""
+    @property
+    def confidence(self) -> float: ...
+    @property
+    def probabilities(self) -> dict[str | bool, float]:
+        """`{option: probability}`, in the order of the options."""
+
+@final
+class ScoreAnswer:
+    @property
+    def name(self) -> str: ...
+    @property
+    def score(self) -> float:
+        """The probability-weighted average of the level indices (0 is the lowest level)."""
+    @property
+    def confidence(self) -> float: ...
+    @property
+    def probabilities(self) -> dict[str, float]:
+        """`{level label: probability}`, from the lowest level to the highest."""
+
+@final
+class Refusal:
+    """The model declined to answer this question. The other answers are still valid."""
+
+    @property
+    def name(self) -> str: ...
+
+DecisionAnswer = PredicateAnswer | ChoiceAnswer | ScoreAnswer | Refusal
+
+@final
+class Decision:
+    """The answers to one `decide(...)` call, by question name: `decision["urgent"]`."""
+
+    @property
+    def model(self) -> str: ...
+    @property
+    def usage(self) -> Usage: ...
+    @property
+    def request_id(self) -> str | None:
+        """OpenAI's id for this request, for support."""
+    @property
+    def answers(self) -> dict[str, DecisionAnswer]: ...
+    def __getitem__(self, name: str) -> DecisionAnswer: ...
+    def __len__(self) -> int: ...
+
+def send_decision(
+    client: Client,
+    input: Prompt | Sequence[Message],  # noqa: A002
+    questions: list[dict[str, Any]],
+    *,
+    model: str,
+    safety_identifier: str | None = None,
+    prompt_cache_key: str | None = None,
+) -> Awaitable[Decision]: ...
+
+@final
 class EventBatches:
     def __aiter__(self) -> EventBatches: ...
     async def __anext__(self) -> list[TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished]: ...

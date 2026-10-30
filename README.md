@@ -31,7 +31,7 @@ asyncio.run(main())
 Documentation: **[daniprol.github.io/pyox-agents](https://daniprol.github.io/pyox-agents/)**.
 Examples and the commands to run them are in [`examples/`](examples).
 
-Status: early. It supports the OpenAI Chat Completions API (and compatible servers), the Responses API, and Azure OpenAI.
+Status: early. It supports the OpenAI Chat Completions API (and compatible servers), the Responses API, the Decisions API, and Azure OpenAI.
 
 ## Install (development)
 
@@ -151,6 +151,30 @@ each request sends only the new tool results, even without `store` (the server c
 connection). Chat Completions requests stay on HTTP, and a server without WebSocket support gets HTTP requests.
 
 Details in the [Responses API docs](https://daniprol.github.io/pyox-agents/responses-api/).
+
+## Decisions API
+
+OpenAI's Decisions API answers questions about an input with probabilities, fast and cheap: handy for triage,
+routing and guard rails around an agent. The input is text, a prompt with images, or a whole history:
+
+```python
+from pyox_agents import Choice, Predicate, Score, decide
+
+decision = await decide(
+    "The deploy failed twice and customers are seeing 500s.",
+    {
+        "urgent": Predicate("Does this need attention right now?"),
+        "team": Choice("Which team should handle it?", {"infra": "Deploys and outages.", "billing": "Payments."}),
+        "severity": Score("How severe is the impact?", ["Cosmetic", "Degraded", "Outage"]),
+    },
+    client=client,
+)
+decision["urgent"].probability  # 0.97
+decision["team"].choice         # "infra"
+```
+
+Any answer can be a `Refusal` instead. Details and recipes (approval for risky tool calls, picking an agent) in the
+[Decisions API docs](https://daniprol.github.io/pyox-agents/decisions/).
 
 ## Images and files
 

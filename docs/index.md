@@ -7,7 +7,7 @@ Rust does the heavy lifting: HTTP, streaming decoding, JSON parsing and the agen
 
 !!! note "Status: early"
     It supports the OpenAI Chat Completions API (and compatible servers, like Ollama), the
-    [Responses API](responses-api.md), and Azure OpenAI.
+    [Responses API](responses-api.md), the [Decisions API](decisions.md), and Azure OpenAI.
 
 ## Install
 

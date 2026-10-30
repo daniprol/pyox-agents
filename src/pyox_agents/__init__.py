@@ -5,7 +5,9 @@ from pyox_agents._core import (
     ApiError,
     AuthenticationError,
     BuiltinTool,
+    ChoiceAnswer,
     Client,
+    Decision,
     EventBatches,
     HistoryError,
     HookError,
@@ -14,12 +16,15 @@ from pyox_agents._core import (
     MaxTurnsExceededError,
     NetworkError,
     PendingRequestsError,
+    PredicateAnswer,
     ProtocolStream,
     RateLimitError,
+    Refusal,
     RequestTimeoutError,
     Run,
     RunContext,
     RunFinished,
+    ScoreAnswer,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -27,6 +32,7 @@ from pyox_agents._core import (
 )
 from pyox_agents.agent import Agent, Api, TextChunks, Unanswered
 from pyox_agents.content import file, image
+from pyox_agents.decisions import Choice, Predicate, Question, Score, decide
 from pyox_agents.hooks import Hooks, ToolResult
 from pyox_agents.human_input import Answer, ApprovalRequired, Approve, Deny, OnRequest, Reply
 from pyox_agents.messages import (
@@ -48,6 +54,9 @@ from pyox_agents.messages import (
 )
 from pyox_agents.tools import RequiresApproval, Tool, ToolLike, ToolReturn, tool
 
+DecisionAnswer = PredicateAnswer | ChoiceAnswer | ScoreAnswer | Refusal
+"""Any answer in a `Decision`."""
+
 AgentEvent = TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished
 """Any event yielded while iterating over a run."""
 
@@ -63,8 +72,12 @@ __all__ = [
     "AssistantMessage",
     "AuthenticationError",
     "BuiltinTool",
+    "Choice",
+    "ChoiceAnswer",
     "Client",
     "ContentPart",
+    "Decision",
+    "DecisionAnswer",
     "Deny",
     "EventBatches",
     "FilePart",
@@ -82,10 +95,14 @@ __all__ = [
     "NetworkError",
     "OnRequest",
     "PendingRequestsError",
+    "Predicate",
+    "PredicateAnswer",
     "Prompt",
     "ProtocolStream",
+    "Question",
     "RateLimitError",
     "Reasoning",
+    "Refusal",
     "Reply",
     "Request",
     "RequestTimeoutError",
@@ -93,6 +110,8 @@ __all__ = [
     "Run",
     "RunContext",
     "RunFinished",
+    "Score",
+    "ScoreAnswer",
     "TextChunks",
     "TextDelta",
     "TextPart",
@@ -107,6 +126,7 @@ __all__ = [
     "Unanswered",
     "Usage",
     "UserMessage",
+    "decide",
     "file",
     "image",
     "tool",

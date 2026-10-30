@@ -52,6 +52,14 @@ class ErrorResponse:
 
 
 @dataclass(frozen=True)
+class JsonResponse:
+    """A successful answer that does not stream, such as the Decisions API's."""
+
+    body: dict[str, Any]
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class DroppedConnection:
     """Close the connection without answering, like a server dropping an idle keep-alive connection.
 
@@ -59,7 +67,7 @@ class DroppedConnection:
     """
 
 
-Response = StreamResponse | ErrorResponse | DroppedConnection
+Response = StreamResponse | JsonResponse | ErrorResponse | DroppedConnection
 
 
 @dataclass(frozen=True)
@@ -147,6 +155,17 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
                 self.wfile.write(response.body.encode())
                 return
 
+            if isinstance(response, JsonResponse):
+                content = json.dumps(response.body).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(content)))
+                for name, value in response.headers.items():
+                    self.send_header(name, value)
+                self.end_headers()
+                self.wfile.write(content)
+                return
+
             time.sleep(response.delay_seconds)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -203,6 +222,7 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
 
         def _answer_over_websocket(self, response: Response) -> bool:
             """Sends a response as WebSocket messages. False when the connection must close."""
+            assert not isinstance(response, JsonResponse), "only streamed answers can go over WebSocket"
             if isinstance(response, DroppedConnection):
                 self.connection.shutdown(socket.SHUT_RDWR)
                 return False

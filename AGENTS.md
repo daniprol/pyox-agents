@@ -24,6 +24,9 @@ who has never used Rust.
 - The history format is our own (`crates/pyox-tools/src/messages.rs`). Each API
   has one adapter file (for example `src/openai_chat.rs`) that translates it.
   The agent loop does not know which API it talks to.
+- The Decisions API (`src/openai_decisions.rs`) is not a model turn: it is
+  called directly with `decide(...)`, and reuses the same `Client` and the
+  Responses API's input items.
 
 ## Workflow
 

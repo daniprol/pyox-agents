@@ -24,6 +24,7 @@
 //! | `model_api`     | Picks the API adapter; what a model request and answer hold   |
 //! | `openai_chat`   | Adapter for the OpenAI Chat Completions API                   |
 //! | `openai_responses` | Adapter for the OpenAI Responses API                       |
+//! | `openai_decisions` | The OpenAI Decisions API (`decide(...)`), outside the loop |
 //! | `sse`           | Splits a byte stream into server-sent events                  |
 //! | `text_chunks`   | Groups streamed text (deltas, paragraphs, whole messages)     |
 //! | `tools`         | Tool definitions and how to call Python or Rust tools         |
@@ -46,6 +47,7 @@ mod json_convert;
 mod messages;
 mod model_api;
 mod openai_chat;
+mod openai_decisions;
 mod openai_responses;
 mod python_call;
 mod run;
@@ -74,6 +76,13 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<events::RunFinished>()?;
     module.add_class::<human_input::InputRequested>()?;
     module.add_class::<pyox_tools::usage::Usage>()?;
+
+    module.add_function(wrap_pyfunction!(openai_decisions::send_decision, module)?)?;
+    module.add_class::<openai_decisions::Decision>()?;
+    module.add_class::<openai_decisions::PredicateAnswer>()?;
+    module.add_class::<openai_decisions::ChoiceAnswer>()?;
+    module.add_class::<openai_decisions::ScoreAnswer>()?;
+    module.add_class::<openai_decisions::Refusal>()?;
 
     errors::add_exceptions_to_module(module)?;
     Ok(())

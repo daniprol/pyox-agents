@@ -73,7 +73,7 @@ pub fn build_request_body(
     }
     body.insert(
         "input".into(),
-        Value::Array(input_items(request.model, messages_to_send)),
+        Value::Array(input_items(messages_to_send, Some(request.model))),
     );
     body.insert("stream".into(), json!(true));
     body.insert("store".into(), json!(options.store));
@@ -122,7 +122,11 @@ fn add_to_include(body: &mut Map<String, Value>, value: &str) {
     }
 }
 
-fn input_items(model: &str, messages: &[Message]) -> Vec<Value> {
+/// Our messages as `input` items. Reasoning is only sent back to
+/// `reasoning_for_model`, the model that wrote it; `None` leaves it all out.
+///
+/// The Decisions API (`openai_decisions.rs`) accepts the same items, except reasoning.
+pub(crate) fn input_items(messages: &[Message], reasoning_for_model: Option<&str>) -> Vec<Value> {
     let mut items = Vec::with_capacity(messages.len());
     // A waiting tool message has no result yet: a later message for the same call will.
     for message in messages.iter().filter(|message| !message.is_waiting()) {
@@ -138,7 +142,7 @@ fn input_items(model: &str, messages: &[Message]) -> Vec<Value> {
                 // Reasoning only means something to the model that wrote it. And a
                 // reasoning item must be followed by what it led to (text or a tool
                 // call), or the API rejects the request.
-                let same_model = message_model.as_deref() == Some(model);
+                let same_model = reasoning_for_model.is_some() && message_model.as_deref() == reasoning_for_model;
                 let leads_somewhere = !content.is_empty() || !tool_calls.is_empty();
                 if same_model && leads_somewhere {
                     items.extend(reasoning.iter().filter_map(reasoning_item));
@@ -181,7 +185,7 @@ fn reasoning_item(reasoning: &Reasoning) -> Option<Value> {
 }
 
 /// Text stays a plain string; parts become the API's list of input parts.
-fn user_content(content: &UserContent) -> Value {
+pub(crate) fn user_content(content: &UserContent) -> Value {
     match content {
         UserContent::Text(text) => json!(text),
         UserContent::Parts(parts) => parts
@@ -275,10 +279,12 @@ struct SummaryPart {
     text: String,
 }
 
+/// The `usage` of a response. The Decisions API reports it the same way.
+///
 /// `#[serde(default)]`: a missing count is read as 0 instead of failing the run.
 #[derive(Default, Deserialize)]
 #[serde(default)]
-struct ResponseUsage {
+pub(crate) struct ResponseUsage {
     input_tokens: u64,
     output_tokens: u64,
     input_tokens_details: Option<TokensDetails>,
@@ -289,6 +295,25 @@ struct ResponseUsage {
 struct TokensDetails {
     cached_tokens: Option<u64>,
     reasoning_tokens: Option<u64>,
+}
+
+impl ResponseUsage {
+    /// Our `Usage` for this one request.
+    pub(crate) fn into_usage(self) -> Usage {
+        Usage {
+            input_tokens: self.input_tokens,
+            cached_input_tokens: self
+                .input_tokens_details
+                .and_then(|details| details.cached_tokens)
+                .unwrap_or(0),
+            output_tokens: self.output_tokens,
+            reasoning_tokens: self
+                .output_tokens_details
+                .and_then(|details| details.reasoning_tokens)
+                .unwrap_or(0),
+            requests: 1,
+        }
+    }
 }
 
 /// Reads the events of one response until it is complete.
@@ -370,19 +395,7 @@ fn turn_from_response(response: FinishedResponse) -> AssistantTurn {
         }
     }
     if let Some(usage) = response.usage {
-        turn.usage = Usage {
-            input_tokens: usage.input_tokens,
-            cached_input_tokens: usage
-                .input_tokens_details
-                .and_then(|details| details.cached_tokens)
-                .unwrap_or(0),
-            output_tokens: usage.output_tokens,
-            reasoning_tokens: usage
-                .output_tokens_details
-                .and_then(|details| details.reasoning_tokens)
-                .unwrap_or(0),
-            requests: 1,
-        };
+        turn.usage = usage.into_usage();
     }
     turn
 }

@@ -16,6 +16,7 @@ nav = [
   { "Images and files" = "images-and-files.md" },
   { "History" = "history.md" },
   { "Responses API" = "responses-api.md" },
+  { "Decisions API" = "decisions.md" },
   { "Human in the loop" = "human-in-the-loop.md" },
   { "Web frontends" = "web-frontends.md" },
   { "Hooks" = "hooks.md" },
