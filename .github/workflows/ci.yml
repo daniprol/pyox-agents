@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   checks:
@@ -77,3 +78,34 @@ jobs:
           path: |
             coverage.xml
             rust-coverage.lcov
+
+  live:
+    name: Live tests (Azure OpenAI)
+    # Never on pull requests, so the key is not exposed to code from forks; and only after the
+    # offline checks pass, so a broken build spends no tokens.
+    if: github.event_name != 'pull_request'
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The `live` environment holds the key and only allows main and dev.
+    environment: live
+    concurrency:
+      group: live-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      LIVE_MODEL: ${{ vars.LIVE_MODEL }}
+      # How many live tests run at once. Keep it low: the deployment has a small tokens-per-minute quota.
+      LIVE_TEST_WORKERS: 1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Run live tests
+        run: uv run --frozen pytest -m live -v --numprocesses $LIVE_TEST_WORKERS

@@ -33,11 +33,21 @@ def websocket_client(fake_openai: FakeOpenAI) -> Client:
 
 
 @pytest.fixture
-def make_agent(client: Client) -> MakeAgent:
-    """Factory for agents connected to the fake server: `make_agent(tools=[...])`."""
+def model() -> str:
+    return "test-model"
 
-    def make(*, model: str = "test-model", **options: Any) -> Agent:
-        return Agent(client=client, model=model, **options)
+
+@pytest.fixture
+def make_agent(client: Client, model: str) -> MakeAgent:
+    """Factory for agents connected to the fake server: `make_agent(tools=[...])`.
+
+    The live tests (tests/test_live.py) override `client` and `model` to reuse it against a real model.
+    """
+
+    def make(**options: Any) -> Agent:
+        options.setdefault("client", client)
+        options.setdefault("model", model)
+        return Agent(**options)
 
     return make
 

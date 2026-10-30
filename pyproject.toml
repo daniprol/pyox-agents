@@ -42,6 +42,7 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.6",
     "ruff>=0.14",
     "sqlalchemy[asyncio]>=2.0",  # for examples/python_history.py
     "uvicorn>=0.30",  # for examples/web_server.py
@@ -83,7 +84,9 @@ docstring-code-format = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["--strict-markers", "--strict-config"]
+# Live tests call a real model and are skipped unless asked for: `pytest -m live` (see tests/test_live.py).
+addopts = ["--strict-markers", "--strict-config", "-m", "not live"]
+markers = ["live: calls a real model on Azure OpenAI (needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY)"]
 
 [tool.coverage.run]
 source = ["pyox_agents"]

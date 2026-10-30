@@ -420,6 +420,12 @@ Git hooks ([prek](https://prek.j178.dev), configured in [`prek.toml`](prek.toml)
 
 Run them by hand with `uv run prek run --all-files` (add `--stage pre-push` for the push hooks).
 
+Tests use a local fake OpenAI server. A few live tests in [`tests/test_live.py`](tests/test_live.py) call a
+real model on Azure OpenAI instead; they are skipped by default. Run them with
+`uv run pytest -m live` after setting `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY` and optionally
+`LIVE_MODEL` (the deployment, `gpt-6-luna` by default). CI runs them on pushes to `main` and `dev`, from
+the `live` GitHub environment, with `LIVE_TEST_WORKERS` (in `ci.yml`) tests at a time.
+
 The documentation site lives in [`docs/`](docs) and [`zensical.toml`](zensical.toml), built with
 [Zensical](https://zensical.org). Preview it with `uv run --only-group docs zensical serve`; every push to `main`
 publishes it to GitHub Pages ([`.github/workflows/docs.yml`](.github/workflows/docs.yml)).
