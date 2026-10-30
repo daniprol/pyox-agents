@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from factories import text_response
+from factories import text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
 
 EXAMPLES = Path(__file__).parents[1] / "examples"
@@ -53,3 +53,27 @@ def test_images_and_files_example(fake_openai: FakeOpenAI, tmp_path: Path) -> No
     file_part = fake_openai.requests[1].body["messages"][1]["content"][1]
     assert image_part["type"] == "image_url"
     assert file_part["file"]["filename"] == "report.pdf"
+
+
+def test_human_in_the_loop_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
+    fake_openai.queue(
+        tool_calls_response(tool_call("book_table", restaurant="Casa Marcelo")),
+        text_response("Booked for 21:30"),
+        tool_calls_response(tool_call("delete_file", path="old.log")),
+        text_response("Deleted"),
+    )
+    environment = {**os.environ, "OPENAI_BASE_URL": fake_openai.base_url, "OPENAI_API_KEY": "test-key"}
+
+    output = subprocess.run(
+        [sys.executable, EXAMPLES / "human_in_the_loop.py"],
+        cwd=tmp_path,
+        env=environment,
+        input="21:30\ny\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert output.endswith("Booked for 21:30\nAllow delete_file {'path': 'old.log'}? [y/n] Deleted\n")
+    assert fake_openai.requests[1].body["messages"][-1]["content"] == "Booked Casa Marcelo at 21:30"
+    assert fake_openai.requests[3].body["messages"][-1]["content"] == "Deleted old.log"

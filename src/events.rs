@@ -12,6 +12,7 @@ use pyo3::types::PyList;
 use pyox_tools::usage::Usage;
 use serde_json::Value;
 
+use crate::human_input::InputRequested;
 use crate::json_convert::json_to_python;
 use crate::messages::Message;
 
@@ -32,12 +33,18 @@ pub struct ToolStarted {
 }
 
 /// A tool finished. `is_error` is true if it raised an exception.
-#[pyclass(frozen, get_all, module = "pyox_agents")]
+#[pyclass(frozen, module = "pyox_agents")]
 pub struct ToolFinished {
+    #[pyo3(get)]
     pub call_id: String,
+    #[pyo3(get)]
     pub name: String,
+    #[pyo3(get)]
     pub result: String,
+    #[pyo3(get)]
     pub is_error: bool,
+    /// Data for the app from `ToolReturn(metadata=...)`; the model never sees it.
+    pub metadata: Value,
 }
 
 /// The last event of a run.
@@ -60,6 +67,10 @@ pub struct RunFinished {
     /// The whole conversation; the run added the messages from `new_messages_start` on.
     pub messages: Vec<Message>,
     pub new_messages_start: usize,
+    /// The requests of tool calls still waiting for an answer. When there are
+    /// any, the run stopped early: answer them with `execute(answers=...)`.
+    #[pyo3(get)]
+    pub pending: Vec<InputRequested>,
 }
 
 #[pymethods]
@@ -87,6 +98,11 @@ impl ToolStarted {
 
 #[pymethods]
 impl ToolFinished {
+    #[getter]
+    fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        json_to_python(py, &self.metadata)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ToolFinished(call_id={:?}, name={:?}, result={:?}, is_error={})",
@@ -123,10 +139,11 @@ impl RunFinished {
 
     fn __repr__(&self) -> String {
         format!(
-            "RunFinished(text={:?}, turns={}, usage={})",
+            "RunFinished(text={:?}, turns={}, usage={}, pending={})",
             self.text,
             self.turns,
-            self.usage.__repr__()
+            self.usage.__repr__(),
+            self.pending.len()
         )
     }
 }
@@ -152,6 +169,7 @@ pub enum AgentEvent {
     TextDelta(TextDelta),
     ToolStarted(ToolStarted),
     ToolFinished(ToolFinished),
+    InputRequested(InputRequested),
     RunFinished(RunFinished),
 }
 
@@ -161,6 +179,7 @@ impl AgentEvent {
             AgentEvent::TextDelta(event) => Py::new(py, event)?.into_any(),
             AgentEvent::ToolStarted(event) => Py::new(py, event)?.into_any(),
             AgentEvent::ToolFinished(event) => Py::new(py, event)?.into_any(),
+            AgentEvent::InputRequested(event) => Py::new(py, event)?.into_any(),
             AgentEvent::RunFinished(event) => Py::new(py, event)?.into_any(),
         };
         Ok(python_object)

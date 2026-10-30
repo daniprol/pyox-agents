@@ -18,11 +18,18 @@
 //! {"role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3", "is_error": False}
 //! ```
 //!
+//! A tool message can also hold data the model never sees: `metadata` (from
+//! `ToolReturn`), the `requests` the call made to a person (approvals,
+//! `ctx.ask` questions) with their answers, and saved `steps` results. A
+//! call whose last request has no answer yet is *waiting*: the run stopped
+//! there, and a later run continues it (see `human_input` in pyox-agents).
+//! Waiting messages are never sent to the model.
+//!
 //! Stored history must keep working when this format grows, so new fields
 //! are always optional (`#[serde(default)]`).
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// One entry of the conversation. `#[serde(tag = "role")]` stores the variant
 /// name in a `"role"` field, exactly like the dicts above.
@@ -58,6 +65,100 @@ pub enum Message {
         content: String,
         #[serde(default)]
         is_error: bool,
+        /// Data for the app, never sent to the model (`ToolReturn(metadata=...)`).
+        #[serde(default, skip_serializing_if = "Value::is_null")]
+        metadata: Value,
+        /// What the call asked a person, in order, with the answers so far.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        requests: Vec<Request>,
+        /// Saved results of `ctx.step(name, ...)`, by name, reused when the call runs again.
+        #[serde(default, skip_serializing_if = "Map::is_empty")]
+        steps: Map<String, Value>,
+    },
+}
+
+impl Message {
+    /// A tool result with nothing but its text (no metadata, requests or steps).
+    pub fn tool_result(tool_call_id: String, name: String, content: String, is_error: bool) -> Self {
+        Message::Tool {
+            tool_call_id,
+            name,
+            content,
+            is_error,
+            metadata: Value::Null,
+            requests: Vec::new(),
+            steps: Map::new(),
+        }
+    }
+
+    /// True for a tool message whose call is still waiting for an answer.
+    pub fn is_waiting(&self) -> bool {
+        match self {
+            Message::Tool { requests, .. } => requests.iter().any(|request| request.answer.is_none()),
+            _ => false,
+        }
+    }
+}
+
+/// Something a tool call asked a person (or the app), and the answer once it came.
+///
+/// ```python
+/// {"kind": "input", "data": {"question": "Which flight?"}, "metadata": {"widget": "picker"},
+///  "answer": {"type": "answer", "value": "F123", "metadata": {"card": "tok_9"}}}
+/// ```
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    pub kind: RequestKind,
+    /// The name given with `ctx.ask(..., key=...)`. Answers are matched by key
+    /// when there is one, otherwise by position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// Shown to the person. Reaches the model only if the tool puts it in its result.
+    #[serde(default)]
+    pub data: Value,
+    /// For the app only (for example, how to display the question). Never sent to the model.
+    #[serde(default)]
+    pub metadata: Value,
+    /// `None` until the person answers.
+    #[serde(default)]
+    pub answer: Option<Reply>,
+}
+
+/// Why a tool call is asking.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestKind {
+    /// May the tool run? Answered with `Approve` or `Deny`.
+    Approval,
+    /// A question from `ctx.ask(...)`. Answered with `Answer` or `Deny`.
+    Input,
+    /// A frontend tool: the app runs it and answers with its result.
+    Frontend,
+}
+
+/// The person's reply to a request. In Python: `Answer`, `Approve` or `Deny`.
+/// `#[serde(tag = "type")]` stores the variant name in a `"type"` field.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Reply {
+    Answer {
+        #[serde(default)]
+        value: Value,
+        #[serde(default)]
+        metadata: Value,
+    },
+    Approve {
+        /// Replaces the arguments the model chose.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arguments: Option<Value>,
+        #[serde(default)]
+        metadata: Value,
+    },
+    Deny {
+        /// What the model reads as the tool's (error) result.
+        message: String,
+        #[serde(default)]
+        metadata: Value,
     },
 }
 
@@ -154,6 +255,34 @@ mod tests {
             serde_json::to_value(&message).unwrap(),
             json!({"role": "assistant", "content": "Hi", "tool_calls": []})
         );
+    }
+
+    #[test]
+    fn tool_messages_keep_requests_and_steps_and_know_when_they_wait() {
+        // Stored before `metadata`, `requests` and `steps` existed.
+        let old: Message = serde_json::from_value(json!({
+            "role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3"
+        }))
+        .unwrap();
+        assert_eq!(
+            old,
+            Message::tool_result("call_1".into(), "add".into(), "3".into(), false)
+        );
+        assert!(!old.is_waiting());
+
+        let waiting_dict = json!({
+            "role": "tool", "tool_call_id": "call_2", "name": "book", "content": "", "is_error": false,
+            "requests": [
+                {"kind": "approval", "data": null, "metadata": null,
+                 "answer": {"type": "approve", "metadata": {"by": "ana"}}},
+                {"kind": "input", "key": "flight", "data": {"question": "Which?"}, "metadata": null, "answer": null},
+            ],
+            "steps": {"search": ["F1", "F2"]},
+        });
+        let waiting: Message = serde_json::from_value(waiting_dict.clone()).unwrap();
+        assert!(waiting.is_waiting());
+        // Written back exactly as it was read.
+        assert_eq!(serde_json::to_value(&waiting).unwrap(), waiting_dict);
     }
 
     #[test]

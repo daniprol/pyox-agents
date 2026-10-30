@@ -64,7 +64,8 @@ fn chat_messages(system_prompt: &str, history: &[Message]) -> Vec<Value> {
         chat_messages.push(json!({"role": "system", "content": system_prompt}));
     }
 
-    for message in history {
+    // A waiting tool message has no result yet: a later message for the same call will.
+    for message in history.iter().filter(|message| !message.is_waiting()) {
         let chat_message = match message {
             Message::User { content } => json!({"role": "user", "content": user_content(content)}),
             Message::Assistant {

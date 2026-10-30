@@ -1,6 +1,6 @@
 """Type stubs for the compiled Rust module (`src/*.rs`)."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Generic, Literal, TypeVar, final
 
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Message, Prompt
@@ -43,9 +43,11 @@ class Client:
 class BuiltinTool:
     """A tool implemented in Rust inside pyox-agents, selected by name."""
 
-    def __init__(self, name: str) -> None: ...
+    def __init__(self, name: str, *, requires_approval: Any = None) -> None: ...
     @staticmethod
     def available() -> list[str]: ...
+    @property
+    def requires_approval(self) -> Any: ...
     @property
     def name(self) -> str: ...
     @property
@@ -98,6 +100,13 @@ class RunContext(Generic[DepsT]):
     def tool_call_id(self) -> str | None: ...
     @property
     def tool_name(self) -> str | None: ...
+    @property
+    def approval(self) -> Any:
+        """Inside a tool that needed approval: the `Approve` reply. `None` otherwise."""
+    def ask(self, data: Any = None, *, metadata: Any = None, key: str | None = None) -> Awaitable[Any]:
+        """Wait for a person's reply (an `Answer`). See `pyox_agents.human_input`."""
+    def step(self, name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Awaitable[Any]:
+        """Run `function` once and save its (JSON) result, reused when the call runs again."""
 
 @final
 class TextDelta:
@@ -123,6 +132,29 @@ class ToolFinished:
     def result(self) -> str: ...
     @property
     def is_error(self) -> bool: ...
+    @property
+    def metadata(self) -> Any:
+        """From `ToolReturn(metadata=...)`; never sent to the model."""
+
+@final
+class InputRequested:
+    """A tool call waiting for a person: an approval, a `ctx.ask` question or a frontend tool."""
+
+    @property
+    def call_id(self) -> str: ...
+    @property
+    def tool_name(self) -> str: ...
+    @property
+    def arguments(self) -> Any: ...
+    @property
+    def kind(self) -> Literal["approval", "input", "frontend"]: ...
+    @property
+    def key(self) -> str | None: ...
+    @property
+    def data(self) -> Any: ...
+    @property
+    def metadata(self) -> Any:
+        """For the app only; never sent to the model."""
 
 @final
 class RunFinished:
@@ -135,6 +167,9 @@ class RunFinished:
     @property
     def response_id(self) -> str | None: ...
     @property
+    def pending(self) -> list[InputRequested]:
+        """Requests of tool calls waiting for a person; empty when the run finished normally."""
+    @property
     def messages(self) -> list[Message]: ...
     @property
     def new_messages(self) -> list[Message]: ...
@@ -144,7 +179,7 @@ class RunFinished:
 @final
 class Run:
     def __aiter__(self) -> Run: ...
-    async def __anext__(self) -> TextDelta | ToolStarted | ToolFinished | RunFinished: ...
+    async def __anext__(self) -> TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished: ...
 
 @final
 class Engine:
@@ -163,6 +198,7 @@ class Engine:
         api: str = "chat",
         store: bool = False,
         encrypted_reasoning: bool = True,
+        unanswered: str = "close",
     ) -> None: ...
     def execute(
         self,
@@ -173,6 +209,8 @@ class Engine:
         text_chunks: str | int | None = None,
         deps: Any = None,
         previous_response_id: str | None = None,
+        answers: Mapping[str, Any] | None = None,
+        on_request: Callable[[InputRequested], Any] | None = None,
     ) -> Run: ...
 
 class AgentError(Exception):
@@ -188,3 +226,7 @@ class InvalidResponseError(AgentError): ...
 class MaxTurnsExceededError(AgentError): ...
 class HistoryError(AgentError): ...
 class HookError(AgentError): ...
+class PendingRequestsError(AgentError): ...
+
+class StopToolCall(BaseException):
+    """Raised by `ctx.ask` to stop a tool that must wait or was denied. Do not catch it."""

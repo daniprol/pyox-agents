@@ -16,6 +16,7 @@
 //! | `messages`      | Our own conversation history format                           |
 //! | `history_store` | Reading given history; loading/saving it with history stores  |
 //! | `hooks`         | Calling Python or Rust hooks at fixed points of a run         |
+//! | `human_input`   | Tool calls that wait for a person: approvals, `ctx.ask`       |
 //! | `run_context`   | `RunContext`: the `ctx` given to tools and hooks              |
 //! | `model_api`     | Picks the API adapter; what a model request and answer hold   |
 //! | `openai_chat`   | Adapter for the OpenAI Chat Completions API                   |
@@ -35,6 +36,7 @@ mod errors;
 mod events;
 mod history_store;
 mod hooks;
+mod human_input;
 mod json_convert;
 mod messages;
 mod model_api;
@@ -62,6 +64,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<events::ToolStarted>()?;
     module.add_class::<events::ToolFinished>()?;
     module.add_class::<events::RunFinished>()?;
+    module.add_class::<human_input::InputRequested>()?;
     module.add_class::<pyox_tools::usage::Usage>()?;
 
     errors::add_exceptions_to_module(module)?;

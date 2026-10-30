@@ -6,7 +6,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-pub use pyox_tools::messages::{ContentPart, Message, Reasoning, ToolCall, UserContent};
+pub use pyox_tools::messages::{ContentPart, Message, Reasoning, Reply, Request, RequestKind, ToolCall, UserContent};
 use serde_json::Value;
 
 use crate::json_convert::python_to_json;

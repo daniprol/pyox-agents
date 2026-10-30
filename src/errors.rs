@@ -15,11 +15,16 @@
 //! ├── InvalidResponseError     the API sent something we could not understand
 //! ├── MaxTurnsExceededError    the agent hit its `max_turns` limit
 //! ├── HistoryError             a history store failed to load or save
-//! └── HookError                a Rust hook failed, or a hook returned something invalid
+//! ├── HookError                a Rust hook failed, or a hook returned something invalid
+//! └── PendingRequestsError     a new prompt came while tool calls wait for answers
 //! ```
+//!
+//! `StopToolCall` is not an error: `ctx.ask` raises it to stop a tool that
+//! must wait (or was denied). It derives from `BaseException`, like
+//! `asyncio.CancelledError`, so a tool's `except Exception:` does not catch it.
 
 use pyo3::create_exception;
-use pyo3::exceptions::PyException;
+use pyo3::exceptions::{PyBaseException, PyException};
 use pyo3::prelude::*;
 use pyox_tools::usage::Usage;
 
@@ -70,6 +75,19 @@ create_exception!(
     "A Rust hook failed, or a hook returned something invalid."
 );
 
+create_exception!(
+    pyox_agents,
+    PendingRequestsError,
+    AgentError,
+    "A new prompt came while tool calls wait for answers (with `Agent(unanswered=\"raise\")`)."
+);
+create_exception!(
+    pyox_agents,
+    StopToolCall,
+    PyBaseException,
+    "Raised by `ctx.ask` to stop a tool that must wait for an answer or was denied. Do not catch it."
+);
+
 /// An `AgentError` raised during a run gets the tokens the run used before it
 /// failed, as `error.usage`: those tokens are billed even if the run failed.
 pub fn with_usage(error: PyErr, usage: Usage) -> PyErr {
@@ -116,5 +134,7 @@ pub fn add_exceptions_to_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("MaxTurnsExceededError", py.get_type::<MaxTurnsExceededError>())?;
     module.add("HistoryError", py.get_type::<HistoryError>())?;
     module.add("HookError", py.get_type::<HookError>())?;
+    module.add("PendingRequestsError", py.get_type::<PendingRequestsError>())?;
+    module.add("StopToolCall", py.get_type::<StopToolCall>())?;
     Ok(())
 }

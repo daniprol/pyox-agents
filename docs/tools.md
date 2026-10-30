@@ -46,7 +46,8 @@ await agent.run("What did I order?", deps=database)
 ```
 
 `ctx` has `deps`, `conversation_id`, `turn`, `usage` (tokens used so far), and, inside a
-tool, `tool_call_id` and `tool_name`. [Hooks](hooks.md) get the same `ctx`.
+tool, `tool_call_id`, `tool_name`, `approval` and the `ask` and `step` methods
+(see [Human in the loop](human-in-the-loop.md)). [Hooks](hooks.md) get the same `ctx`.
 
 ## Built-in Rust tools
 

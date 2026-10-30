@@ -65,6 +65,9 @@ pub struct ToolResult {
     pub content: String,
     #[serde(default)]
     pub is_error: bool,
+    /// Data for the app, never sent to the model (`ToolReturn(metadata=...)`).
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub metadata: Value,
 }
 
 /// What every hook returns: `Err(message)` to block a tool or stop the run.

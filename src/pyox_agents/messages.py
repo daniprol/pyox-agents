@@ -59,12 +59,26 @@ class AssistantMessage(TypedDict):
     model: NotRequired[str]  # the model that wrote it; reasoning is only sent back to it
 
 
+class Request(TypedDict):
+    """What a tool call asked a person, and the reply once it came (see `human_input`)."""
+
+    kind: Literal["approval", "input", "frontend"]
+    key: NotRequired[str]  # from `ctx.ask(..., key=...)`
+    data: Any  # shown to the person
+    metadata: Any  # for the app only; never sent to the model
+    answer: dict[str, Any] | None  # {"type": "answer" | "approve" | "deny", ...}; None while waiting
+
+
 class ToolMessage(TypedDict):
     role: Literal["tool"]
     tool_call_id: str
     name: str
     content: str
     is_error: NotRequired[bool]
+    # None of these is ever sent to the model:
+    metadata: NotRequired[Any]  # from `ToolReturn(metadata=...)`
+    requests: NotRequired[list[Request]]  # a call whose last request has no answer is waiting
+    steps: NotRequired[dict[str, Any]]  # saved `ctx.step(...)` results
 
 
 Message = UserMessage | AssistantMessage | ToolMessage

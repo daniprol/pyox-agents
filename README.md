@@ -247,6 +247,32 @@ See [`examples/rust_tool_package`](examples/rust_tool_package) for a complete pa
 trait. Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
 as a tool too.
 
+## Human in the loop
+
+A tool call can wait for a person: an approval (`@tool(requires_approval=True)`), a question from anywhere in
+the tool body (`await ctx.ask(data, metadata=...)`), or a frontend tool your app runs (`@tool(frontend=True)`).
+Reply live with `on_request=`, or let the run stop and send the answers in a later run. No database needed:
+everything is in the history.
+
+```python
+from pyox_agents import Answer, Approve, RunContext, tool
+
+
+@tool
+async def book_flight(ctx: RunContext, city: str) -> str:
+    """Book a flight."""
+    answer = await ctx.ask({"options": [f"{city} 9:00", f"{city} 18:00"]}, metadata={"widget": "picker"})
+    return f"Booked {answer.value}"
+
+
+result = await agent.run("Fly me to Paris")  # stops: result.pending lists the InputRequested
+result = await agent.run(history=result.messages, answers={result.pending[0].call_id: Answer("Paris 18:00")})
+```
+
+`metadata` (on requests, replies and `ToolReturn` results) is never sent to the model. A resumed tool runs again
+from its start, with earlier answers returned at once; `ctx.step(name, function)` runs a side effect only once.
+See [Human in the loop](docs/human-in-the-loop.md) for approvals, `Deny`, frontend tools and unanswered calls.
+
 ## Hooks
 
 Hooks are functions the agent calls at fixed points of every run, to watch it or change what happens next.

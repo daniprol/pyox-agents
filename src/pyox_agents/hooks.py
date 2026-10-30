@@ -2,7 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TypedDict, TypeVar
+from typing import Any, NotRequired, TypedDict, TypeVar
 
 from pyox_agents._core import RunContext, RunFinished
 from pyox_agents.messages import AssistantMessage, Message, ToolCall
@@ -13,6 +13,7 @@ class ToolResult(TypedDict):
 
     content: str
     is_error: bool
+    metadata: NotRequired[Any]  # from `ToolReturn(metadata=...)`; never sent to the model
 
 
 T = TypeVar("T")

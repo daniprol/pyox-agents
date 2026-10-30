@@ -45,6 +45,15 @@ uv run examples/images_and_files.py path/to/some.pdf
 
 Asks about a photo (by web address) and summarizes the PDF (sent inline).
 
+## 6. Tools that wait for a person
+
+```bash
+uv run examples/human_in_the_loop.py
+```
+
+A tool asks you a question (the run stops and resumes with your answer), then a tool waits for your approval
+(answered live, while the run waits).
+
 ## Using another OpenAI-compatible server
 
 ```bash

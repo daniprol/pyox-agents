@@ -5,6 +5,7 @@ from typing import Any, Literal, TypeGuard
 
 from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
 from pyox_agents.hooks import Hooks
+from pyox_agents.human_input import OnRequest, Reply
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
 from pyox_agents.tools import Tool, ToolLike, tool
 
@@ -24,6 +25,13 @@ Api = Literal["chat", "responses"]
 
 - `"chat"`: Chat Completions (default). Also spoken by most compatible servers.
 - `"responses"`: the Responses API, with encrypted reasoning and stored responses.
+"""
+
+Unanswered = Literal["close", "raise"]
+"""What happens to tool calls still waiting for a person when a new prompt comes instead of answers:
+
+- `"close"`: each one gets a result telling the model the user did not answer (default).
+- `"raise"`: `PendingRequestsError`.
 """
 
 
@@ -51,6 +59,10 @@ class Agent:
     Turn `encrypted_reasoning` off for models that do not reason (e.g. gpt-4.1).
     With `store=True`, OpenAI keeps each response and requests send only the
     new messages (`previous_response_id`).
+
+    Tool calls can wait for a person: approvals, `ctx.ask(...)` questions and
+    frontend tools (see `pyox_agents.human_input`). `unanswered` says what
+    happens to calls still waiting when a new prompt comes instead of answers.
     """
 
     def __init__(
@@ -68,6 +80,7 @@ class Agent:
         api: Api = "chat",
         store: bool = False,
         encrypted_reasoning: bool = True,
+        unanswered: Unanswered = "close",
     ) -> None:
         self.model = model
         self.prompt = prompt
@@ -87,6 +100,7 @@ class Agent:
             api=api,
             store=store,
             encrypted_reasoning=encrypted_reasoning,
+            unanswered=unanswered,
         )
 
     def execute(
@@ -98,6 +112,8 @@ class Agent:
         text_chunks: TextChunks | None = None,
         deps: Any = None,
         previous_response_id: str | None = None,
+        answers: Mapping[str, Reply] | None = None,
+        on_request: OnRequest | None = None,
     ) -> Run:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
 
@@ -111,6 +127,11 @@ class Agent:
 
         With `api="responses"` and `store=True`, a conversation OpenAI stored can also continue
         from its last response alone: `previous_response_id=result.response_id`.
+
+        When tool calls wait for a person, the run stops and `RunFinished.pending` lists their
+        requests. Continue with the same history and `answers={call_id: Answer(...) | Approve(...)
+        | Deny(...)}` (no prompt). Or give `on_request`, a function (sync or async) that replies to
+        each request while the run waits; returning `None` stops the run as without it.
         """
         return self._engine.execute(
             prompt,
@@ -119,6 +140,8 @@ class Agent:
             text_chunks=text_chunks,
             deps=deps,
             previous_response_id=previous_response_id,
+            answers=dict(answers) if answers else None,
+            on_request=on_request,
         )
 
     async def run(
@@ -129,8 +152,11 @@ class Agent:
         conversation_id: str | None = None,
         deps: Any = None,
         previous_response_id: str | None = None,
+        answers: Mapping[str, Reply] | None = None,
+        on_request: OnRequest | None = None,
     ) -> RunFinished:
-        """Run to completion and return the final event (with `.text` and `.messages`)."""
+        """Run to completion (or until tool calls wait for a person, see `.pending`) and return
+        the final event (with `.text` and `.messages`)."""
         # Nobody reads the text as it streams here, so group it per message: fewer events.
         async for event in self.execute(
             prompt,
@@ -139,6 +165,8 @@ class Agent:
             text_chunks="message",
             deps=deps,
             previous_response_id=previous_response_id,
+            answers=answers,
+            on_request=on_request,
         ):
             if isinstance(event, RunFinished):
                 return event

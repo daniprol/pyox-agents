@@ -8,9 +8,11 @@ from pyox_agents._core import (
     Client,
     HistoryError,
     HookError,
+    InputRequested,
     InvalidResponseError,
     MaxTurnsExceededError,
     NetworkError,
+    PendingRequestsError,
     RateLimitError,
     RequestTimeoutError,
     Run,
@@ -21,9 +23,10 @@ from pyox_agents._core import (
     ToolStarted,
     Usage,
 )
-from pyox_agents.agent import Agent, Api, TextChunks
+from pyox_agents.agent import Agent, Api, TextChunks, Unanswered
 from pyox_agents.content import file, image
 from pyox_agents.hooks import Hooks, ToolResult
+from pyox_agents.human_input import Answer, ApprovalRequired, Approve, Deny, OnRequest, Reply
 from pyox_agents.messages import (
     AssistantMessage,
     ContentPart,
@@ -35,27 +38,32 @@ from pyox_agents.messages import (
     Message,
     Prompt,
     Reasoning,
+    Request,
     TextPart,
     ToolCall,
     ToolMessage,
     UserMessage,
 )
-from pyox_agents.tools import Tool, ToolLike, tool
+from pyox_agents.tools import RequiresApproval, Tool, ToolLike, ToolReturn, tool
 
-AgentEvent = TextDelta | ToolStarted | ToolFinished | RunFinished
+AgentEvent = TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished
 """Any event yielded while iterating over a run."""
 
 __all__ = [
     "Agent",
     "AgentError",
     "AgentEvent",
+    "Answer",
     "Api",
     "ApiError",
+    "ApprovalRequired",
+    "Approve",
     "AssistantMessage",
     "AuthenticationError",
     "BuiltinTool",
     "Client",
     "ContentPart",
+    "Deny",
     "FilePart",
     "History",
     "HistoryError",
@@ -63,15 +71,21 @@ __all__ = [
     "HookError",
     "Hooks",
     "ImagePart",
+    "InputRequested",
     "InvalidResponseError",
     "LoadHistory",
     "MaxTurnsExceededError",
     "Message",
     "NetworkError",
+    "OnRequest",
+    "PendingRequestsError",
     "Prompt",
     "RateLimitError",
     "Reasoning",
+    "Reply",
+    "Request",
     "RequestTimeoutError",
+    "RequiresApproval",
     "Run",
     "RunContext",
     "RunFinished",
@@ -84,7 +98,9 @@ __all__ = [
     "ToolLike",
     "ToolMessage",
     "ToolResult",
+    "ToolReturn",
     "ToolStarted",
+    "Unanswered",
     "Usage",
     "UserMessage",
     "file",

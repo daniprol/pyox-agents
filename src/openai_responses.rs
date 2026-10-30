@@ -124,7 +124,8 @@ fn add_to_include(body: &mut Map<String, Value>, value: &str) {
 
 fn input_items(model: &str, messages: &[Message]) -> Vec<Value> {
     let mut items = Vec::with_capacity(messages.len());
-    for message in messages {
+    // A waiting tool message has no result yet: a later message for the same call will.
+    for message in messages.iter().filter(|message| !message.is_waiting()) {
         match message {
             Message::User { content } => items.push(json!({"role": "user", "content": user_content(content)})),
             Message::Assistant {

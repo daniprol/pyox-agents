@@ -11,6 +11,7 @@ use std::sync::LazyLock;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyBool;
 use pyox_tools::{RustTool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -58,25 +59,34 @@ impl RustTool for WriteFile {
 }
 
 /// Python: `BuiltinTool("read_file")`. Selects a built-in Rust tool by name.
+/// `requires_approval` works as for Python tools: `True`, or a function
+/// `(ctx, arguments) -> bool` deciding for each call.
 #[pyclass(frozen, module = "pyox_agents")]
 pub struct BuiltinTool {
     pub definition: &'static ToolDefinition,
+    #[pyo3(get)]
+    requires_approval: Py<PyAny>,
 }
 
 #[pymethods]
 impl BuiltinTool {
     #[new]
-    fn new(name: &str) -> PyResult<Self> {
-        BUILTIN_TOOLS
+    #[pyo3(signature = (name, *, requires_approval = None))]
+    fn new(py: Python<'_>, name: &str, requires_approval: Option<Py<PyAny>>) -> PyResult<Self> {
+        let definition = BUILTIN_TOOLS
             .iter()
             .find(|definition| definition.name == name)
-            .map(|definition| BuiltinTool { definition })
             .ok_or_else(|| {
                 PyValueError::new_err(format!(
                     "Unknown built-in tool {name:?}. Available: {:?}",
                     Self::available()
                 ))
-            })
+            })?;
+        Ok(BuiltinTool {
+            definition,
+            requires_approval: requires_approval
+                .unwrap_or_else(|| PyBool::new(py, false).to_owned().into_any().unbind()),
+        })
     }
 
     /// Names of all built-in tools.
