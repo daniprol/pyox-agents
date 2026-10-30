@@ -29,9 +29,17 @@ asyncio.run(main())
 ```
 
 Documentation: **[daniprol.github.io/pyox-agents](https://daniprol.github.io/pyox-agents/)**.
-Examples and the commands to run them are in [`examples/`](examples).
+Examples and the commands to run them are in [`examples/`](https://github.com/daniprol/pyox-agents/blob/main/examples).
 
 Status: early. It supports the OpenAI Chat Completions API (and compatible servers), the Responses API, the Decisions API, and Azure OpenAI.
+
+## Install
+
+```bash
+uv add pyox-agents  # or: pip install pyox-agents
+```
+
+Prebuilt wheels cover Linux, macOS and Windows for Python 3.11 and newer.
 
 ## Install (development)
 
@@ -129,9 +137,9 @@ await agent.run("Hi again", conversation_id="user-42")
 `load` and `save` can be sync or async; a plain `load(conversation_id)` function works too. Failed runs are not
 saved. Store errors are raised from the run (`HistoryError` when the store returns something invalid).
 
-**History stores in Rust.** Implement the `HistoryStore` trait from [`pyox-tools`](crates/pyox-tools) on a struct
+**History stores in Rust.** Implement the `HistoryStore` trait from [`pyox-tools`](https://github.com/daniprol/pyox-agents/blob/main/crates/pyox-tools) on a struct
 holding your connection pool (sqlx, diesel, SeaORM...). The agent calls it directly in Rust, so loading never
-goes through Python. See [`examples/rust_history_store`](examples/rust_history_store) for a complete SQLite store.
+goes through Python. See [`examples/rust_history_store`](https://github.com/daniprol/pyox-agents/blob/main/examples/rust_history_store) for a complete SQLite store.
 
 ## Responses API
 
@@ -236,10 +244,10 @@ agent = Agent(model="gpt-5-mini", tools=[BuiltinTool("read_file"), BuiltinTool("
 BuiltinTool.available()  # ['read_file', 'write_file']
 ```
 
-Add one in [`src/tools/builtin.rs`](src/tools/builtin.rs).
+Add one in [`src/tools/builtin.rs`](https://github.com/daniprol/pyox-agents/blob/main/src/tools/builtin.rs).
 
 **Your own Rust tools, compiled separately.** Describe the arguments with a Rust struct and implement the
-`RustTool` trait from the [`pyox-tools`](crates/pyox-tools) crate. The JSON schema is generated from the struct
+`RustTool` trait from the [`pyox-tools`](https://github.com/daniprol/pyox-agents/blob/main/crates/pyox-tools) crate. The JSON schema is generated from the struct
 (doc comments become descriptions), so nothing is repeated in Python:
 
 ```rust
@@ -266,8 +274,8 @@ agent = Agent(model="gpt-5-mini", tools=[fast_tools.count_words])
 ```
 
 The agent calls these Rust functions directly, like the built-in tools: no Python is involved when the model
-calls them (see [`crates/pyox-tools/src/native.rs`](crates/pyox-tools/src/native.rs) for how).
-See [`examples/rust_tool_package`](examples/rust_tool_package) for a complete package. Built-in tools use the same
+calls them (see [`crates/pyox-tools/src/native.rs`](https://github.com/daniprol/pyox-agents/blob/main/crates/pyox-tools/src/native.rs) for how).
+See [`examples/rust_tool_package`](https://github.com/daniprol/pyox-agents/blob/main/examples/rust_tool_package) for a complete package. Built-in tools use the same
 trait. Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
 as a tool too.
 
@@ -295,7 +303,7 @@ result = await agent.run(history=result.messages, answers={result.pending[0].cal
 
 `metadata` (on requests, replies and `ToolReturn` results) is never sent to the model. A resumed tool runs again
 from its start, with earlier answers returned at once; `ctx.step(name, function)` runs a side effect only once.
-See [Human in the loop](docs/human-in-the-loop.md) for approvals, `Deny`, frontend tools and unanswered calls.
+See [Human in the loop](https://github.com/daniprol/pyox-agents/blob/main/docs/human-in-the-loop.md) for approvals, `Deny`, frontend tools and unanswered calls.
 
 ## Web frontends (AI SDK and AG-UI)
 
@@ -318,7 +326,7 @@ async def run_agent(request: Request) -> StreamingResponse:
 ```
 
 See [Web frontends](https://daniprol.github.io/pyox-agents/web-frontends/) and
-[`examples/web_server.py`](examples/web_server.py).
+[`examples/web_server.py`](https://github.com/daniprol/pyox-agents/blob/main/examples/web_server.py).
 
 ## Hooks
 
@@ -357,7 +365,7 @@ agent = Agent(model="gpt-5-mini", tools=[...], hooks=[Hooks(before_tool_call=no_
 
 Hooks can be sync or async, and run in the order given: each one sees the changes of the previous ones.
 
-**Hooks in Rust.** Register closures with `Hooks` from [`pyox-tools`](crates/pyox-tools/src/hooks.rs); the agent
+**Hooks in Rust.** Register closures with `Hooks` from [`pyox-tools`](https://github.com/daniprol/pyox-agents/blob/main/crates/pyox-tools/src/hooks.rs); the agent
 calls them directly in Rust, without Python:
 
 ```rust
@@ -370,7 +378,7 @@ let guard = Hooks::new().before_tool_call(|_context, call| {
 add_hooks(module, "guard", guard)?; // Python: Agent(hooks=[your_package.guard])
 ```
 
-See `guard` in [`examples/rust_tool_package`](examples/rust_tool_package/src/lib.rs) for a complete example.
+See `guard` in [`examples/rust_tool_package`](https://github.com/daniprol/pyox-agents/blob/main/examples/rust_tool_package/src/lib.rs) for a complete example.
 
 ## Client
 
@@ -426,7 +434,7 @@ run.ai_sdk(), run.ag_ui(...)  ◄─ text ── run.rs   events in batches → 
 ```
 
 The Rust code is written to be read by Python developers: small files, descriptive names and comments
-explaining the Rust-specific parts. Start with [`src/lib.rs`](src/lib.rs).
+explaining the Rust-specific parts. Start with [`src/lib.rs`](https://github.com/daniprol/pyox-agents/blob/main/src/lib.rs).
 
 ## Development
 
@@ -435,7 +443,7 @@ uv sync                       # build the Rust extension and install the dev too
 uv run prek install           # install the git hooks (once)
 ```
 
-Git hooks ([prek](https://prek.j178.dev), configured in [`prek.toml`](prek.toml)):
+Git hooks ([prek](https://prek.j178.dev), configured in [`prek.toml`](https://github.com/daniprol/pyox-agents/blob/main/prek.toml)):
 
 | When       | What runs                                                         |
 |------------|-------------------------------------------------------------------|
@@ -444,22 +452,36 @@ Git hooks ([prek](https://prek.j178.dev), configured in [`prek.toml`](prek.toml)
 
 Run them by hand with `uv run prek run --all-files` (add `--stage pre-push` for the push hooks).
 
-Tests use a local fake OpenAI server. A few live tests in [`tests/test_live.py`](tests/test_live.py) call a
+Tests use a local fake OpenAI server. A few live tests in [`tests/test_live.py`](https://github.com/daniprol/pyox-agents/blob/main/tests/test_live.py) call a
 real model on Azure OpenAI instead; they are skipped by default. Run them with
 `uv run pytest -m live` after setting `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY` and optionally
 `LIVE_MODEL` (the deployment, `gpt-6-luna` by default). CI runs them on pushes to `main` and `dev`, from
 the `live` GitHub environment, with `LIVE_TEST_WORKERS` (in `ci.yml`) tests at a time.
 
-The documentation site lives in [`docs/`](docs) and [`zensical.toml`](zensical.toml), built with
+The documentation site lives in [`docs/`](https://github.com/daniprol/pyox-agents/blob/main/docs) and [`zensical.toml`](https://github.com/daniprol/pyox-agents/blob/main/zensical.toml), built with
 [Zensical](https://zensical.org). Preview it with `uv run --only-group docs zensical serve`; every push to `main`
-publishes it to GitHub Pages ([`.github/workflows/docs.yml`](.github/workflows/docs.yml)).
+publishes it to GitHub Pages ([`.github/workflows/docs.yml`](https://github.com/daniprol/pyox-agents/blob/main/.github/workflows/docs.yml)).
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs both hook stages on Python 3.11 and 3.14, plus a
+CI ([`.github/workflows/ci.yml`](https://github.com/daniprol/pyox-agents/blob/main/.github/workflows/ci.yml)) runs both hook stages on Python 3.11 and 3.14, plus a
 coverage job. The coverage report (Python and Rust, including the Rust code exercised by the Python tests) is
 shown in the run summary and uploaded as an artifact.
 
-Tests talk to a real local HTTP server that imitates the OpenAI API ([`tests/fake_openai.py`](tests/fake_openai.py)),
-so there is no mocking. Build responses with the factories in [`tests/factories.py`](tests/factories.py)
+Releases go to [PyPI](https://pypi.org/p/pyox-agents). The version lives only in `pyproject.toml`. To release
+from `main`, bump it, commit, and push a matching tag:
+
+```bash
+uv version --bump patch  # fixes and features; --bump minor for breaking changes (before 1.0)
+git commit -am "Release $(uv version --short)" && git push
+git tag "v$(uv version --short)" && git push origin "v$(uv version --short)"
+```
+
+The tag starts [`.github/workflows/release.yml`](https://github.com/daniprol/pyox-agents/blob/main/.github/workflows/release.yml):
+it reruns CI on the tagged commit, builds the wheels and the sdist, waits for approval in the `pypi` environment,
+publishes with trusted publishing (no API tokens) and creates a GitHub release. Running the workflow by hand
+publishes to TestPyPI instead.
+
+Tests talk to a real local HTTP server that imitates the OpenAI API ([`tests/fake_openai.py`](https://github.com/daniprol/pyox-agents/blob/main/tests/fake_openai.py)),
+so there is no mocking. Build responses with the factories in [`tests/factories.py`](https://github.com/daniprol/pyox-agents/blob/main/tests/factories.py)
 and create agents with the `make_agent` fixture:
 
 ```python
@@ -474,7 +496,7 @@ async def test_example(fake_openai, make_agent):
 Compared with seven other agent frameworks (pydantic-ai, OpenAI Agents SDK, Microsoft Agent Framework, LangGraph,
 LangChain, LlamaIndex and Agno) against the same fake OpenAI server, which answers instantly, so this is the
 overhead of each library. "Others" is the range from the best to the worst of the seven (details, every number
-and how to run them in [`benchmarks/`](benchmarks)):
+and how to run them in [`benchmarks/`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks)):
 
 | Scenario                 | Latency p50 (pyox / others) | Throughput, 100 at once   | Peak memory        |
 |--------------------------|----------------------------:|--------------------------:|-------------------:|

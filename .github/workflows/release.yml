@@ -1,0 +1,126 @@
+name: Release
+
+# Push a tag like `v0.1.3` to publish that version to PyPI (after you approve the `pypi` environment).
+# Run it by hand (Actions > Release > Run workflow) to publish the current version to TestPyPI instead.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # to check that the tag is on main
+      - name: Check the tag matches the version and is on main
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::Tag $GITHUB_REF_NAME but pyproject.toml says $version"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-sdist
+          path: dist
+
+  wheels:
+    name: Wheel (${{ matrix.target }}, ${{ matrix.runner }} ${{ matrix.manylinux }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        # The extension uses the stable ABI (abi3-py311): one wheel per platform covers every CPython >= 3.11.
+        include:
+          - { runner: ubuntu-latest, target: x86_64, manylinux: auto, smoke: true }
+          - { runner: ubuntu-24.04-arm, target: aarch64, manylinux: auto, smoke: true }
+          - { runner: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
+          - { runner: ubuntu-24.04-arm, target: aarch64, manylinux: musllinux_1_2 }
+          - { runner: macos-latest, target: aarch64, smoke: true }
+          - { runner: macos-latest, target: x86_64 }  # cross-compiled from Apple Silicon
+          - { runner: windows-latest, target: x64, smoke: true }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --locked --strip --out dist
+      # Install the wheel on the oldest supported Python and import it (only where the runner can run it).
+      - uses: astral-sh/setup-uv@v7
+        if: matrix.smoke
+      - name: Smoke test
+        if: matrix.smoke
+        shell: bash
+        run: uv run --isolated --no-project --python 3.11 --with dist/*.whl python -c "import pyox_agents; print(pyox_agents.__version__)"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-${{ strategy.job-index }}
+          path: dist
+
+  pypi:
+    name: Publish to PyPI
+    if: github.ref_type == 'tag'
+    needs: [ci, sdist, wheels]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pyox-agents
+    permissions:
+      id-token: write  # trusted publishing: no API token anywhere
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch'
+    needs: [ci, sdist, wheels]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/pyox-agents
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true  # a second dry run of the same version is not an error
+
+  github-release:
+    name: GitHub release
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release with generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          flags="--generate-notes --verify-tag"
+          if [[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]]; then flags+=" --prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" $flags

@@ -1,5 +1,7 @@
 """pyox-agents: minimal and fast AI agents for Python, with a Rust core."""
 
+from importlib.metadata import version as _version
+
 from pyox_agents._core import (
     AgentError,
     ApiError,
@@ -59,6 +61,8 @@ DecisionAnswer = PredicateAnswer | ChoiceAnswer | ScoreAnswer | Refusal
 
 AgentEvent = TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished
 """Any event yielded while iterating over a run."""
+
+__version__ = _version("pyox-agents")
 
 __all__ = [
     "Agent",

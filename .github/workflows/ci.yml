@@ -5,6 +5,7 @@ on:
     branches: [main, dev]
   pull_request:
   workflow_dispatch:
+  workflow_call:  # release.yml reruns these checks on the tagged commit
 
 jobs:
   checks:
@@ -83,7 +84,8 @@ jobs:
     name: Live tests (Azure OpenAI)
     # Never on pull requests, so the key is not exposed to code from forks; and only after the
     # offline checks pass, so a broken build spends no tokens.
-    if: github.event_name != 'pull_request'
+    # Not on release tags either: that commit already ran the live tests when it was pushed.
+    if: github.event_name != 'pull_request' && github.ref_type == 'branch'
     needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
