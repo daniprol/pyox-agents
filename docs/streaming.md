@@ -82,6 +82,22 @@ async for event in agent.execute("Explain asyncio", text_chunks=20):
     `"paragraph"` and `"message"` are cheapest but make the user wait for the whole paragraph or answer.
     See the [benchmarks](benchmarks.md#streaming-modes-text_chunks).
 
+## Batches of events
+
+Each step of `async for event in run` hands one event from Rust to Python, and the hand-over costs more than most
+events. `run.batches()` hands over every event that is already waiting, as a list:
+
+```python
+async for events in run.batches():
+    for event in events:
+        ...
+```
+
+It never waits to fill a batch: when events come one at a time (a real model streaming at its own pace), each
+list has one event and nothing changes. When they pile up (cached or very fast answers, a busy server falling
+behind), one step carries them all. `run.ai_sdk()` and `run.ag_ui(...)` (see [Web frontends](web-frontends.md))
+read the run this way too. Numbers in the [benchmarks](benchmarks.md#serving-a-stream-runbatches-and-runai_sdk).
+
 ## Other settings
 
 ```python

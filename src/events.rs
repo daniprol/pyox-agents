@@ -45,6 +45,8 @@ pub struct ToolFinished {
     pub is_error: bool,
     /// Data for the app from `ToolReturn(metadata=...)`; the model never sees it.
     pub metadata: Value,
+    /// The app gave this result (a frontend tool), so protocol streams don't send it back.
+    pub from_app: bool,
 }
 
 /// The last event of a run.

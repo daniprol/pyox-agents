@@ -114,6 +114,7 @@ class Agent:
         previous_response_id: str | None = None,
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
+        frontend_tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> Run:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
 
@@ -132,6 +133,12 @@ class Agent:
         requests. Continue with the same history and `answers={call_id: Answer(...) | Approve(...)
         | Deny(...)}` (no prompt). Or give `on_request`, a function (sync or async) that replies to
         each request while the run waits; returning `None` stops the run as without it.
+
+        `frontend_tools` adds tools the app runs, for this run only: dicts with `name`,
+        `description` and `parameters` (a JSON schema), as AG-UI clients send them.
+
+        Read the run event by event (`async for event in run`), in batches of every event
+        already waiting (`run.batches()`), or as a web stream (`run.ai_sdk()`, `run.ag_ui(...)`).
         """
         return self._engine.execute(
             prompt,
@@ -142,6 +149,7 @@ class Agent:
             previous_response_id=previous_response_id,
             answers=dict(answers) if answers else None,
             on_request=on_request,
+            frontend_tools=[dict(tool) for tool in frontend_tools] if frontend_tools else None,
         )
 
     async def run(
@@ -154,6 +162,7 @@ class Agent:
         previous_response_id: str | None = None,
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
+        frontend_tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> RunFinished:
         """Run to completion (or until tool calls wait for a person, see `.pending`) and return
         the final event (with `.text` and `.messages`)."""
@@ -167,6 +176,7 @@ class Agent:
             previous_response_id=previous_response_id,
             answers=answers,
             on_request=on_request,
+            frontend_tools=frontend_tools,
         ):
             if isinstance(event, RunFinished):
                 return event

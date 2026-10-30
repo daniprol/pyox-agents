@@ -252,12 +252,12 @@ pub struct InputRequested {
     pub call_id: String,
     #[pyo3(get)]
     pub tool_name: String,
-    arguments: Value,
-    kind: RequestKind,
+    pub arguments: Value,
+    pub kind: RequestKind,
     #[pyo3(get)]
-    key: Option<String>,
-    data: Value,
-    metadata: Value,
+    pub key: Option<String>,
+    pub data: Value,
+    pub metadata: Value,
 }
 
 impl InputRequested {
@@ -285,11 +285,7 @@ impl InputRequested {
     /// `"approval"`, `"input"` (a `ctx.ask` question) or `"frontend"` (a frontend tool).
     #[getter]
     fn kind(&self) -> &'static str {
-        match self.kind {
-            RequestKind::Approval => "approval",
-            RequestKind::Input => "input",
-            RequestKind::Frontend => "frontend",
-        }
+        self.kind.name()
     }
 
     /// What the tool (or hook) wants to show the person.

@@ -273,6 +273,29 @@ result = await agent.run(history=result.messages, answers={result.pending[0].cal
 from its start, with earlier answers returned at once; `ctx.step(name, function)` runs a side effect only once.
 See [Human in the loop](docs/human-in-the-loop.md) for approvals, `Deny`, frontend tools and unanswered calls.
 
+## Web frontends (AI SDK and AG-UI)
+
+Serve an agent to a chat UI built with the [Vercel AI SDK](https://ai-sdk.dev) (`useChat`, v6+) or
+[AG-UI](https://docs.ag-ui.com) (CopilotKit). Rust writes the stream; approvals, questions and frontend tools use
+each toolkit's own way of waiting for the user.
+
+```python
+from pyox_agents import ag_ui, ai_sdk
+
+
+@app.post("/api/chat")
+async def chat(request: Request) -> StreamingResponse:
+    return StreamingResponse(ai_sdk.stream(agent, await request.body()), headers=ai_sdk.HEADERS)
+
+
+@app.post("/api/agent")
+async def run_agent(request: Request) -> StreamingResponse:
+    return StreamingResponse(ag_ui.stream(agent, await request.body()), headers=ag_ui.HEADERS)
+```
+
+See [Web frontends](https://daniprol.github.io/pyox-agents/web-frontends/) and
+[`examples/web_server.py`](examples/web_server.py).
+
 ## Hooks
 
 Hooks are functions the agent calls at fixed points of every run, to watch it or change what happens next.
@@ -375,6 +398,7 @@ async for event in run  ◄─ events ── agent loop     request → stream �
                                                             Python's event loop; Rust tools
                                                             (built-in or from your own
                                                             package) run on a Rust thread
+run.ai_sdk(), run.ag_ui(...)  ◄─ text ── run.rs   events in batches → ai_sdk.rs, ag_ui.rs
 ```
 
 The Rust code is written to be read by Python developers: small files, descriptive names and comments

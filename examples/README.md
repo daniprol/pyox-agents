@@ -54,6 +54,15 @@ uv run examples/human_in_the_loop.py
 A tool asks you a question (the run stops and resumes with your answer), then a tool waits for your approval
 (answered live, while the run waits).
 
+## 7. A web server for AI SDK and AG-UI frontends
+
+```bash
+uv run uvicorn examples.web_server:app --reload
+```
+
+Serves the agent of example 6 to `useChat()` (AI SDK) at `/api/chat` and to AG-UI clients (CopilotKit) at
+`/api/agent`. See [Web frontends](https://daniprol.github.io/pyox-agents/web-frontends/).
+
 ## Using another OpenAI-compatible server
 
 ```bash

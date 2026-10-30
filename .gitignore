@@ -15,3 +15,6 @@ rust-coverage.lcov
 
 # Docs
 site/
+
+# Node (tests/protocol_clients)
+node_modules/

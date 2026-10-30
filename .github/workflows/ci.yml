@@ -24,6 +24,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - run: uv sync --frozen
+      # The AI SDK and AG-UI tests check our streams with the official JavaScript clients.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/protocol_clients/package-lock.json
+      - run: npm ci --prefix tests/protocol_clients
       # The same hooks developers run on commit and on push (see prek.toml).
       - name: Commit hooks (ruff, cargo fmt, file checks)
         run: uv run --frozen prek run --all-files --show-diff-on-failure
@@ -45,6 +52,13 @@ jobs:
           python-version: "3.11"
           enable-cache: true
       - run: uv sync --frozen
+      # The AI SDK and AG-UI tests check our streams with the official JavaScript clients.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/protocol_clients/package-lock.json
+      - run: npm ci --prefix tests/protocol_clients
       # Build the Rust extension with coverage instrumentation, so the Python
       # tests also measure which Rust lines they run.
       - name: Run tests with coverage

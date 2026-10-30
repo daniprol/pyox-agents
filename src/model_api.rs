@@ -4,6 +4,8 @@
 //! Both read a `ModelRequest` and give back an `AssistantTurn`, so the agent
 //! loop never needs to know which API it uses.
 
+use std::sync::Arc;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyox_tools::usage::Usage;
@@ -68,7 +70,7 @@ pub struct ModelRequest<'a> {
     /// The whole conversation so far. An adapter may send only part of it
     /// (see `previous_response_id`).
     pub messages: &'a [Message],
-    pub tools: &'a [ToolDefinition],
+    pub tools: &'a [Arc<ToolDefinition>],
     /// Extra fields for the request body (temperature, reasoning, ...).
     pub model_parameters: &'a Map<String, Value>,
     /// The newest response the conversation could continue from (unless hooks

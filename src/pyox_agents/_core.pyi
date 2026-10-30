@@ -180,6 +180,22 @@ class RunFinished:
 class Run:
     def __aiter__(self) -> Run: ...
     async def __anext__(self) -> TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished: ...
+    def batches(self) -> EventBatches:
+        """Iterate over lists of events: each holds every event already waiting (at least one)."""
+    def ai_sdk(self) -> ProtocolStream:
+        """The run as a Vercel AI SDK UI message stream (server-sent events text)."""
+    def ag_ui(self, thread_id: str, run_id: str) -> ProtocolStream:
+        """The run as an AG-UI event stream (server-sent events text)."""
+
+@final
+class EventBatches:
+    def __aiter__(self) -> EventBatches: ...
+    async def __anext__(self) -> list[TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished]: ...
+
+@final
+class ProtocolStream:
+    def __aiter__(self) -> ProtocolStream: ...
+    async def __anext__(self) -> str: ...
 
 @final
 class Engine:
@@ -211,6 +227,7 @@ class Engine:
         previous_response_id: str | None = None,
         answers: Mapping[str, Any] | None = None,
         on_request: Callable[[InputRequested], Any] | None = None,
+        frontend_tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> Run: ...
 
 class AgentError(Exception):

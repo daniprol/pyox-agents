@@ -136,6 +136,17 @@ pub enum RequestKind {
     Frontend,
 }
 
+impl RequestKind {
+    /// The name used in Python and in the history: `"approval"`, `"input"` or `"frontend"`.
+    pub fn name(self) -> &'static str {
+        match self {
+            RequestKind::Approval => "approval",
+            RequestKind::Input => "input",
+            RequestKind::Frontend => "frontend",
+        }
+    }
+}
+
 /// The person's reply to a request. In Python: `Answer`, `Approve` or `Deny`.
 /// `#[serde(tag = "type")]` stores the variant name in a `"type"` field.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

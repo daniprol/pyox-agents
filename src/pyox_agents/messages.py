@@ -59,10 +59,13 @@ class AssistantMessage(TypedDict):
     model: NotRequired[str]  # the model that wrote it; reasoning is only sent back to it
 
 
+RequestKind = Literal["approval", "input", "frontend"]
+
+
 class Request(TypedDict):
     """What a tool call asked a person, and the reply once it came (see `human_input`)."""
 
-    kind: Literal["approval", "input", "frontend"]
+    kind: RequestKind
     key: NotRequired[str]  # from `ctx.ask(..., key=...)`
     data: Any  # shown to the person
     metadata: Any  # for the app only; never sent to the model

@@ -21,6 +21,7 @@ uv run run_all.py --runs 100                # library benchmark, quick (~10 min;
 uv run run_all.py --only langgraph agno     # only some libraries, compared with pyox-agents
 uv run load_test.py --duration 5s           # FastAPI benchmark, quick (~10 min; full run ~1 h)
 uv run websocket_bench.py --runs 100        # Responses API over HTTP and WebSocket (~5 min)
+uv run stream_bench.py                      # streaming as events, batches or AI SDK text (~3 min)
 ```
 
 Full runs rewrite the tables below; `--only` just prints them.
@@ -128,6 +129,43 @@ pyox-agents can group streamed text into fewer `TextDelta` events. Cost of each 
 
 The cost is per event, not per character. With a real model, the wait for the first `TextDelta` grows with the
 group size (the whole answer with `"message"`), so `10` is the safe choice for live UIs.
+
+## Serving a stream: `run.batches()` and `run.ai_sdk()`
+
+Three ways to turn a run into an AI SDK stream for a web response: one Python step per event, one per batch
+of waiting events (`run.batches()`), or the whole stream made in Rust (`run.ai_sdk()`). Run it with
+`uv run stream_bench.py` ([`stream_bench.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/stream_bench.py)).
+
+<!-- stream:start -->
+Intel(R) Xeon(R) Processor @ 2.80GHz.
+
+Instant model (the cost of the Python side alone):
+
+| Way | Runs at a time | Latency p50 | CPU per run | Throughput | Python steps per run |
+|---|--:|--:|--:|--:|--:|
+| `async for event in run` + Python | 1 | 112.4 ms | 123.6 ms | 9 runs/s | 449 |
+| `run.batches()` + Python | 1 | 9.1 ms | 10.3 ms | 106 runs/s | 10 |
+| `run.ai_sdk()` (Rust) | 1 | 7.6 ms | 8.9 ms | 129 runs/s | 12 |
+| `async for event in run` + Python | 50 | 3871.3 ms | 114.2 ms | 13 runs/s | 449 |
+| `run.batches()` + Python | 50 | 292.0 ms | 10.3 ms | 137 runs/s | 20 |
+| `run.ai_sdk()` (Rust) | 50 | 84.7 ms | 5.7 ms | 354 runs/s | 11 |
+
+Paced model (100 pieces, 10 ms apart):
+
+| Way | Runs at a time | Latency p50 | CPU per run | Throughput | Python steps per run |
+|---|--:|--:|--:|--:|--:|
+| `async for event in run` + Python | 1 | 1053.4 ms | 80.8 ms | 1 runs/s | 101 |
+| `run.batches()` + Python | 1 | 1054.0 ms | 81.7 ms | 1 runs/s | 101 |
+| `run.ai_sdk()` (Rust) | 1 | 1055.4 ms | 79.7 ms | 1 runs/s | 101 |
+| `async for event in run` + Python | 50 | 1186.0 ms | 29.8 ms | 42 runs/s | 101 |
+| `run.batches()` + Python | 50 | 1161.1 ms | 30.1 ms | 43 runs/s | 101 |
+| `run.ai_sdk()` (Rust) | 50 | 1123.6 ms | 26.3 ms | 44 runs/s | 101 |
+<!-- stream:end -->
+
+Each Python step costs far more than the event it carries. A batch holds the events that were already waiting,
+so batching only pays off when events pile up: a model that answers faster than Python reads it (cached answers,
+a fast local model), or a busy server that falls behind. A real model streaming one piece every few milliseconds
+gives one event per step either way, and the three ways cost about the same.
 
 ## Behind a FastAPI streaming endpoint
 
@@ -385,3 +423,5 @@ was rejected (~40 ms delay on reused connections).
 | [`load_test.py`](load_test.py) | Runs the FastAPI benchmark and writes the results                  |
 | [`responses_server.py`](responses_server.py) | Fake Responses API over HTTP and WebSocket, for the tool loops |
 | [`websocket_bench.py`](websocket_bench.py) | Runs the Responses API HTTP / WebSocket comparison and writes the results |
+| [`stream_bench.py`](stream_bench.py) | Compares streaming as events, batches and AI SDK text, and writes the results |
+| [`paced_server.py`](paced_server.py) | Fake Chat Completions server that streams at a real model's pace |

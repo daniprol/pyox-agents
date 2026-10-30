@@ -136,6 +136,34 @@ impl ToolDefinition {
         })
     }
 
+    /// A tool the app runs, sent for one run (`execute(frontend_tools=[...])`):
+    /// a dict with `name`, and optionally `description` and `parameters`.
+    pub fn frontend_from_python(tool: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let field = |key: &str| -> PyResult<Option<Bound<'_, PyAny>>> {
+            let value = tool.get_item(key).ok().filter(|value| !value.is_none());
+            Ok(value)
+        };
+        let Some(name) = field("name")? else {
+            return Err(PyValueError::new_err(format!(
+                "A frontend tool needs a \"name\": {}",
+                tool.repr()?
+            )));
+        };
+        Ok(ToolDefinition {
+            name: name.extract()?,
+            description: field("description")?
+                .map(|text| text.extract())
+                .transpose()?
+                .unwrap_or_default(),
+            parameters: match field("parameters")? {
+                Some(parameters) => python_to_json(&parameters)?,
+                None => serde_json::json!({"type": "object", "properties": {}}),
+            },
+            implementation: ToolImplementation::Frontend,
+            approval: Approval::Never,
+        })
+    }
+
     /// The approval request this call needs, if any. `Err` is the error
     /// result for the model when the `requires_approval` function failed.
     pub async fn approval_request(

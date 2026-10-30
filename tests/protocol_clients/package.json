@@ -1,0 +1,12 @@
+{
+  "name": "pyox-protocol-clients",
+  "private": true,
+  "description": "The official AI SDK and AG-UI clients, to check the streams pyox-agents makes (tests/test_protocol_clients.py).",
+  "type": "module",
+  "dependencies": {
+    "@ag-ui/client": "1.0.3",
+    "ai": "7.0.157",
+    "ai-6": "npm:ai@6.0.319",
+    "rxjs": "7.8.2"
+  }
+}

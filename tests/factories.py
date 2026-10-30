@@ -1,6 +1,7 @@
 """Reusable builders for fake API responses and helpers to read run events."""
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
 from fake_openai import ErrorResponse, StreamResponse
@@ -128,3 +129,21 @@ def responses_answer(
         ],
         end_with_done=False,
     )
+
+
+# Web streams (`run.ai_sdk()`, `run.ag_ui(...)`) ---------------------------------------------------
+
+
+async def read_text(stream: AsyncIterator[str]) -> str:
+    return "".join([text async for text in stream])
+
+
+def sse_data(text: str) -> list[Any]:
+    """The `data:` payloads of a server-sent events text, parsed (`[DONE]` kept as a string)."""
+    events = [event.removeprefix("data: ") for event in text.split("\n\n") if event]
+    return [event if event == "[DONE]" else json.loads(event) for event in events]
+
+
+def user_ui_message(text: str) -> dict[str, Any]:
+    """A user message as AI SDK's `useChat` sends it."""
+    return {"id": "u1", "role": "user", "parts": [{"type": "text", "text": text}]}

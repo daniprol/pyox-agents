@@ -11,7 +11,10 @@
 //! | `client`        | `Client`: API key, base URL, headers, timeouts, HTTP pool     |
 //! | `ws`            | One WebSocket connection to the Responses API                 |
 //! | `ws_pool`       | Idle WebSocket connections shared by a client's runs          |
-//! | `agent`         | `Engine` and `Run`: the agent loop and the event stream       |
+//! | `agent`         | `Engine`: the agent loop                                      |
+//! | `run`           | `Run`: reading a run's events (one by one, batches, protocols) |
+//! | `ai_sdk`        | A run as a Vercel AI SDK UI message stream (`useChat`)        |
+//! | `ag_ui`         | A run as an AG-UI event stream                                |
 //! | `events`        | The event classes Python receives (`TextDelta`, ...)          |
 //! | `messages`      | Our own conversation history format                           |
 //! | `history_store` | Reading given history; loading/saving it with history stores  |
@@ -30,7 +33,9 @@
 
 use pyo3::prelude::*;
 
+mod ag_ui;
 mod agent;
+mod ai_sdk;
 mod client;
 mod errors;
 mod events;
@@ -43,6 +48,7 @@ mod model_api;
 mod openai_chat;
 mod openai_responses;
 mod python_call;
+mod run;
 mod run_context;
 mod sse;
 mod text_chunks;
@@ -56,7 +62,9 @@ mod ws_pool;
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<client::Client>()?;
     module.add_class::<agent::Engine>()?;
-    module.add_class::<agent::Run>()?;
+    module.add_class::<run::Run>()?;
+    module.add_class::<run::EventBatches>()?;
+    module.add_class::<run::ProtocolStream>()?;
     module.add_class::<tools::BuiltinTool>()?;
     module.add_class::<run_context::PythonRunContext>()?;
 

@@ -32,9 +32,11 @@ fast-history = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "ag-ui-protocol>=1.0,<2",  # tests check our AG-UI events with its models
     "aiosqlite>=0.21",  # for examples/python_history.py
     "fast-history",
     "fast-tools",
+    "fastapi>=0.115",  # for examples/web_server.py
     "maturin>=1.9",
     "prek>=0.5.7",
     "pytest>=8",
@@ -42,6 +44,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.14",
     "sqlalchemy[asyncio]>=2.0",  # for examples/python_history.py
+    "uvicorn>=0.30",  # for examples/web_server.py
     "ty>=0.0.1",
 ]
 docs = ["zensical>=0.0.72"]  # uv run --only-group docs zensical serve

@@ -595,3 +595,30 @@ async def test_websocket_runs_resume_without_the_waiting_message(
         "function_call",
         "function_call_output",
     ]
+
+
+# Frontend tools sent with a run (`frontend_tools=`) ----------------------------------------------
+
+
+async def test_frontend_tools_can_come_with_each_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    location = {"name": "get_location", "description": "The user's location.", "parameters": {"type": "object"}}
+    fake_openai.queue(tool_calls_response(tool_call("get_location")), text_response("Vigo it is"))
+    agent = make_agent(tools=[delete_file])
+
+    stopped = await agent.run("Where am I?", frontend_tools=[location])
+    result = await agent.run(history=stopped.messages, answers={"call_0": Answer("Vigo")}, frontend_tools=[location])
+
+    sent_tools = [schema["function"]["name"] for schema in fake_openai.requests[0].body["tools"]]
+    assert sent_tools == ["delete_file", "get_location"]
+    assert [(request.kind, request.tool_name) for request in stopped.pending] == [("frontend", "get_location")]
+    assert result.text == "Vigo it is"
+    assert len(agent.tools) == 1  # the frontend tool was only for those runs
+
+
+def test_frontend_tools_need_a_name_of_their_own(make_agent: MakeAgent) -> None:
+    agent = make_agent(tools=[delete_file])
+
+    with pytest.raises(ValueError, match="agent's tools"):
+        agent.execute("Hi", frontend_tools=[{"name": "delete_file"}])
+    with pytest.raises(ValueError, match="needs a"):
+        agent.execute("Hi", frontend_tools=[{"description": "No name"}])
