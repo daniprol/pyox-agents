@@ -6,9 +6,10 @@ directly, `server.py` sends the pieces to an HTTP client.
 Libraries are imported inside the functions, so a process only loads the one it measures.
 """
 
+import os
 from collections.abc import AsyncIterator, Callable
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from pyox_agents.agent import TextChunks
@@ -215,4 +216,63 @@ TEXT_CHUNKS: dict[str, Callable[[str], StreamText]] = {
     f"text_chunks={mode!r}": partial(make_pyox_agent, text_chunks=mode) for mode in TEXT_CHUNKS_MODES
 }
 
-AGENTS = LIBRARIES | TEXT_CHUNKS
+
+# Comparison 3: the Responses API over HTTP and over WebSocket (`websocket_bench.py`).
+# The key and model come from the environment only for the opt-in run against OpenAI.
+API_KEY = os.environ.get("BENCHMARK_API_KEY", "not-needed")
+RESPONSES_MODEL = os.environ.get("BENCHMARK_MODEL", MODEL)
+MAX_TURNS = 25  # the longest loop is 21 turns: 20 tool calls, then the answer
+
+
+def make_pyox_responses_agent(base_url: str, transport: Literal["http", "websocket"]) -> StreamText:
+    from pyox_agents import Agent, Client, TextDelta
+
+    agent = Agent(
+        client=Client(api_key=API_KEY, base_url=base_url, transport=transport),
+        model=RESPONSES_MODEL,
+        prompt=PROMPT,
+        tools=[get_weather],
+        api="responses",
+        max_turns=MAX_TURNS,
+    )
+
+    async def stream(prompt: str) -> AsyncIterator[str]:
+        async for event in agent.execute(prompt):
+            if isinstance(event, TextDelta):
+                yield event.text
+
+    return stream
+
+
+def make_openai_agents_responses_agent(base_url: str, websocket: bool) -> StreamText:
+    """The Agents SDK's own Responses model. Over WebSocket, with the response chaining its docs pair it with."""
+    from agents import Agent, OpenAIProvider, RunConfig, Runner, function_tool, set_tracing_disabled
+    from openai.types.responses import ResponseTextDeltaEvent
+
+    set_tracing_disabled(True)  # on by default: it would send traces to OpenAI
+    # One provider for every run, so the WebSocket connection is kept between runs.
+    provider = OpenAIProvider(api_key=API_KEY, base_url=base_url, use_responses=True, use_responses_websocket=websocket)
+    run_config = RunConfig(model_provider=provider)
+    agent = Agent(name="assistant", instructions=PROMPT, model=RESPONSES_MODEL, tools=[function_tool(get_weather)])
+
+    async def stream(prompt: str) -> AsyncIterator[str]:
+        # `auto_previous_response_id`: turns after the first send only the new items. Over HTTP this would need
+        # `store`, so HTTP sends the whole conversation every turn, like pyox-agents.
+        result = Runner.run_streamed(
+            agent, prompt, run_config=run_config, max_turns=MAX_TURNS, auto_previous_response_id=websocket
+        )
+        async for event in result.stream_events():
+            if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
+                yield event.data.delta
+
+    return stream
+
+
+RESPONSES_TRANSPORTS: dict[str, Callable[[str], StreamText]] = {
+    "pyox-agents http": partial(make_pyox_responses_agent, transport="http"),
+    "pyox-agents websocket": partial(make_pyox_responses_agent, transport="websocket"),
+    "openai-agents http": partial(make_openai_agents_responses_agent, websocket=False),
+    "openai-agents websocket": partial(make_openai_agents_responses_agent, websocket=True),
+}
+
+AGENTS = LIBRARIES | TEXT_CHUNKS | RESPONSES_TRANSPORTS

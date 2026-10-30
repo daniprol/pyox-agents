@@ -34,6 +34,12 @@ SCENARIOS = {
     "tool": ("What's the weather in one city?", TOOL_ANSWER),  # one tool call, then the answer
     "parallel_tools": ("What's the weather in five cities?", TOOL_ANSWER),  # five tool calls at once
 }
+# For the Responses API server of `websocket_bench.py`: tool calls one after another, one per turn.
+TOOL_LOOP_SCENARIOS = {
+    f"tool_loop_{calls}": (f"Check the weather in Vigo with {calls} tool calls, one at a time.", TOOL_ANSWER)
+    for calls in (1, 5, 20)
+}
+ALL_SCENARIOS = SCENARIOS | TOOL_LOOP_SCENARIOS
 
 
 def peak_memory_mb() -> float:
@@ -59,8 +65,10 @@ async def run_checked(stream: StreamText, prompt: str, expected_start: str) -> f
     return first_text_seconds
 
 
-async def measure(agent: str, scenario: str, base_url: str, runs: int, concurrency: int) -> dict:
-    prompt, expected = SCENARIOS[scenario]
+async def measure(agent: str, scenario: str, base_url: str, runs: int, concurrency: int, any_answer: bool) -> dict:
+    prompt, expected = ALL_SCENARIOS[scenario]
+    if any_answer:  # a real model words its answer its own way
+        expected = ""
     stream = AGENTS[agent](base_url)
 
     for _ in range(10):  # warm up connections and lazy imports
@@ -111,12 +119,15 @@ async def measure(agent: str, scenario: str, base_url: str, runs: int, concurren
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("agent", choices=AGENTS)
-    parser.add_argument("scenario", choices=SCENARIOS)
+    parser.add_argument("scenario", choices=ALL_SCENARIOS)
     parser.add_argument("--base-url", default="http://127.0.0.1:4010/v1")
     parser.add_argument("--runs", type=int, default=500)
     parser.add_argument("--concurrency", type=int, default=100)
+    parser.add_argument("--any-answer", action="store_true", help="accept any final answer (for a real model)")
     args = parser.parse_args()
-    result = asyncio.run(measure(args.agent, args.scenario, args.base_url, args.runs, args.concurrency))
+    result = asyncio.run(
+        measure(args.agent, args.scenario, args.base_url, args.runs, args.concurrency, args.any_answer)
+    )
     print(json.dumps(result))
 
 

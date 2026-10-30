@@ -20,6 +20,7 @@ uv sync                                     # installs every library and builds 
 uv run run_all.py --runs 100                # library benchmark, quick (~10 min; full run ~1 h)
 uv run run_all.py --only langgraph agno     # only some libraries, compared with pyox-agents
 uv run load_test.py --duration 5s           # FastAPI benchmark, quick (~10 min; full run ~1 h)
+uv run websocket_bench.py --runs 100        # Responses API over HTTP and WebSocket (~5 min)
 ```
 
 Full runs rewrite the tables below; `--only` just prints them.
@@ -244,6 +245,34 @@ Python 3.13.17, one uvicorn process, Intel(R) Xeon(R) Processor @ 2.80GHz. Each 
   but it runs a started answer to the end while the others wait, so its p90 and p99 are about 4 times worse.
   The average is the fairest single number.
 
+## Responses API over WebSocket
+
+pyox-agents with `Client(transport="websocket")` and the OpenAI Agents SDK with `use_responses_websocket=True`,
+each also over HTTP, on the same tool loop: the model calls `get_weather` once per turn, 1, 5 or 20 times, then
+streams the answer. A fake Responses API server
+([`responses_server.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/responses_server.py))
+answers over HTTP and WebSocket. Run it with `uv run websocket_bench.py` (options in
+[`websocket_bench.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/websocket_bench.py)).
+
+**What this measures, and what it cannot.** OpenAI's speedup in WebSocket mode ("up to ~40% faster" with 20+
+tool calls) comes mostly from its servers: each connection keeps the latest response in memory, so a turn that
+continues it skips reloading the conversation. A local fake server cannot reproduce that. These numbers are each
+library's own work per turn (building requests, sending them, reading the events, running the tool) and how it
+reuses connections. "Upload per run" shows the other effect: over HTTP every turn sends the whole conversation
+again, over WebSocket only the new tool result. Measuring against OpenAI needs an API key (`--real-openai`).
+
+<!-- websocket:start -->
+Not measured yet: run `uv run websocket_bench.py`.
+<!-- websocket:end -->
+
+- Same prompt, tool and streamed answer for all four; one agent shared by all runs.
+- pyox-agents chains turns over WebSocket by itself. The Agents SDK does it with `auto_previous_response_id=True`,
+  which we pass over WebSocket only (over HTTP it would need `store=True`), so over HTTP both send the whole
+  conversation every turn.
+- The Agents SDK keeps one WebSocket connection per model and sends one request at a time on it, so concurrent
+  runs wait for each other (its docs suggest separate connections for parallel runs). pyox-agents gives each
+  concurrent run its own pooled connection.
+
 <!-- --8<-- [end:results] -->
 
 ## How it's kept fair
@@ -282,3 +311,5 @@ was rejected (~40 ms delay on reused connections).
 | [`server.py`](server.py)       | FastAPI app streaming an agent's answer                            |
 | [`load.js`](load.js)           | k6 script: users sending requests in a loop                        |
 | [`load_test.py`](load_test.py) | Runs the FastAPI benchmark and writes the results                  |
+| [`responses_server.py`](responses_server.py) | Fake Responses API over HTTP and WebSocket, for the tool loops |
+| [`websocket_bench.py`](websocket_bench.py) | Runs the Responses API HTTP / WebSocket comparison and writes the results |
