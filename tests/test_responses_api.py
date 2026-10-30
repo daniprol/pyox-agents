@@ -5,7 +5,15 @@ from typing import Any
 import pytest
 
 from conftest import MakeAgent
-from factories import collect_events, error_response, events_of_type, responses_answer, text_response, tool_call
+from factories import (
+    MemoryHistory,
+    collect_events,
+    error_response,
+    events_of_type,
+    responses_answer,
+    text_response,
+    tool_call,
+)
 from fake_openai import ErrorResponse, FakeOpenAI, StreamResponse
 from pyox_agents import ApiError, Hooks, InvalidResponseError, Message, RunContext, RunFinished, TextDelta, Usage, image
 
@@ -266,6 +274,69 @@ async def test_messages_changed_by_hooks_are_all_sent(fake_openai: FakeOpenAI, m
     assert [item["content"] for item in request["input"]] == ["[hidden]", "Noted", "Hi"]
 
 
+# OpenAI conversations (`openai_conversation=`) ----------------------------------------------------
+
+
+async def test_a_conversation_run_sends_only_what_openai_does_not_have(
+    fake_openai: FakeOpenAI, make_responses_agent: MakeAgent
+) -> None:
+    fake_openai.queue(
+        responses_answer(tool_calls=(tool_call("add", a=2, b=3),), response_id="resp_1"),
+        responses_answer("It is 5", response_id="resp_2"),
+        responses_answer("You asked about 2 + 3", response_id="resp_3"),
+    )
+    agent = make_responses_agent(tools=[add])  # `store` stays False: conversations store anyway
+
+    first = await agent.run("2 + 3?", openai_conversation="conv_1")
+    await agent.run("What did I ask?", history=first.messages, openai_conversation="conv_1")
+
+    first_request, tool_result_request, next_run_request = (request.body for request in fake_openai.requests)
+    for request in (first_request, tool_result_request, next_run_request):
+        assert (request["conversation"], request["store"]) == ("conv_1", True)
+        assert "previous_response_id" not in request  # the API rejects it next to a conversation
+    assert first_request["input"] == [{"role": "user", "content": "2 + 3?"}]
+    # The conversation already has the tool call: only its result is new.
+    assert tool_result_request["input"] == [{"type": "function_call_output", "call_id": "call_0", "output": "5"}]
+    assert next_run_request["input"] == [{"role": "user", "content": "What did I ask?"}]
+    # The answers remember the conversation they were added to.
+    assert [message.get("openai_conversation") for message in first.messages] == [None, "conv_1", None, "conv_1"]
+
+
+async def test_a_conversation_gets_the_history_it_does_not_have_yet(
+    fake_openai: FakeOpenAI, make_responses_agent: MakeAgent
+) -> None:
+    history: list[Message] = [
+        {"role": "user", "content": "I am Dani"},
+        {"role": "assistant", "content": "Hi Dani", "openai_conversation": "conv_old"},
+    ]
+    fake_openai.queue(responses_answer("Dani"))
+
+    # A new conversation has none of these messages, so they are all sent.
+    await make_responses_agent().run("My name?", history=history, openai_conversation="conv_new")
+
+    assert [item["content"] for item in fake_openai.requests[0].body["input"]] == ["I am Dani", "Hi Dani", "My name?"]
+
+
+async def test_a_conversation_works_with_a_history_store(
+    fake_openai: FakeOpenAI, make_responses_agent: MakeAgent
+) -> None:
+    store = MemoryHistory()
+    fake_openai.queue(responses_answer("Hi Dani"), responses_answer("Dani"))
+    agent = make_responses_agent(history_store=store)
+
+    await agent.run("I am Dani", conversation_id="user-1", openai_conversation="conv_1")
+    await agent.run("My name?", conversation_id="user-1", openai_conversation="conv_1")
+
+    # Our copy keeps the whole conversation; OpenAI only gets the new prompt.
+    assert [message["content"] for message in store.conversations["user-1"]] == [
+        "I am Dani",
+        "Hi Dani",
+        "My name?",
+        "Dani",
+    ]
+    assert fake_openai.requests[1].body["input"] == [{"role": "user", "content": "My name?"}]
+
+
 # Errors and invalid use ---------------------------------------------------------------------------
 
 
@@ -300,6 +371,11 @@ def test_invalid_configuration(make_agent: MakeAgent, make_responses_agent: Make
         stored_agent.execute("Hi", previous_response_id="resp_1", history=[])
     with pytest.raises(ValueError, match="needs a prompt"):
         stored_agent.execute(previous_response_id="resp_1")
+
+    with pytest.raises(ValueError, match='`openai_conversation` needs an agent with `api="responses"`'):
+        make_agent().execute("Hi", openai_conversation="conv_1")
+    with pytest.raises(ValueError, match="not both"):
+        stored_agent.execute("Hi", openai_conversation="conv_1", previous_response_id="resp_1")
 
 
 async def test_chat_history_continues_on_the_responses_api(

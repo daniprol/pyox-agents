@@ -98,6 +98,25 @@ async def test_a_tool_loop_stays_on_one_connection_and_sends_only_new_items(
     assert second_turn["tools"] == first_turn["tools"]  # instructions and tools are sent on every turn
 
 
+async def test_an_openai_conversation_replaces_the_cached_response(
+    fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent
+) -> None:
+    fake_openai.queue(
+        responses_answer(tool_calls=(tool_call("add", a=2, b=3),), response_id="resp_1"),
+        responses_answer("It is 5", response_id="resp_2"),
+    )
+
+    await make_websocket_agent(tools=[add]).run("2 + 3?", openai_conversation="conv_1")
+
+    first_turn, second_turn = (request.body for request in fake_openai.requests)
+    assert connections(fake_openai.requests) == [1, 1]
+    assert (first_turn["conversation"], first_turn["store"]) == ("conv_1", True)
+    # The conversation already has the tool call, and the API rejects `previous_response_id` next to it.
+    assert second_turn["conversation"] == "conv_1"
+    assert "previous_response_id" not in second_turn
+    assert second_turn["input"] == TOOL_RESULT_ONLY
+
+
 async def test_follows_a_redirect_to_a_websocket_address(
     fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent
 ) -> None:

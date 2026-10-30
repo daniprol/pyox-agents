@@ -10,6 +10,9 @@
 //! - Stored responses. With `store: true` OpenAI keeps each response, and a
 //!   request can name the one it continues (`previous_response_id`) and send
 //!   only the newer messages.
+//! - Conversations (`execute(openai_conversation="conv_...")`). OpenAI keeps
+//!   the whole conversation, puts it in front of each request and adds the new
+//!   items to it, so a request sends only the messages OpenAI does not have yet.
 //! - WebSocket mode (`Client(transport="websocket")`). Each turn is a message on
 //!   a connection the run keeps, and the server caches the latest response of
 //!   each connection: later turns of a run send `previous_response_id` and only
@@ -48,8 +51,8 @@ use crate::ws_pool::RunSocket;
 /// Builds the request body. `model_parameters` (reasoning effort, ...) go
 /// first so the fields this library controls always win.
 ///
-/// With a `previous_response_id`, only the messages after that response are
-/// sent: OpenAI already has the rest.
+/// With a `previous_response_id` or an OpenAI conversation, only the messages
+/// OpenAI does not have yet are sent.
 pub fn build_request_body(
     request: &ModelRequest<'_>,
     options: ResponsesOptions,
@@ -63,7 +66,17 @@ pub fn build_request_body(
     }
 
     let mut messages_to_send = request.messages;
-    if let Some(response_id) = previous_response_id {
+    let mut store = options.store;
+    if let Some(conversation) = request.openai_conversation {
+        body.insert("conversation".into(), json!(conversation));
+        // Without `store`, OpenAI would not add this turn to the conversation.
+        store = true;
+        // Messages from an earlier run on this conversation are already there.
+        // (If none is, the whole history is new to it.)
+        if let Some(newer_messages) = messages_after_conversation(request.messages, conversation) {
+            messages_to_send = newer_messages;
+        }
+    } else if let Some(response_id) = previous_response_id {
         body.insert("previous_response_id".into(), json!(response_id));
         // When the response is not in our messages (it came from
         // `execute(previous_response_id=...)`), all our messages are new to OpenAI.
@@ -76,7 +89,7 @@ pub fn build_request_body(
         Value::Array(input_items(request.model, messages_to_send)),
     );
     body.insert("stream".into(), json!(true));
-    body.insert("store".into(), json!(options.store));
+    body.insert("store".into(), json!(store));
 
     if options.encrypted_reasoning {
         add_to_include(&mut body, "reasoning.encrypted_content");
@@ -109,6 +122,15 @@ fn messages_after_response<'a>(messages: &'a [Message], response_id: &str) -> Op
     let position = messages
         .iter()
         .position(|message| matches!(message, Message::Assistant { response_id: Some(id), .. } if id == response_id))?; // `?` on an `Option`: return `None` right away if it is `None`
+    Some(&messages[position + 1..])
+}
+
+/// The messages after the last assistant message added to this OpenAI
+/// conversation, or `None` if no message was.
+fn messages_after_conversation<'a>(messages: &'a [Message], conversation: &str) -> Option<&'a [Message]> {
+    let position = messages.iter().rposition(
+        |message| matches!(message, Message::Assistant { openai_conversation: Some(id), .. } if id == conversation),
+    )?; // `rposition`: like `position`, but searching from the end
     Some(&messages[position + 1..])
 }
 
@@ -413,11 +435,16 @@ pub async fn stream_response(
 /// `request.previous_response_id` is the newest response the conversation
 /// could continue from. The server can find it if it stored it (`store`), or
 /// if it is the response cached on the WebSocket connection we send on.
+///
+/// Never with an OpenAI conversation: the API does not accept both.
 fn response_to_continue<'a>(
     request: &ModelRequest<'a>,
     options: ResponsesOptions,
     cached_response_id: Option<&str>,
 ) -> Option<&'a str> {
+    if request.openai_conversation.is_some() {
+        return None;
+    }
     let response_id = request.previous_response_id?;
     if options.store || cached_response_id == Some(response_id) {
         Some(response_id)
@@ -864,6 +891,50 @@ mod tests {
         );
         assert_eq!(response_to_continue(&request, STATELESS, Some("resp_0")), None);
         assert_eq!(response_to_continue(&request, STATELESS, None), None);
+
+        // An OpenAI conversation never continues from a response: the API accepts only one of them.
+        let request = ModelRequest {
+            openai_conversation: Some("conv_1"),
+            ..request
+        };
+        assert_eq!(response_to_continue(&request, stored, Some("resp_1")), None);
+    }
+
+    #[test]
+    fn an_openai_conversation_gets_only_the_messages_it_does_not_have() {
+        let parameters = Map::new();
+        // The first run on the conversation: it gets the whole history, stored even without `store`.
+        let history = conversation_with_reasoning();
+        let first_request = ModelRequest {
+            openai_conversation: Some("conv_1"),
+            ..request(&history, &parameters)
+        };
+        let body = build_request_body(&first_request, STATELESS, None);
+        assert_eq!(body["conversation"], json!("conv_1"));
+        assert_eq!(body["store"], json!(true));
+        assert!(body.get("previous_response_id").is_none());
+        assert_eq!(body["input"].as_array().unwrap().len(), 4); // user, reasoning, call, output
+
+        // Once an answer was added to it, only the messages after that answer are sent.
+        let history = messages(json!([
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello", "openai_conversation": "conv_1"},
+            {"role": "user", "content": "Bye"},
+        ]));
+        let next_request = ModelRequest {
+            openai_conversation: Some("conv_1"),
+            ..request(&history, &parameters)
+        };
+        let body = build_request_body(&next_request, STATELESS, None);
+        assert_eq!(body["input"], json!([{"role": "user", "content": "Bye"}]));
+
+        // A different conversation has none of them.
+        let other_request = ModelRequest {
+            openai_conversation: Some("conv_2"),
+            ..request(&history, &parameters)
+        };
+        let body = build_request_body(&other_request, STATELESS, None);
+        assert_eq!(body["input"].as_array().unwrap().len(), 3);
     }
 
     #[test]

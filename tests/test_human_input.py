@@ -7,6 +7,7 @@ import pytest
 
 from conftest import MakeAgent
 from factories import (
+    MemoryHistory,
     collect_events,
     events_of_type,
     responses_answer,
@@ -532,17 +533,9 @@ async def test_after_run_sees_pending_requests(fake_openai: FakeOpenAI, make_age
 
 
 async def test_stopped_runs_resume_from_a_history_store(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
-    conversations: dict[str, list[Message]] = {}
-
-    class MemoryHistory:
-        async def load(self, conversation_id: str) -> list[Message]:
-            return conversations.get(conversation_id, [])
-
-        async def save(self, conversation_id: str, new_messages_json: str) -> None:
-            conversations.setdefault(conversation_id, []).extend(json.loads(new_messages_json))
-
+    history_store = MemoryHistory()
     fake_openai.queue(tool_calls_response(tool_call("book_flight", city="Oslo")), text_response("Booked"))
-    agent = make_agent(tools=[book_flight], history_store=MemoryHistory())
+    agent = make_agent(tools=[book_flight], history_store=history_store)
     bookings = Bookings()
 
     await agent.run("Fly me to Oslo", conversation_id="c1", deps=bookings)
@@ -550,7 +543,8 @@ async def test_stopped_runs_resume_from_a_history_store(fake_openai: FakeOpenAI,
 
     assert result.text == "Booked"
     assert bookings.booked == ["Oslo 9:00"]
-    assert [message["role"] for message in conversations["c1"]] == ["user", "assistant", "tool", "tool", "assistant"]
+    roles = [message["role"] for message in history_store.conversations["c1"]]
+    assert roles == ["user", "assistant", "tool", "tool", "assistant"]
 
 
 async def test_stored_responses_resume_with_answers(fake_openai: FakeOpenAI, client: Client) -> None:

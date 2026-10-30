@@ -225,6 +225,7 @@ class Engine:
         text_chunks: str | int | None = None,
         deps: Any = None,
         previous_response_id: str | None = None,
+        openai_conversation: str | None = None,
         answers: Mapping[str, Any] | None = None,
         on_request: Callable[[InputRequested], Any] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,

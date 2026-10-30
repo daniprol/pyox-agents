@@ -5,11 +5,24 @@ from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
 from fake_openai import ErrorResponse, StreamResponse
-from pyox_agents import AgentEvent, Run
+from pyox_agents import AgentEvent, Message, Run
 
 DEFAULT_USAGE = {"prompt_tokens": 10, "completion_tokens": 5}
 
 EventType = TypeVar("EventType")
+
+
+class MemoryHistory:
+    """A Python history store keeping conversations in a dict."""
+
+    def __init__(self, conversations: dict[str, list[Message]] | None = None) -> None:
+        self.conversations = conversations or {}
+
+    async def load(self, conversation_id: str) -> list[Message]:
+        return self.conversations.get(conversation_id, [])
+
+    async def save(self, conversation_id: str, new_messages_json: str) -> None:
+        self.conversations.setdefault(conversation_id, []).extend(json.loads(new_messages_json))
 
 
 def text_response(text: str, *, usage: dict[str, Any] = DEFAULT_USAGE) -> StreamResponse:

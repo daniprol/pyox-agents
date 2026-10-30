@@ -72,6 +72,54 @@ history, when the run has it. With only a `previous_response_id`, the error is r
 If a `before_model_request` hook changes the messages, OpenAI's stored copy no longer matches them, so that
 request sends all of them instead of continuing from the stored response.
 
+## OpenAI conversations: `openai_conversation`
+
+OpenAI's [Conversations API](https://platform.openai.com/docs/api-reference/conversations) keeps a whole
+conversation on OpenAI's side, with no 30-day limit like stored responses. Each request names the conversation,
+OpenAI puts its items in front of the request's input and adds the new input and the answer to it.
+
+pyox-agents does not create or delete conversations: do that with the OpenAI SDK (or a plain HTTP request), then
+pass the id to each run:
+
+```python
+from openai import AsyncOpenAI
+
+conversation = await AsyncOpenAI().conversations.create(metadata={"user": "dani"})
+
+agent = Agent(model="gpt-5-mini", api="responses")
+await agent.run("I am Dani", openai_conversation=conversation.id)
+result = await agent.run("What is my name?", openai_conversation=conversation.id)
+```
+
+Each request sends only what the conversation does not have yet:
+
+- **Inside a run**, after the first answer, only the new tool results.
+- **Across runs**, each answer added to the conversation is marked in the history (`"openai_conversation":
+  "conv_..."`), and the next run sends only the messages after the last marked one. A history without marks (or
+  with another conversation's) is sent whole, so it starts the new conversation with the same context. A run with
+  no history sends only its prompt.
+
+Requests with a conversation are always stored (`store: true`, even if the agent has `store=False`): otherwise
+OpenAI would not add them to it. They never use `previous_response_id`, which the API does not accept next to a
+conversation, so `execute(previous_response_id=..., openai_conversation=...)` raises `ValueError`.
+
+A history store works as usual: it keeps your own copy of the conversation, for example to show it in your app.
+`conversation_id=` names that copy; `openai_conversation=` names OpenAI's.
+
+```python
+await agent.run("Hi", conversation_id="user-42", openai_conversation=conversation.id)
+```
+
+Things to know:
+
+- `before_model_request` hooks cannot change what the conversation already holds: only the messages sent with the
+  request.
+- OpenAI locks a conversation while a response is being made, so two runs on the same conversation at the same
+  time fail.
+- Over WebSocket, the conversation is sent the same way. OpenAI's SDK accepts it there, but the WebSocket guide
+  does not mention it, so it is not tested against OpenAI yet.
+- Azure OpenAI documents the Conversations API in its v1 API, but it may not be available in every region yet.
+
 ## WebSocket mode
 
 `Client(transport="websocket")` sends Responses API requests over WebSocket connections. A run keeps one

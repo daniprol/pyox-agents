@@ -11,8 +11,10 @@ and out:
 ```
 
 Assistant messages also record the `model` that wrote them. With the [Responses API](responses-api.md) they also
-keep the model's encrypted `reasoning` and the `response_id`. Keep these fields when you store the history: they
-are what lets the next request reuse the reasoning and the prompt cache.
+keep the model's encrypted `reasoning`, the `response_id` and, in a run on an
+[OpenAI conversation](responses-api.md#openai-conversations-openai_conversation), the `openai_conversation`. Keep
+these fields when you store the history: they are what lets the next request reuse the reasoning and the prompt
+cache, and send only what OpenAI does not have yet.
 
 ## Continue a conversation
 
