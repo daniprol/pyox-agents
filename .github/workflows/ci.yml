@@ -84,8 +84,9 @@ jobs:
     name: Live tests (Azure OpenAI)
     # Never on pull requests, so the key is not exposed to code from forks; and only after the
     # offline checks pass, so a broken build spends no tokens.
-    # Not on release tags either: that commit already ran the live tests when it was pushed.
-    if: github.event_name != 'pull_request' && github.ref_type == 'branch'
+    # Not when release.yml reuses this workflow either (`github.workflow` is then "Release"): that commit
+    # already ran the live tests when it was pushed.
+    if: github.workflow == 'CI' && github.event_name != 'pull_request'
     needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
