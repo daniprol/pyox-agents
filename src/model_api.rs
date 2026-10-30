@@ -13,6 +13,7 @@ use crate::client::ClientSettings;
 use crate::messages::{Message, Reasoning, ToolCall};
 use crate::text_chunks::TextOutput;
 use crate::tools::ToolDefinition;
+use crate::ws_pool::RunSocket;
 use crate::{openai_chat, openai_responses};
 
 /// Python: `Agent(api="chat")` or `Agent(api="responses")`.
@@ -70,8 +71,10 @@ pub struct ModelRequest<'a> {
     pub tools: &'a [ToolDefinition],
     /// Extra fields for the request body (temperature, reasoning, ...).
     pub model_parameters: &'a Map<String, Value>,
-    /// Responses API with `store`: the stored response this request continues
-    /// from. Only the messages after it are sent. The Chat API ignores it.
+    /// The newest response the conversation could continue from (unless hooks
+    /// changed the messages). The Responses API continues from it when the
+    /// server still has it (with `store`, or on the WebSocket connection that
+    /// made it) and sends only the messages after it. The Chat API ignores it.
     pub previous_response_id: Option<&'a str>,
 }
 
@@ -88,15 +91,21 @@ pub struct AssistantTurn {
 
 /// Sends one request to the agent's API and streams the answer: each piece of
 /// text goes to `text_output` as soon as it arrives.
+///
+/// `run_socket` is the run's WebSocket connection, kept between turns. Only
+/// the Responses API uses it, with `Client(transport="websocket")`.
 pub async fn stream_model_turn(
     client: &ClientSettings,
     api: Api,
     request: &ModelRequest<'_>,
+    run_socket: &mut RunSocket,
     text_output: &mut TextOutput,
 ) -> PyResult<AssistantTurn> {
     match api {
         Api::ChatCompletions => openai_chat::stream_chat_completion(client, request, text_output).await,
-        Api::Responses(options) => openai_responses::stream_response(client, request, options, text_output).await,
+        Api::Responses(options) => {
+            openai_responses::stream_response(client, request, options, run_socket, text_output).await
+        }
     }
 }
 

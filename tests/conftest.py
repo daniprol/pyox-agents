@@ -22,6 +22,12 @@ def client(fake_openai: FakeOpenAI) -> Client:
 
 
 @pytest.fixture
+def websocket_client(fake_openai: FakeOpenAI) -> Client:
+    """Like `client`, sending Responses API requests over WebSocket."""
+    return Client(api_key="test-key", base_url=fake_openai.base_url, headers={"X-Test": "yes"}, transport="websocket")
+
+
+@pytest.fixture
 def make_agent(client: Client) -> MakeAgent:
     """Factory for agents connected to the fake server: `make_agent(tools=[...])`."""
 

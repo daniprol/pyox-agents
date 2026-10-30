@@ -15,6 +15,7 @@ client = Client(
     connect_timeout_seconds=10,
     request_timeout_seconds=600,  # covers the whole streamed answer
     max_retries=2,  # resend requests that failed before any response
+    transport="http",  # or "websocket" (Responses API only, see below)
 )
 agent = Agent(client=client, model="gpt-5-mini")
 ```
@@ -23,6 +24,32 @@ Share one `Client` between agents to reuse its connections.
 
 A request that fails before any response arrives (for example on a pooled connection the server had already
 closed) is sent again, up to `max_retries` times. Once the answer starts streaming it is never retried.
+
+### WebSocket mode
+
+With `transport="websocket"`, Responses API requests travel over WebSocket connections
+(`wss://api.openai.com/v1/responses`, or `wss://my-resource.openai.azure.com/openai/v1/responses` on Azure) instead
+of one HTTP request per turn. Chat Completions requests always use HTTP.
+
+```python
+client = Client(transport="websocket")  # or Client.azure(..., transport="websocket")
+agent = Agent(client=client, model="gpt-5-mini", api="responses", tools=[...])
+```
+
+- The `Client` keeps a pool of connections in Rust, shared by every run (create one `Client` per process, e.g. at
+  FastAPI startup, and share it).
+- A run takes a connection at its first request and keeps it for all its turns. The server caches the latest
+  response of each connection, so later turns send `previous_response_id` and only the new tool results, even with
+  `store=False`. The first turn of each run sends the whole input.
+- A connection carries one response at a time: concurrent runs use separate connections.
+- When a run ends normally, its connection goes back to the pool. A failed or stopped run (`break`) closes it,
+  which also tells the server to stop generating.
+- Idle connections are closed after 60 seconds, and any connection is replaced before the servers' 60-minute limit.
+- As over HTTP, a request that failed before any event arrived is sent again on a new connection, up to
+  `max_retries` times. If the server lost the cached response, the whole history is sent instead.
+- If the server does not speak WebSocket (it answers 404, 405 or 426), the client switches to HTTP for good.
+
+The connection is opened with the same settings as HTTP requests: `headers`, the API key, proxies and timeouts.
 
 ### Other OpenAI-compatible servers
 

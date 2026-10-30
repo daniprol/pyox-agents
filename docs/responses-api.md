@@ -72,6 +72,13 @@ history, when the run has it. With only a `previous_response_id`, the error is r
 If a `before_model_request` hook changes the messages, OpenAI's stored copy no longer matches them, so that
 request sends all of them instead of continuing from the stored response.
 
+## WebSocket mode
+
+`Client(transport="websocket")` sends Responses API requests over WebSocket connections. A run keeps one
+connection for all its turns, and each turn after the first sends only the new tool results on top of the
+previous response, also with `store=False`: the server keeps the latest response of each connection in memory.
+OpenAI reports up to about 40% faster runs with many tool calls. See [Client](client.md#websocket-mode).
+
 ## Other settings
 
 Anything else goes in `model_parameters` and is passed through as is, for example `reasoning`, `truncation`,

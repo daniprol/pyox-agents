@@ -1,13 +1,17 @@
 """Type stubs for the compiled Rust module (`src/*.rs`)."""
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Generic, TypeVar, final
+from typing import Any, Generic, Literal, TypeVar, final
 
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Message, Prompt
 
 @final
 class Client:
-    """Connection settings and a shared HTTP connection pool."""
+    """Connection settings and shared connection pools (HTTP, and WebSocket with `transport="websocket"`).
+
+    `transport="websocket"` sends Responses API requests over WebSocket: a run keeps one connection for all its
+    turns, so each turn after the first sends only the new tool results. Chat Completions requests always use HTTP.
+    """
 
     def __init__(
         self,
@@ -18,6 +22,7 @@ class Client:
         connect_timeout_seconds: float = 10.0,
         request_timeout_seconds: float | None = 600.0,
         max_retries: int = 2,
+        transport: Literal["http", "websocket"] = "http",
     ) -> None: ...
     @staticmethod
     def azure(
@@ -28,6 +33,7 @@ class Client:
         connect_timeout_seconds: float = 10.0,
         request_timeout_seconds: float | None = 600.0,
         max_retries: int = 2,
+        transport: Literal["http", "websocket"] = "http",
     ) -> Client:
         """Azure OpenAI (Microsoft Foundry) v1 API; `model` is then your deployment name."""
     @property

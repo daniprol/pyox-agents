@@ -17,6 +17,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 pyox-tools = { path = "crates/pyox-tools" }
 schemars = "1.2"
+# WebSocket framing only: the connection itself is opened by reqwest (see `src/ws.rs`).
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 
 [workspace]
 members = [".", "crates/pyox-tools", "examples/rust_tool_package", "examples/rust_history_store"]

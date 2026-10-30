@@ -12,6 +12,7 @@
 //! repeat until the model stops calling tools (at most `max_turns` times):
 //!     before_model_request hooks
 //!     stream a model response (Chat or Responses API), forwarding text to Python as it arrives
+//!         (over WebSocket, the run keeps one connection for all its turns)
 //!     after_model_response hooks, then add the assistant message to the history
 //!     run the requested tools (concurrently) and add their results;
 //!         each call goes through before_tool_call and after_tool_call hooks
@@ -47,6 +48,7 @@ use crate::model_api::{Api, ModelRequest, last_response_id, stream_model_turn};
 use crate::run_context::Context;
 use crate::text_chunks::{TextChunking, TextOutput};
 use crate::tools::{ToolDefinition, ToolResult, error_result};
+use crate::ws_pool::RunSocket;
 
 /// How many events can wait in the queue before the agent loop pauses.
 /// A limit keeps memory bounded if Python reads events slowly.
@@ -337,6 +339,9 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
         deps: Arc::new(deps),
     };
     hooks.before_run(&context, &python_task_locals).await?;
+    // The WebSocket connection of this run (`Client(transport="websocket")`).
+    // It is closed when this function returns, unless given back to the pool.
+    let mut run_socket = RunSocket::default();
 
     for turn in 1..=config.max_turns {
         context.run.turn = turn;
@@ -344,13 +349,12 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
         let hooked_messages = hooks
             .before_model_request(&context, &messages, &python_task_locals)
             .await?;
-        // With `store`, OpenAI keeps every response, so the request continues
-        // from the newest one and sends only the messages after it. If hooks
-        // changed the messages, OpenAI's copy no longer matches them: send
-        // them all (on top of the response the run started from, if any).
-        let previous_response_id = if !config.api.stores_responses() {
-            None
-        } else if hooked_messages.is_some() {
+        // The request can continue from the newest response and send only the
+        // messages after it, when OpenAI still has that response (the adapter
+        // decides). If hooks changed the messages, OpenAI's copy no longer
+        // matches them: send them all (on top of the response the run started
+        // from, if any).
+        let previous_response_id = if hooked_messages.is_some() {
             run_start_response_id.as_deref()
         } else {
             last_response_id(&messages).or(run_start_response_id.as_deref())
@@ -363,7 +367,8 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
             model_parameters: &config.model_parameters,
             previous_response_id,
         };
-        let assistant_turn = stream_model_turn(&config.client, config.api, &request, &mut text_output).await?;
+        let assistant_turn =
+            stream_model_turn(&config.client, config.api, &request, &mut run_socket, &mut text_output).await?;
         text_output.finish().await; // the message ended: send any text still grouped
         usage.add(assistant_turn.usage);
         context.run.usage = *usage;
@@ -391,6 +396,8 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
         messages.push(assistant_message);
 
         if tool_calls.is_empty() {
+            // The last answer arrived in full, so the connection is clean: the next run may use it.
+            run_socket.give_back(&config.client);
             let finished = RunFinished {
                 text,
                 turns: turn,

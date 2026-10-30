@@ -10,6 +10,10 @@
 //! - Stored responses. With `store: true` OpenAI keeps each response, and a
 //!   request can name the one it continues (`previous_response_id`) and send
 //!   only the newer messages.
+//! - WebSocket mode (`Client(transport="websocket")`). Each turn is a message on
+//!   a connection the run keeps, and the server caches the latest response of
+//!   each connection: later turns of a run send `previous_response_id` and only
+//!   the new tool results, even without `store`.
 //!
 //! How our history becomes `input` items:
 //!
@@ -26,12 +30,16 @@ use pyox_tools::usage::Usage;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::client::ClientSettings;
-use crate::errors::{ApiError, InvalidResponseError, error_for_http_failure, error_for_http_status};
+use crate::client::{ClientSettings, Transport, wait_before_retry};
+use crate::errors::{
+    ApiError, InvalidResponseError, NetworkError, RequestTimeoutError, error_for_http_failure, error_for_http_status,
+};
 use crate::messages::{ContentPart, Message, Reasoning, ToolCall, UserContent, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions};
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
+use crate::ws::{OpenError, ResponsesSocket};
+use crate::ws_pool::RunSocket;
 
 // ---------------------------------------------------------------------------
 // Request: our history -> Responses JSON
@@ -310,6 +318,11 @@ impl EventReader {
         }
     }
 
+    /// True once the whole response arrived.
+    pub fn is_finished(&self) -> bool {
+        self.turn.is_some()
+    }
+
     /// The finished turn, or an error if the stream ended before the response was complete.
     pub fn into_turn(self) -> PyResult<AssistantTurn> {
         self.turn
@@ -374,18 +387,61 @@ fn turn_from_response(response: FinishedResponse) -> AssistantTurn {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP
+// Sending a request: HTTP or WebSocket
 // ---------------------------------------------------------------------------
 
 /// Sends one request and streams the answer. Each piece of text is sent to
 /// `text_output` as soon as it arrives.
+///
+/// `run_socket` holds the run's WebSocket connection between turns (unused over HTTP).
 pub async fn stream_response(
+    client: &ClientSettings,
+    request: &ModelRequest<'_>,
+    options: ResponsesOptions,
+    run_socket: &mut RunSocket,
+    text_output: &mut TextOutput,
+) -> PyResult<AssistantTurn> {
+    match client.responses_transport() {
+        Transport::Http => stream_over_http(client, request, options, text_output).await,
+        Transport::WebSocket => stream_over_websocket(client, request, options, run_socket, text_output).await,
+    }
+}
+
+/// The response this request continues from (`previous_response_id`), if any.
+///
+/// `request.previous_response_id` is the newest response the conversation
+/// could continue from. The server can find it if it stored it (`store`), or
+/// if it is the response cached on the WebSocket connection we send on.
+fn response_to_continue<'a>(
+    request: &ModelRequest<'a>,
+    options: ResponsesOptions,
+    cached_response_id: Option<&str>,
+) -> Option<&'a str> {
+    let response_id = request.previous_response_id?;
+    if options.store || cached_response_id == Some(response_id) {
+        Some(response_id)
+    } else {
+        None
+    }
+}
+
+/// True when the response we continue from is in our messages: then they hold
+/// the whole conversation and can be sent instead, if the server lost it.
+fn have_whole_history(request: &ModelRequest<'_>, previous_response_id: Option<&str>) -> bool {
+    previous_response_id.is_some_and(|id| messages_after_response(request.messages, id).is_some())
+}
+
+// ---------------------------------------------------------------------------
+// HTTP: one `POST /responses` per turn, answered with server-sent events
+// ---------------------------------------------------------------------------
+
+async fn stream_over_http(
     client: &ClientSettings,
     request: &ModelRequest<'_>,
     options: ResponsesOptions,
     text_output: &mut TextOutput,
 ) -> PyResult<AssistantTurn> {
-    let mut previous_response_id = request.previous_response_id;
+    let mut previous_response_id = response_to_continue(request, options, None);
     loop {
         let request_body = build_request_body(request, options, previous_response_id);
         let response = client
@@ -402,9 +458,7 @@ pub async fn stream_response(
         // OpenAI keeps them). If it is in our messages, we have the whole
         // conversation: send all of it instead. This happens at most once,
         // since the second request has no `previous_response_id`.
-        let have_whole_history =
-            previous_response_id.is_some_and(|id| messages_after_response(request.messages, id).is_some());
-        if have_whole_history && response_body.contains("previous_response_not_found") {
+        if have_whole_history(request, previous_response_id) && response_body.contains("previous_response_not_found") {
             previous_response_id = None;
             continue;
         }
@@ -435,6 +489,183 @@ async fn read_events(response: reqwest::Response, text_output: &mut TextOutput) 
         event_reader.add_event(&event_data)?;
     }
     event_reader.into_turn()
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: one `response.create` message per turn, on the run's connection
+// ---------------------------------------------------------------------------
+
+/// How one attempt over WebSocket failed.
+enum WebSocketFailure {
+    /// Nothing reached us yet, so it is safe to send the request again on a new
+    /// connection: the connection failed, or the server closed it at its
+    /// 60-minute limit (`websocket_connection_limit_reached`).
+    BeforeAnyEvent(PyErr),
+    /// The server no longer has the response we continued from.
+    PreviousResponseNotFound(PyErr),
+    /// Anything else: raised as is.
+    Failed(PyErr),
+}
+
+/// Sends one request on the run's WebSocket connection and streams the answer.
+///
+/// - The request continues from the previous response of the run when the
+///   connection made it, sending only the new messages (the server keeps the
+///   latest response of each connection in a cache).
+/// - Like `post_json` over HTTP, a request that failed before any event arrived
+///   (typically a pooled connection the server had closed) is sent again on a
+///   new connection, with all the messages, up to `max_retries` times. Once
+///   events arrive, it is never sent again: text may have reached the user.
+/// - If the server does not speak WebSocket, this client switches to HTTP for good.
+async fn stream_over_websocket(
+    client: &ClientSettings,
+    request: &ModelRequest<'_>,
+    options: ResponsesOptions,
+    run_socket: &mut RunSocket,
+    text_output: &mut TextOutput,
+) -> PyResult<AssistantTurn> {
+    let mut retries_done = 0;
+    // Set when the server lost the response we continued from.
+    let mut send_whole_history = false;
+    loop {
+        let socket = match run_socket.connect(client).await {
+            Ok(socket) => socket,
+            Err(OpenError::NotSupported) => {
+                client.stop_using_websockets();
+                return stream_over_http(client, request, options, text_output).await;
+            }
+            Err(OpenError::Retryable(_)) if retries_done < client.max_retries => {
+                wait_before_retry(retries_done).await;
+                retries_done += 1;
+                continue;
+            }
+            Err(OpenError::Retryable(error) | OpenError::Failed(error)) => return Err(error),
+        };
+
+        let previous_response_id = if send_whole_history {
+            None
+        } else {
+            response_to_continue(request, options, socket.cached_response_id.as_deref())
+        };
+        let message = websocket_message(build_request_body(request, options, previous_response_id));
+        let attempt = send_and_read_events(socket, &message, text_output);
+        let result = match client.request_timeout {
+            Some(limit) => tokio::time::timeout(limit, attempt).await.unwrap_or_else(|_| {
+                Err(WebSocketFailure::Failed(RequestTimeoutError::new_err(
+                    "The response took longer than `request_timeout_seconds`",
+                )))
+            }),
+            None => attempt.await,
+        };
+
+        match result {
+            Ok(turn) => {
+                socket.cached_response_id = turn.response_id.clone();
+                return Ok(turn);
+            }
+            Err(WebSocketFailure::BeforeAnyEvent(error)) => {
+                run_socket.close();
+                if retries_done == client.max_retries {
+                    return Err(error);
+                }
+                wait_before_retry(retries_done).await;
+                retries_done += 1;
+            }
+            // As over HTTP: send the whole conversation instead, at most once.
+            // The connection is still fine, so we keep it.
+            Err(WebSocketFailure::PreviousResponseNotFound(_)) if have_whole_history(request, previous_response_id) => {
+                send_whole_history = true;
+            }
+            Err(WebSocketFailure::PreviousResponseNotFound(error) | WebSocketFailure::Failed(error)) => {
+                return Err(error);
+            }
+        }
+    }
+}
+
+/// The message for one turn: the HTTP request body with a `type`, and without
+/// `stream` (answers over WebSocket always stream).
+fn websocket_message(request_body: Value) -> Value {
+    let Value::Object(fields) = request_body else {
+        unreachable!("the request body is always a JSON object");
+    };
+    let mut message = Map::new();
+    message.insert("type".into(), json!("response.create"));
+    message.extend(fields.into_iter().filter(|(name, _)| name != "stream"));
+    Value::Object(message)
+}
+
+/// Sends one `response.create` message and reads the events until the response is complete.
+async fn send_and_read_events(
+    socket: &mut ResponsesSocket,
+    message: &Value,
+    text_output: &mut TextOutput,
+) -> Result<AssistantTurn, WebSocketFailure> {
+    socket.send(message).await.map_err(WebSocketFailure::BeforeAnyEvent)?;
+
+    let mut event_reader = EventReader::default();
+    let mut is_first_event = true;
+    loop {
+        let event = match socket.next_event().await {
+            Some(Ok(event)) => event,
+            Some(Err(error)) if is_first_event => return Err(WebSocketFailure::BeforeAnyEvent(error)),
+            Some(Err(error)) => return Err(WebSocketFailure::Failed(error)),
+            None if is_first_event => {
+                return Err(WebSocketFailure::BeforeAnyEvent(NetworkError::new_err(
+                    "The WebSocket connection closed before the response started",
+                )));
+            }
+            None => {
+                return Err(WebSocketFailure::Failed(NetworkError::new_err(
+                    "The WebSocket connection closed before the response finished",
+                )));
+            }
+        };
+        if is_first_event {
+            // A request the server cannot run is answered with one `error`
+            // event, where HTTP would answer with an error status.
+            if let Some(failure) = error_instead_of_response(&event) {
+                return Err(failure);
+            }
+            is_first_event = false;
+        }
+
+        if let Some(text) = event_reader.add_event(&event).map_err(WebSocketFailure::Failed)? {
+            text_output.push(&text).await;
+        }
+        if event_reader.is_finished() {
+            return event_reader.into_turn().map_err(WebSocketFailure::Failed);
+        }
+    }
+}
+
+/// `{"type": "error", "status": 400, "error": {"code": "...", "message": "..."}}`
+#[derive(Deserialize)]
+struct ErrorEvent {
+    #[serde(rename = "type")]
+    kind: String,
+    status: Option<u16>,
+    error: Option<ErrorDetails>,
+}
+
+#[derive(Deserialize)]
+struct ErrorDetails {
+    code: Option<String>,
+}
+
+/// The failure an `error` event stands for, or `None` for any other event.
+fn error_instead_of_response(event_json: &str) -> Option<WebSocketFailure> {
+    let event: ErrorEvent = serde_json::from_str(event_json).ok()?;
+    if event.kind != "error" {
+        return None;
+    }
+    let error = error_for_http_status(event.status.unwrap_or(400), event_json);
+    let code = event.error.and_then(|details| details.code).unwrap_or_default();
+    Some(match code.as_str() {
+        "websocket_connection_limit_reached" => WebSocketFailure::BeforeAnyEvent(error),
+        "previous_response_not_found" => WebSocketFailure::PreviousResponseNotFound(error),
+        _ => WebSocketFailure::Failed(error),
+    })
 }
 
 #[cfg(test)]
@@ -609,6 +840,57 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn continues_from_a_response_the_server_stored_or_cached() {
+        let parameters = Map::new();
+        let stored = ResponsesOptions {
+            store: true,
+            ..STATELESS
+        };
+        let request = ModelRequest {
+            previous_response_id: Some("resp_1"),
+            ..request(&[], &parameters)
+        };
+
+        // Stored: any connection (or HTTP) can find it.
+        assert_eq!(response_to_continue(&request, stored, None), Some("resp_1"));
+        // Not stored: only the connection whose cache has it.
+        assert_eq!(
+            response_to_continue(&request, STATELESS, Some("resp_1")),
+            Some("resp_1")
+        );
+        assert_eq!(response_to_continue(&request, STATELESS, Some("resp_0")), None);
+        assert_eq!(response_to_continue(&request, STATELESS, None), None);
+    }
+
+    #[test]
+    fn a_websocket_message_is_the_request_body_with_a_type_and_no_stream() {
+        let message = websocket_message(json!({"model": "m", "stream": true, "store": false}));
+        assert_eq!(
+            message,
+            json!({"type": "response.create", "model": "m", "store": false})
+        );
+        assert_eq!(message.as_object().unwrap().keys().next().unwrap(), "type");
+    }
+
+    #[test]
+    fn error_events_say_whether_to_reconnect_or_resend_everything() {
+        let event = |code: &str| format!(r#"{{"type":"error","status":400,"error":{{"code":"{code}"}}}}"#);
+        assert!(matches!(
+            error_instead_of_response(&event("websocket_connection_limit_reached")),
+            Some(WebSocketFailure::BeforeAnyEvent(_))
+        ));
+        assert!(matches!(
+            error_instead_of_response(&event("previous_response_not_found")),
+            Some(WebSocketFailure::PreviousResponseNotFound(_))
+        ));
+        assert!(matches!(
+            error_instead_of_response(&event("invalid_request")),
+            Some(WebSocketFailure::Failed(_))
+        ));
+        assert!(error_instead_of_response(r#"{"type":"response.created","response":{}}"#).is_none());
     }
 
     #[test]

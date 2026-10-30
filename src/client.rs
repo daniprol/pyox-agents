@@ -2,8 +2,13 @@
 //!
 //! Create one `Client` and share it between agents: it keeps a pool of open
 //! connections, so later requests skip the TCP/TLS handshake.
+//!
+//! With `transport="websocket"`, Responses API requests travel over WebSocket
+//! connections instead (see `ws.rs` and `ws_pool.rs`); everything else stays HTTP.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use pyo3::exceptions::PyValueError;
@@ -11,10 +16,38 @@ use pyo3::prelude::*;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 
+use crate::ws_pool::SocketPool;
+
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
+/// How Responses API requests travel. Python: `Client(transport="http")` or `"websocket"`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Transport {
+    /// One HTTP request per model turn, answered with a stream of server-sent events.
+    Http,
+    /// One message per model turn on a WebSocket connection the run keeps for
+    /// all its turns, so the server can continue from the previous response.
+    WebSocket,
+}
+
+impl Transport {
+    fn from_python(transport: &str) -> PyResult<Self> {
+        match transport {
+            "http" => Ok(Transport::Http),
+            "websocket" => Ok(Transport::WebSocket),
+            other => Err(PyValueError::new_err(format!(
+                "Unknown transport {other:?}: use \"http\" or \"websocket\""
+            ))),
+        }
+    }
+}
+
 /// The settings an agent run needs to send requests.
-/// Cloning is cheap: `reqwest::Client` is a shared handle to one connection pool.
+///
+/// Cloning is cheap: `reqwest::Client` is a shared handle to one connection
+/// pool, and `Arc` ("atomically reference counted") is a shared pointer, so
+/// every clone points to the same WebSocket pool and the same flag. Like two
+/// Python variables holding the same object.
 #[derive(Clone)]
 pub struct ClientSettings {
     pub http_client: reqwest::Client,
@@ -22,9 +55,33 @@ pub struct ClientSettings {
     pub base_url: String,
     /// How many times to resend a request that failed before any response arrived.
     pub max_retries: u32,
+    /// The limit for one whole streamed answer. reqwest applies it to HTTP
+    /// requests; WebSocket turns apply it themselves.
+    pub request_timeout: Option<Duration>,
+    pub transport: Transport,
+    /// Idle WebSocket connections, shared by every run of this client.
+    pub websocket_pool: Arc<SocketPool>,
+    /// Set when the server refused a WebSocket connection: from then on this
+    /// client sends Responses API requests over HTTP.
+    pub websocket_unsupported: Arc<AtomicBool>,
 }
 
 impl ClientSettings {
+    /// The transport for the next Responses API request.
+    pub fn responses_transport(&self) -> Transport {
+        // `Ordering::Relaxed`: a plain read of the flag, no other memory to synchronise.
+        if self.websocket_unsupported.load(Ordering::Relaxed) {
+            Transport::Http
+        } else {
+            self.transport
+        }
+    }
+
+    /// Remembers that the server does not speak WebSocket (see `websocket_unsupported`).
+    pub fn stop_using_websockets(&self) {
+        self.websocket_unsupported.store(true, Ordering::Relaxed);
+    }
+
     /// Sends `body` as JSON to `base_url + path`.
     ///
     /// If the request fails before any response arrives (typically a pooled
@@ -41,7 +98,7 @@ impl ClientSettings {
             }
             match request.send().await {
                 Err(error) if retries_done < self.max_retries && failed_before_response(&error) => {
-                    tokio::time::sleep(Duration::from_millis(100 << retries_done)).await;
+                    wait_before_retry(retries_done).await;
                     retries_done += 1;
                 }
                 result => return result,
@@ -50,8 +107,13 @@ impl ClientSettings {
     }
 }
 
+/// Waits 0.1 s before the first retry, then 0.2 s, 0.4 s...
+pub async fn wait_before_retry(retries_done: u32) {
+    tokio::time::sleep(Duration::from_millis(100 << retries_done)).await;
+}
+
 /// True for connection problems; false for timeouts (retrying would only make the wait longer).
-fn failed_before_response(error: &reqwest::Error) -> bool {
+pub fn failed_before_response(error: &reqwest::Error) -> bool {
     (error.is_connect() || error.is_request()) && !error.is_timeout()
 }
 
@@ -70,6 +132,8 @@ impl Client {
     /// `OPENAI_BASE_URL` environment variables.
     /// `request_timeout_seconds` covers the whole streamed response, so keep it generous.
     /// `max_retries`: how many times to resend a request that failed before any response arrived.
+    /// `transport`: `"http"`, or `"websocket"` to send Responses API requests over
+    /// WebSocket connections (Chat Completions requests always use HTTP).
     #[new]
     #[pyo3(signature = (
         api_key = None,
@@ -79,6 +143,7 @@ impl Client {
         connect_timeout_seconds = 10.0,
         request_timeout_seconds = 600.0,
         max_retries = 2,
+        transport = "http",
     ))]
     fn new(
         api_key: Option<String>,
@@ -87,7 +152,9 @@ impl Client {
         connect_timeout_seconds: f64,
         request_timeout_seconds: Option<f64>,
         max_retries: u32,
+        transport: &str,
     ) -> PyResult<Self> {
+        let transport = Transport::from_python(transport)?;
         let mut default_headers = HeaderMap::new();
         for (name, value) in headers.unwrap_or_default() {
             let header_name = HeaderName::try_from(name.as_str())
@@ -97,11 +164,14 @@ impl Client {
             default_headers.insert(header_name, header_value);
         }
 
+        // The custom headers go on every request this client sends, including
+        // the request that opens a WebSocket connection.
         let mut builder = reqwest::Client::builder()
             .default_headers(default_headers)
             .connect_timeout(Duration::from_secs_f64(connect_timeout_seconds));
-        if let Some(seconds) = request_timeout_seconds {
-            builder = builder.timeout(Duration::from_secs_f64(seconds));
+        let request_timeout = request_timeout_seconds.map(Duration::from_secs_f64);
+        if let Some(request_timeout) = request_timeout {
+            builder = builder.timeout(request_timeout);
         }
         let http_client = builder
             .build()
@@ -117,6 +187,10 @@ impl Client {
                     .trim_end_matches('/')
                     .to_string(),
                 max_retries,
+                request_timeout,
+                transport,
+                websocket_pool: Arc::default(),
+                websocket_unsupported: Arc::default(), // `false`
             },
         })
     }
@@ -140,6 +214,7 @@ impl Client {
         connect_timeout_seconds = 10.0,
         request_timeout_seconds = 600.0,
         max_retries = 2,
+        transport = "http",
     ))]
     fn azure(
         endpoint: Option<String>,
@@ -148,6 +223,7 @@ impl Client {
         connect_timeout_seconds: f64,
         request_timeout_seconds: Option<f64>,
         max_retries: u32,
+        transport: &str,
     ) -> PyResult<Self> {
         let Some(endpoint) = endpoint.or_else(|| std::env::var("AZURE_OPENAI_ENDPOINT").ok()) else {
             return Err(PyValueError::new_err(
@@ -165,6 +241,7 @@ impl Client {
             connect_timeout_seconds,
             request_timeout_seconds,
             max_retries,
+            transport,
         )
     }
 

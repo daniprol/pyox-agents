@@ -60,8 +60,12 @@ def tool_calls_response(
     return StreamResponse(chunks)
 
 
-def error_response(status: int, message: str) -> ErrorResponse:
-    return ErrorResponse(status, json.dumps({"error": {"message": message}}))
+def error_response(status: int, message: str, *, code: str | None = None) -> ErrorResponse:
+    """An API error. `code` is the machine-readable `error.code`, e.g. "previous_response_not_found"."""
+    error: dict[str, Any] = {"message": message}
+    if code is not None:
+        error["code"] = code
+    return ErrorResponse(status, json.dumps({"error": error}))
 
 
 async def collect_events(run: Run) -> list[AgentEvent]:

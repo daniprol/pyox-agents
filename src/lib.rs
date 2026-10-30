@@ -9,6 +9,8 @@
 //! | Module          | What it does                                                  |
 //! |-----------------|---------------------------------------------------------------|
 //! | `client`        | `Client`: API key, base URL, headers, timeouts, HTTP pool     |
+//! | `ws`            | One WebSocket connection to the Responses API                 |
+//! | `ws_pool`       | Idle WebSocket connections shared by a client's runs          |
 //! | `agent`         | `Engine` and `Run`: the agent loop and the event stream       |
 //! | `events`        | The event classes Python receives (`TextDelta`, ...)          |
 //! | `messages`      | Our own conversation history format                           |
@@ -43,6 +45,8 @@ mod run_context;
 mod sse;
 mod text_chunks;
 mod tools;
+mod ws;
+mod ws_pool;
 
 /// The compiled Python module, importable as `pyox_agents._core`.
 /// The name must match `lib.name` in `Cargo.toml`.

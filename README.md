@@ -145,6 +145,11 @@ first = await agent.run("I am Dani")
 await agent.run("What is my name?", previous_response_id=first.response_id)
 ```
 
+**WebSocket mode.** With `Client(transport="websocket")`, Responses API requests travel over WebSocket
+connections that Rust pools per `Client`. A run keeps one connection for all its turns, so after the first turn
+each request sends only the new tool results, even without `store` (the server caches the latest response of each
+connection). Chat Completions requests stay on HTTP, and a server without WebSocket support gets HTTP requests.
+
 Details in the [Responses API docs](https://daniprol.github.io/pyox-agents/responses-api/).
 
 ## Images and files
@@ -306,6 +311,7 @@ client = Client(
     connect_timeout_seconds=10,
     request_timeout_seconds=600,  # covers the whole streamed answer
     max_retries=2,  # resend requests that failed before any response
+    transport="http",  # or "websocket" for Responses API requests
 )
 agent = Agent(client=client, model="gpt-5-mini", model_parameters={"temperature": 0.2})
 ```
@@ -338,6 +344,7 @@ async for event in run  ◄─ events ── agent loop     request → stream �
                                        ├── openai_chat.rs   Chat Completions: request body + chunk parsing
                                        ├── openai_responses.rs  Responses: request body + event parsing
                                        ├── sse.rs           server-sent events decoding
+                                       ├── ws.rs, ws_pool.rs  Responses over WebSocket: one connection, the pool
                                        └── tools/           Python tools are awaited on
                                                             Python's event loop; Rust tools
                                                             (built-in or from your own
