@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use futures::{SinkExt, StreamExt};
 use pyo3::prelude::*;
-use reqwest::header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE};
+use reqwest::header::{CONNECTION, LOCATION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE};
 use serde_json::Value;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::handshake::{client::generate_key, derive_accept_key};
@@ -58,24 +58,12 @@ impl ResponsesSocket {
         // A random key the server must answer with a matching `Sec-WebSocket-Accept`,
         // which proves it really switched to WebSocket.
         let key = generate_key();
-        let mut request = client
-            .http_client
-            .get(format!("{}/responses", client.base_url))
-            .header(CONNECTION, "Upgrade")
-            .header(UPGRADE, "websocket")
-            .header(SEC_WEBSOCKET_VERSION, "13")
-            .header(SEC_WEBSOCKET_KEY, &key);
-        if let Some(api_key) = &client.api_key {
-            request = request.bearer_auth(api_key);
+        let mut response = send_upgrade_request(client, &format!("{}/responses", client.base_url), &key).await?;
+        // Azure answers the first request with a redirect to a `wss://` address
+        // (carrying its own query string): ask again there, as `https://`.
+        if let Some(location) = websocket_redirect(&response) {
+            response = send_upgrade_request(client, &location, &key).await?;
         }
-
-        let response = match request.send().await {
-            Ok(response) => response,
-            Err(error) if failed_before_response(&error) => {
-                return Err(OpenError::Retryable(error_for_http_failure(error)));
-            }
-            Err(error) => return Err(OpenError::Failed(error_for_http_failure(error))),
-        };
         match response.status().as_u16() {
             101 => {} // "Switching Protocols": the server agreed
             404 | 405 | 426 => return Err(OpenError::NotSupported),
@@ -128,6 +116,39 @@ impl ResponsesSocket {
                 Err(error) => return Some(Err(network_error(error))),
             }
         }
+    }
+}
+
+/// Sends the `GET` asking `url` to switch to WebSocket.
+async fn send_upgrade_request(client: &ClientSettings, url: &str, key: &str) -> Result<reqwest::Response, OpenError> {
+    let mut request = client
+        .http_client
+        .get(url)
+        .header(CONNECTION, "Upgrade")
+        .header(UPGRADE, "websocket")
+        .header(SEC_WEBSOCKET_VERSION, "13")
+        .header(SEC_WEBSOCKET_KEY, key);
+    if let Some(api_key) = &client.api_key {
+        request = request.bearer_auth(api_key);
+    }
+    match request.send().await {
+        Ok(response) => Ok(response),
+        Err(error) if failed_before_response(&error) => Err(OpenError::Retryable(error_for_http_failure(error))),
+        Err(error) => Err(OpenError::Failed(error_for_http_failure(error))),
+    }
+}
+
+/// If `response` redirects to a WebSocket address (`wss://host/path`), the same
+/// address as `https://host/path`: the scheme our HTTP client can open.
+fn websocket_redirect(response: &reqwest::Response) -> Option<String> {
+    if !response.status().is_redirection() {
+        return None;
+    }
+    let location = response.headers().get(LOCATION)?.to_str().ok()?;
+    if let Some(rest) = location.strip_prefix("wss://") {
+        Some(format!("https://{rest}"))
+    } else {
+        location.strip_prefix("ws://").map(|rest| format!("http://{rest}"))
     }
 }
 

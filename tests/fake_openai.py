@@ -76,7 +76,9 @@ class FakeOpenAI:
     """Answers each request with the next queued response and records every request.
 
     `websocket_refusal_status` (e.g. 404) answers every WebSocket upgrade with that
-    status, like a server without WebSocket mode. `websocket_upgrades` records the
+    status, like a server without WebSocket mode. `websocket_redirect` answers the first
+    upgrade with a redirect to a `ws://` address with a query string, like Azure.
+    `websocket_upgrades` records the
     headers of every upgrade request, accepted or not, and `closed_websockets` the
     WebSocket connections that have ended.
     """
@@ -84,6 +86,7 @@ class FakeOpenAI:
     responses: list[Response] = field(default_factory=list)
     requests: list[RecordedRequest] = field(default_factory=list)
     websocket_refusal_status: int | None = None
+    websocket_redirect: bool = False
     websocket_upgrades: list[dict[str, str]] = field(default_factory=list)
     closed_websockets: list[int] = field(default_factory=list)  # connection numbers
 
@@ -163,6 +166,12 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
                 self.send_error(404)
                 return
             fake.websocket_upgrades.append(headers)
+            if fake.websocket_redirect and "?" not in self.path:
+                self.send_response(307)
+                self.send_header("Location", f"ws://{self.headers['host']}{self.path}?redirected=yes")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if fake.websocket_refusal_status is not None:
                 self.send_response(fake.websocket_refusal_status)
                 self.send_header("Content-Length", "0")

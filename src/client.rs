@@ -168,6 +168,7 @@ impl Client {
         // the request that opens a WebSocket connection.
         let mut builder = reqwest::Client::builder()
             .default_headers(default_headers)
+            .redirect(reqwest::redirect::Policy::custom(follow_redirect))
             .connect_timeout(Duration::from_secs_f64(connect_timeout_seconds));
         let request_timeout = request_timeout_seconds.map(Duration::from_secs_f64);
         if let Some(request_timeout) = request_timeout {
@@ -252,6 +253,19 @@ impl Client {
 
     fn __repr__(&self) -> String {
         format!("Client(base_url={:?})", self.settings.base_url)
+    }
+}
+
+/// Follows redirects like reqwest does by default (up to 10), except those
+/// to a WebSocket address (`wss://...`): reqwest cannot send a request there,
+/// so `ResponsesSocket::open` follows them itself (see `src/ws.rs`).
+fn follow_redirect(attempt: reqwest::redirect::Attempt) -> reqwest::redirect::Action {
+    if matches!(attempt.url().scheme(), "ws" | "wss") {
+        attempt.stop()
+    } else if attempt.previous().len() >= 10 {
+        attempt.error("too many redirects")
+    } else {
+        attempt.follow()
     }
 }
 

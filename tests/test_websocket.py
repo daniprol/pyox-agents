@@ -98,6 +98,19 @@ async def test_a_tool_loop_stays_on_one_connection_and_sends_only_new_items(
     assert second_turn["tools"] == first_turn["tools"]  # instructions and tools are sent on every turn
 
 
+async def test_follows_a_redirect_to_a_websocket_address(
+    fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent
+) -> None:
+    fake_openai.websocket_redirect = True
+    fake_openai.queue(responses_answer("Hi"))
+
+    finished = await make_websocket_agent().run("Hello")
+
+    assert finished.text == "Hi"
+    assert len(fake_openai.websocket_upgrades) == 2
+    assert fake_openai.requests[0].transport == "websocket"
+
+
 async def test_runs_one_after_another_reuse_the_connection(
     fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent
 ) -> None:

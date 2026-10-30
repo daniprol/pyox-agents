@@ -24,6 +24,9 @@ pytestmark = pytest.mark.live
 
 DEFAULT_MODEL = "gpt-6-luna"
 
+# Reasoning models like gpt-6-luna accept function tools on Chat Completions only without reasoning.
+NO_REASONING = {"reasoning_effort": "none"}
+
 
 @pytest.fixture
 def client() -> Client:
@@ -60,8 +63,10 @@ async def test_streams_text(make_agent: MakeAgent, api: str) -> None:
     assert "".join(delta.text for delta in deltas) == finished.text
 
 
-@pytest.mark.parametrize("api", ["chat", "responses"])
-async def test_calls_a_python_tool(make_agent: MakeAgent, api: str) -> None:
+@pytest.mark.parametrize(
+    ("api", "model_parameters"), [("chat", NO_REASONING), ("responses", None)], ids=["chat", "responses"]
+)
+async def test_calls_a_python_tool(make_agent: MakeAgent, api: str, model_parameters: dict[str, str] | None) -> None:
     secret = secrets.token_hex(4)
 
     @tool
@@ -69,7 +74,9 @@ async def test_calls_a_python_tool(make_agent: MakeAgent, api: str) -> None:
         """Return the secret code."""
         return secret
 
-    events = await collect_events(make_agent(api=api, tools=[get_secret]).execute("What is the secret code?"))
+    events = await collect_events(
+        make_agent(api=api, model_parameters=model_parameters, tools=[get_secret]).execute("What is the secret code?")
+    )
 
     [finished_tool] = events_of_type(events, ToolFinished)
     [finished] = events_of_type(events, RunFinished)
@@ -83,7 +90,7 @@ async def test_calls_a_rust_tool(make_agent: MakeAgent, tmp_path: Path) -> None:
     secret = secrets.token_hex(4)
     path = tmp_path / "secret.txt"
     path.write_text(secret)
-    agent = make_agent(tools=[BuiltinTool("read_file")])
+    agent = make_agent(api="responses", tools=[BuiltinTool("read_file")])
 
     events = await collect_events(agent.execute(f"Read the file {path} and tell me what it says."))
 
