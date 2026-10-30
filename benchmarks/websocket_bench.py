@@ -1,17 +1,12 @@
-"""Compare the Responses API over HTTP and over WebSocket, in pyox-agents and in the OpenAI Agents SDK.
+"""The Responses API over HTTP and WebSocket, in pyox-agents and the OpenAI Agents SDK, on tool loops.
 
-    uv run websocket_bench.py                        # full run, writes the table in README.md (~15 min)
-    uv run websocket_bench.py --runs 50 --only "pyox-agents websocket" "openai-agents websocket"  # README unchanged
-    uv run websocket_bench.py --model-delay-ms 50    # the fake model waits 50 ms before each answer
+    uv run websocket_bench.py                       # writes README.md and websocket_results.json
+    uv run websocket_bench.py --model-delay-ms 10   # writes the "model delay" table instead
+    uv run websocket_bench.py --only "pyox-agents websocket" --runs 50   # prints only
+    OPENAI_API_KEY=sk-... uv run websocket_bench.py --real-openai --runs 5 --concurrency 1   # costs tokens
 
-    # Opt-in, against api.openai.com (costs tokens, README unchanged):
-    OPENAI_API_KEY=sk-... uv run websocket_bench.py --real-openai --model gpt-5-mini --runs 5 --concurrency 1
-
-Steps:
-1. Start the fake Responses API server (`responses_server.py`), unless `--real-openai`.
-2. Each agent on each tool loop (1, 5 and 20 tool calls, one per turn): `measure.py` in a new process. The
-   server's counters, read before and after, give the bytes each run uploads and the WebSocket connections opened.
-3. Print the tables; a full run also writes them in README.md, between the "websocket" markers.
+Each agent and scenario runs `measure.py` in a new process against `responses_server.py`, whose counters
+give the bytes uploaded per run and the WebSocket connections opened.
 """
 
 import argparse
@@ -29,7 +24,7 @@ from run_all import HERE, cpu_name, markdown_table, results_table, write_into_re
 PORT = 4020
 FAKE_BASE_URL = f"http://127.0.0.1:{PORT}/v1"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
-WARMUP_RUNS = 10  # done by measure.py before measuring
+WARMUP_RUNS = 10  # measure.py's, counted in the server's totals
 
 
 def start_fake_server(model_delay_ms: float) -> subprocess.Popen:
@@ -65,7 +60,7 @@ def measure(agent: str, scenario: str, args: argparse.Namespace) -> dict:
     result = json.loads(output)
     if not args.real_openai:
         after = server_stats()
-        all_runs = WARMUP_RUNS + 2 * args.runs  # warm-up, sequential and concurrent runs
+        all_runs = WARMUP_RUNS + 2 * args.runs  # sequential and concurrent phases
         result["upload_kb_per_run"] = (after["request_bytes"] - before["request_bytes"]) / all_runs / 1024
         result["websocket_connections"] = after["websocket_connections"] - before["websocket_connections"]
     return result
@@ -111,10 +106,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runs", type=int, default=500)
     parser.add_argument("--concurrency", type=int, default=100)
-    parser.add_argument("--model-delay-ms", type=float, default=0, help="fake model's wait before each answer")
-    parser.add_argument("--only", nargs="+", choices=RESPONSES_TRANSPORTS, help="measure only these (README unchanged)")
-    parser.add_argument("--real-openai", action="store_true", help="use api.openai.com and $OPENAI_API_KEY")
-    parser.add_argument("--model", default="gpt-5-mini", help="model for --real-openai")
+    parser.add_argument("--model-delay-ms", type=float, default=0, help="wait before each fake answer")
+    parser.add_argument("--only", nargs="+", choices=RESPONSES_TRANSPORTS, help="README unchanged")
+    parser.add_argument("--real-openai", action="store_true", help="api.openai.com with $OPENAI_API_KEY")
+    parser.add_argument("--model", default="gpt-5-mini", help="for --real-openai")
     args = parser.parse_args()
     agents = args.only or list(RESPONSES_TRANSPORTS)
 
@@ -128,9 +123,10 @@ def main() -> None:
 
     markdown = results_markdown(results, args)
     print(markdown)
-    if not (args.only or args.real_openai or args.model_delay_ms):
-        (HERE / "websocket_results.json").write_text(json.dumps(results, indent=2) + "\n")
-        write_into_readme("websocket", markdown)
+    if not (args.only or args.real_openai):
+        name = "websocket-delay" if args.model_delay_ms else "websocket"
+        (HERE / f"{name.replace('-', '_')}_results.json").write_text(json.dumps(results, indent=2) + "\n")
+        write_into_readme(name, markdown)
 
 
 if __name__ == "__main__":

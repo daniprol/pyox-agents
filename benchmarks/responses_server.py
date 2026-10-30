@@ -1,16 +1,10 @@
-"""A fake OpenAI Responses API, over HTTP and WebSocket, for the WebSocket benchmark (`websocket_bench.py`).
+"""A fake Responses API over HTTP (SSE) and WebSocket, for `websocket_bench.py`.
 
-    MODEL_DELAY_MS=0 uvicorn responses_server:app --port 4020
+    MODEL_DELAY_MS=10 uvicorn responses_server:app --port 4020
 
-- `POST /v1/responses` streams server-sent events; a WebSocket on `/v1/responses` answers each
-  `response.create` message with the same events, one per WebSocket message.
-- The prompt says how many tool calls the run makes, one per turn ("... 5 tool calls ..."). Each turn calls
-  `get_weather` once; after the last tool result the model streams `TOOL_ANSWER` (about 4 characters per event).
-- Over WebSocket, a request with `previous_response_id` continues a response made on the same connection, like
-  OpenAI's per-connection cache (an unknown id gets `previous_response_not_found`). It cannot reproduce the real
-  server's speedup: it only measures what each library does on its side.
-- `MODEL_DELAY_MS` waits before each answer, like a model thinking.
-- `GET /stats` returns the requests, WebSocket connections and request bytes seen so far.
+The prompt says how many tool calls to make ("... 5 tool calls ..."), one per turn, then the answer streams.
+Over WebSocket, `previous_response_id` must name a response of the same connection, like OpenAI's
+per-connection cache. `GET /stats` returns request, connection and byte counters.
 """
 
 import asyncio
@@ -124,7 +118,7 @@ async def http_responses(request: Request) -> StreamingResponse:
     stats["requests"] += 1
     stats["request_bytes"] += len(raw_body)
     body = json.loads(raw_body)
-    # Over HTTP every library sends the whole conversation (no `store`): count its tool results.
+    # Without `store` there is no chaining over HTTP: the input holds the whole conversation.
     events, _ = answer_events(body, wanted_tool_calls(body), tool_results_in(body))
 
     async def stream() -> AsyncIterator[str]:

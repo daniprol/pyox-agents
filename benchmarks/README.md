@@ -247,31 +247,103 @@ Python 3.13.17, one uvicorn process, Intel(R) Xeon(R) Processor @ 2.80GHz. Each 
 
 ## Responses API over WebSocket
 
-pyox-agents with `Client(transport="websocket")` and the OpenAI Agents SDK with `use_responses_websocket=True`,
-each also over HTTP, on the same tool loop: the model calls `get_weather` once per turn, 1, 5 or 20 times, then
-streams the answer. A fake Responses API server
-([`responses_server.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/responses_server.py))
-answers over HTTP and WebSocket. Run it with `uv run websocket_bench.py` (options in
-[`websocket_bench.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/websocket_bench.py)).
-
-**What this measures, and what it cannot.** OpenAI's speedup in WebSocket mode ("up to ~40% faster" with 20+
-tool calls) comes mostly from its servers: each connection keeps the latest response in memory, so a turn that
-continues it skips reloading the conversation. A local fake server cannot reproduce that. These numbers are each
-library's own work per turn (building requests, sending them, reading the events, running the tool) and how it
-reuses connections. "Upload per run" shows the other effect: over HTTP every turn sends the whole conversation
-again, over WebSocket only the new tool result. Measuring against OpenAI needs an API key (`--real-openai`).
+pyox-agents (`Client(transport="websocket")`) and the OpenAI Agents SDK (`use_responses_websocket=True`), each also
+over HTTP, on a tool loop of 1, 5 or 20 calls, one per turn, against a fake Responses API
+([`responses_server.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/responses_server.py)).
+A local server cannot reproduce OpenAI's per-connection response cache, where most of WebSocket mode's speedup
+comes from, so this is each library's own overhead and the upload it saves: over WebSocket, turns after the first
+send only the new tool result. The Agents SDK chains turns with `auto_previous_response_id=True` and runs one
+request at a time per connection, so its concurrent runs wait for each other.
 
 <!-- websocket:start -->
-Not measured yet: run `uv run websocket_bench.py`.
+Python 3.13.17, Intel(R) Xeon(R) Processor @ 2.10GHz, the fake server, model delay 0 ms per turn. 500 runs per measurement, 100 at a time for throughput.
+
+Latency p50 of one run, by number of tool calls (one per turn). Fastest first.
+
+| Agent | `tool_loop_1` | `tool_loop_5` | `tool_loop_20` | Throughput, `tool_loop_20` | Upload per run, `tool_loop_20` | Connections, `tool_loop_20` |
+|---|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 4.3 ms | 7.6 ms | 16.9 ms | 92 runs/s | 10.0 KB | 200 |
+| pyox-agents http | 4.8 ms | 9.1 ms | 25.8 ms | 91 runs/s | 47.6 KB | 0 |
+| openai-agents websocket | 12.0 ms | 33.2 ms | 147.1 ms | 7 runs/s | 12.4 KB | 1 |
+| openai-agents http | 18.6 ms | 68.9 ms | 493.1 ms | 2 runs/s | 57.5 KB | 0 |
+
+<details><summary>All the numbers</summary>
+
+`tool_loop_1`
+
+| Agent | Latency p50 | Latency p95 | First text | CPU per run | Throughput | Failed | Peak memory |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 4.3 ms | 5.7 ms | 1.4 ms | 4.6 ms | 338 runs/s | 0 | 44 MB |
+| pyox-agents http | 4.8 ms | 6.5 ms | 2.0 ms | 4.8 ms | 357 runs/s | 0 | 36 MB |
+| openai-agents websocket | 12.0 ms | 17.5 ms | 10.8 ms | 11.9 ms | 75 runs/s | 0 | 157 MB |
+| openai-agents http | 18.6 ms | 24.8 ms | 17.0 ms | 18.3 ms | 50 runs/s | 0 | 168 MB |
+
+`tool_loop_5`
+
+| Agent | Latency p50 | Latency p95 | First text | CPU per run | Throughput | Failed | Peak memory |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 7.6 ms | 9.9 ms | 4.6 ms | 8.3 ms | 237 runs/s | 0 | 47 MB |
+| pyox-agents http | 9.1 ms | 12.0 ms | 6.3 ms | 9.1 ms | 213 runs/s | 0 | 37 MB |
+| openai-agents websocket | 33.2 ms | 44.6 ms | 30.5 ms | 32.2 ms | 30 runs/s | 0 | 171 MB |
+| openai-agents http | 68.9 ms | 92.0 ms | 65.3 ms | 67.8 ms | 14 runs/s | 0 | 167 MB |
+
+`tool_loop_20`
+
+| Agent | Latency p50 | Latency p95 | First text | CPU per run | Throughput | Failed | Peak memory |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 16.9 ms | 21.3 ms | 14.1 ms | 19.1 ms | 92 runs/s | 0 | 53 MB |
+| pyox-agents http | 25.8 ms | 30.8 ms | 23.0 ms | 24.6 ms | 91 runs/s | 0 | 45 MB |
+| openai-agents websocket | 147.1 ms | 187.7 ms | 142.3 ms | 138.3 ms | 7 runs/s | 0 | 199 MB |
+| openai-agents http | 493.1 ms | 582.5 ms | 487.7 ms | 480.2 ms | 2 runs/s | 0 | 174 MB |
+
+</details>
 <!-- websocket:end -->
 
-- Same prompt, tool and streamed answer for all four; one agent shared by all runs.
-- pyox-agents chains turns over WebSocket by itself. The Agents SDK does it with `auto_previous_response_id=True`,
-  which we pass over WebSocket only (over HTTP it would need `store=True`), so over HTTP both send the whole
-  conversation every turn.
-- The Agents SDK keeps one WebSocket connection per model and sends one request at a time on it, so concurrent
-  runs wait for each other (its docs suggest separate connections for parallel runs). pyox-agents gives each
-  concurrent run its own pooled connection.
+With the fake model waiting 10 ms before each answer:
+
+<!-- websocket-delay:start -->
+Python 3.13.17, Intel(R) Xeon(R) Processor @ 2.10GHz, the fake server, model delay 10 ms per turn. 500 runs per measurement, 100 at a time for throughput.
+
+Latency p50 of one run, by number of tool calls (one per turn). Fastest first.
+
+| Agent | `tool_loop_1` | `tool_loop_5` | `tool_loop_20` | Throughput, `tool_loop_20` | Upload per run, `tool_loop_20` | Connections, `tool_loop_20` |
+|---|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 25.8 ms | 70.8 ms | 244.0 ms | 81 runs/s | 10.0 KB | 241 |
+| pyox-agents http | 26.2 ms | 72.5 ms | 251.2 ms | 79 runs/s | 47.6 KB | 0 |
+| openai-agents websocket | 34.9 ms | 110.3 ms | 386.5 ms | 3 runs/s | 12.4 KB | 1 |
+| openai-agents http | 43.7 ms | 142.5 ms | 834.3 ms | 2 runs/s | 57.5 KB | 0 |
+
+<details><summary>All the numbers</summary>
+
+`tool_loop_1`
+
+| Agent | Latency p50 | Latency p95 | First text | CPU per run | Throughput | Failed | Peak memory |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 25.8 ms | 30.1 ms | 22.4 ms | 5.1 ms | 351 runs/s | 0 | 46 MB |
+| pyox-agents http | 26.2 ms | 28.9 ms | 22.9 ms | 5.3 ms | 347 runs/s | 0 | 36 MB |
+| openai-agents websocket | 34.9 ms | 40.0 ms | 31.9 ms | 13.6 ms | 32 runs/s | 0 | 157 MB |
+| openai-agents http | 43.7 ms | 49.9 ms | 38.6 ms | 22.2 ms | 47 runs/s | 0 | 166 MB |
+
+`tool_loop_5`
+
+| Agent | Latency p50 | Latency p95 | First text | CPU per run | Throughput | Failed | Peak memory |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 70.8 ms | 74.7 ms | 67.3 ms | 9.5 ms | 233 runs/s | 0 | 48 MB |
+| pyox-agents http | 72.5 ms | 76.4 ms | 69.1 ms | 10.3 ms | 221 runs/s | 0 | 38 MB |
+| openai-agents websocket | 110.3 ms | 123.1 ms | 105.5 ms | 44.1 ms | 11 runs/s | 0 | 171 MB |
+| openai-agents http | 142.5 ms | 166.2 ms | 137.3 ms | 79.9 ms | 12 runs/s | 0 | 166 MB |
+
+`tool_loop_20`
+
+| Agent | Latency p50 | Latency p95 | First text | CPU per run | Throughput | Failed | Peak memory |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents websocket | 244.0 ms | 255.7 ms | 240.1 ms | 26.8 ms | 81 runs/s | 0 | 53 MB |
+| pyox-agents http | 251.2 ms | 265.1 ms | 247.6 ms | 31.1 ms | 79 runs/s | 0 | 45 MB |
+| openai-agents websocket | 386.5 ms | 415.9 ms | 380.1 ms | 153.6 ms | 3 runs/s | 0 | 199 MB |
+| openai-agents http | 834.3 ms | 931.7 ms | 825.4 ms | 598.0 ms | 2 runs/s | 0 | 174 MB |
+
+</details>
+<!-- websocket-delay:end -->
 
 <!-- --8<-- [end:results] -->
 
