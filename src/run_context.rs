@@ -3,7 +3,7 @@
 //!
 //! Inside a tool, `ctx` can also wait for a person (`ctx.ask`) and save work
 //! that must not be repeated when the call runs again (`ctx.step`); see
-//! `human_input`.
+//! `human_input`. `ctx.state` is the run's state (see `state`).
 
 use std::sync::Arc;
 
@@ -16,10 +16,13 @@ use pyox_tools::usage::Usage;
 use serde_json::Value;
 
 use crate::errors::StopToolCall;
-use crate::human_input::{HumanInput, SharedCallLog, new_request, reply_to, reply_to_python};
+use crate::events::EventSender;
+use crate::human_input::{HumanInput, SharedCallLog, StateView, new_request, reply_to, reply_to_python};
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::{Reply, RequestKind};
 use crate::python_call::call_python;
+use crate::state::RunState;
+use crate::text_chunks::TextChunking;
 
 /// The context of one run, kept up to date by the agent loop.
 #[derive(Clone)]
@@ -30,9 +33,18 @@ pub struct Context {
     pub deps: Arc<Py<PyAny>>,
     /// Where tool calls send requests for a person (see `human_input`).
     pub human_input: Arc<HumanInput>,
+    /// The run's state, and what this agent may do with it.
+    pub state: RunState,
+    /// How the run groups streamed text; its subagents group theirs the same way.
+    pub text_chunks: TextChunking,
 }
 
 impl Context {
+    /// Where this agent sends its events.
+    pub fn events(&self) -> &EventSender {
+        &self.human_input.events
+    }
+
     /// Makes the Python `ctx` object. `call_log` is the tool call it is made
     /// for (`None` in hooks).
     pub fn to_python(&self, py: Python<'_>, call_log: Option<SharedCallLog>) -> PyResult<Py<PythonRunContext>> {
@@ -95,6 +107,43 @@ impl PythonRunContext {
     #[getter]
     fn usage(&self) -> Usage {
         self.context.run.usage
+    }
+
+    /// The run's state (`execute(state=...)`), usually a dict. Inside a tool,
+    /// change it in place (`ctx.state["todos"].append(...)`) or replace it
+    /// (`ctx.state = {...}`): the changes are applied when the tool finishes,
+    /// and sent to the app as a `StateChanged` event. Hooks get a copy.
+    #[getter]
+    fn state(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let Some(log) = &self.call_log else {
+            return Ok(json_to_python(py, &self.context.state.read()?)?.unbind());
+        };
+        let mut log = log.lock().unwrap();
+        if let Some(view) = &log.state_view {
+            return Ok(view.object.clone_ref(py));
+        }
+        let before = self.context.state.read()?;
+        let object = json_to_python(py, &before)?.unbind();
+        log.state_view = Some(StateView {
+            before,
+            object: object.clone_ref(py),
+        });
+        Ok(object)
+    }
+
+    #[setter]
+    fn set_state(&self, new_state: Bound<'_, PyAny>) -> PyResult<()> {
+        let log = self.call_log("state = ...")?;
+        let mut log = log.lock().unwrap();
+        let before = match log.state_view.take() {
+            Some(view) => view.before,
+            None => self.context.state.read()?,
+        };
+        log.state_view = Some(StateView {
+            before,
+            object: new_state.unbind(),
+        });
+        Ok(())
     }
 
     /// Asks a person something and waits for the reply: `answer = await ctx.ask(data, metadata=...)`.

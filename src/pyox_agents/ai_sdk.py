@@ -21,9 +21,19 @@ tools: approvals (`addToolApprovalResponse`), and frontend tools and
 says which calls wait, with the question's `data` and `metadata`).
 Approvals need AI SDK 6 or newer.
 
+Shared state: the stream sends the state in a `data-state` part after each
+change. It stays in the message, so it comes back with the next request:
+`parse` reads the newest one as `ChatRequest.state`, and `stream` runs the
+agent with it.
+
+Subagents (`agent.as_tool(...)`) are shown in a `data-subagent` part (id: the
+tool call's id) with their status and their own text and tool parts. When a
+subagent's tool waits for the user, the subagent's tool call waits: answer it
+like any other waiting tool call.
+
 With the history in the browser (the default), a tool that asks more than
-once, or uses `ctx.step`, loses its earlier answers: keep the conversation on
-the server (`conversation_id=`) for those.
+once, uses `ctx.step`, or runs a subagent that waits for the user, loses its
+earlier answers: keep the conversation on the server (`conversation_id=`) for those.
 """
 
 import json
@@ -54,6 +64,7 @@ class ChatRequest:
     history: list[Message]  # the conversation before it, as the browser has it
     answers: dict[str, Reply]  # replies to tool calls the last run left waiting
     frontend_tools: list[dict[str, Any]] = field(default_factory=list)  # tools the frontend sent, if any
+    state: Any = None  # the newest `data-state` part: the state the last run left
     body: dict[str, Any] = field(default_factory=dict)  # the whole request, for your own fields
 
 
@@ -61,10 +72,12 @@ def stream(agent: Agent, body: bytes | str | Mapping[str, Any], **execute_option
     """Runs the agent for a `useChat` request and returns its AI SDK stream.
 
     `execute_options` go to `agent.execute` (`deps=...`). With `conversation_id=`, the
-    history comes from the agent's history store instead of the request.
+    history comes from the agent's history store instead of the request. The run's
+    state is the one in the request, unless `state=` is given.
     """
     chat = parse(body)
     history = None if "conversation_id" in execute_options else chat.history or None
+    execute_options.setdefault("state", chat.state)
     run = agent.execute(
         chat.prompt,
         history=history,
@@ -101,8 +114,14 @@ def parse(body: bytes | str | Mapping[str, Any]) -> ChatRequest:
         history=history,
         answers=answers,
         frontend_tools=_frontend_tools(request.get("tools")),
+        state=_newest_state(ui_messages),
         body=request,
     )
+
+
+def _newest_state(ui_messages: list[dict[str, Any]]) -> Any:
+    states = [part["data"] for message in ui_messages for part in message["parts"] if part["type"] == "data-state"]
+    return states[-1] if states else None
 
 
 def _user_content(parts: list[dict[str, Any]]) -> str | list[ContentPart]:
@@ -131,13 +150,16 @@ def _checked_url(url: str) -> str:
 def _assistant_messages(parts: list[dict[str, Any]], answers: dict[str, Reply] | None) -> list[Message]:
     """One assistant message per step (model turn), each followed by its tool results.
 
-    With `answers`, replies the user gave in this message are added to it (by call id),
-    and their calls get a *waiting* tool message so the run can continue them.
+    With `answers`, replies the user gave in this message are added to it (by the id of
+    the request: the call id, or `call_0/call_1` for a subagent's call), and their calls
+    get a *waiting* tool message so the run can continue them.
     """
-    waiting_kinds: dict[str, RequestKind] = {
-        part["data"]["toolCallId"]: part["data"]["kind"]
-        for part in parts
-        if part["type"] == "data-pyox-request" and part["data"].get("waiting")
+    waiting_requests = [
+        part["data"] for part in parts if part["type"] == "data-pyox-request" and part["data"].get("waiting")
+    ]
+    waiting_kinds: dict[str, RequestKind] = {request["toolCallId"]: request["kind"] for request in waiting_requests}
+    request_ids = {
+        request["toolCallId"]: request.get("requestId", request["toolCallId"]) for request in waiting_requests
     }
     messages: list[Message] = []
     for step in _split_steps(parts):
@@ -153,7 +175,7 @@ def _assistant_messages(parts: list[dict[str, Any]], answers: dict[str, Reply] |
         for part in tool_parts:
             reply = _reply(part, waiting_kinds) if answers is not None else None
             if answers is not None and reply is not None:
-                answers[part["toolCallId"]] = reply
+                answers[request_ids.get(part["toolCallId"], part["toolCallId"])] = reply
             messages.append(_tool_message(part, waiting_kinds, reply))
     return messages
 

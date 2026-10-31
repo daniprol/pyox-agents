@@ -230,6 +230,9 @@ impl StreamState {
                 }
             }
         }
+        if !self.finished {
+            self.encoder.end_batch(&mut text);
+        }
         Ok(text)
     }
 }
@@ -292,6 +295,13 @@ impl Encoder {
         match self {
             Encoder::AiSdk(encoder) => encoder.add_event(event, out),
             Encoder::AgUi(encoder) => encoder.add_event(event, out),
+        }
+    }
+
+    /// Called after each batch of events: what was held back to send once per batch.
+    fn end_batch(&mut self, out: &mut String) {
+        if let Encoder::AiSdk(encoder) = self {
+            encoder.end_batch(out);
         }
     }
 

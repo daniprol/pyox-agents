@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
 from fake_openai import ErrorResponse, JsonResponse, StreamResponse
-from pyox_agents import AgentEvent, Run
+from pyox_agents import AgentEvent, Run, RunFinished
 
 DEFAULT_USAGE = {"prompt_tokens": 10, "completion_tokens": 5}
 
@@ -92,6 +92,13 @@ async def collect_events(run: Run) -> list[AgentEvent]:
 
 def events_of_type(events: list[AgentEvent], event_type: type[EventType]) -> list[EventType]:
     return [event for event in events if isinstance(event, event_type)]
+
+
+def run_finished(events: list[AgentEvent]) -> RunFinished:
+    """The last event of a run, which is always its `RunFinished`."""
+    result = events[-1]
+    assert isinstance(result, RunFinished)
+    return result
 
 
 # Responses API ------------------------------------------------------------------------------------

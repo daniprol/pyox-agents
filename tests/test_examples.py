@@ -77,3 +77,25 @@ def test_human_in_the_loop_example(fake_openai: FakeOpenAI, tmp_path: Path) -> N
     assert output.endswith("Booked for 21:30\nAllow delete_file {'path': 'old.log'}? [y/n] Deleted\n")
     assert fake_openai.requests[1].body["messages"][-1]["content"] == "Booked Casa Marcelo at 21:30"
     assert fake_openai.requests[3].body["messages"][-1]["content"] == "Deleted old.log"
+
+
+def test_subagents_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
+    fake_openai.queue(
+        tool_calls_response(tool_call("research", task="Places in Vigo")),
+        tool_calls_response(tool_call("find_places", city="Vigo")),
+        text_response("The old town, the market"),
+        tool_calls_response(tool_call("add_todo", text="Old town")),
+        text_response("Your day is planned"),
+    )
+    environment = {**os.environ, "OPENAI_BASE_URL": fake_openai.base_url, "OPENAI_API_KEY": "test-key"}
+
+    output = subprocess.run(
+        [sys.executable, EXAMPLES / "subagents.py"],
+        cwd=tmp_path,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert output == "[research] Places in Vigo\n[research] done\ntodos: ['Old town']\nYour day is planned\n"
