@@ -28,7 +28,7 @@ pub use pyox_tools::hooks::ToolResult;
 
 use crate::human_input::{SharedCallLog, new_request};
 use crate::json_convert::{json_to_python, python_to_json};
-use crate::messages::{Request, RequestKind, ToolCall};
+use crate::messages::{Content, Request, RequestKind, ToolCall, content_from_python};
 use crate::python_call::call_python;
 use crate::run_context::Context;
 use crate::subagents::{Subagent, subagent_tool_from_python};
@@ -71,15 +71,16 @@ pub enum ToolImplementation {
 /// A tool result telling the model something went wrong.
 pub fn error_result(message: impl Into<String>) -> ToolResult {
     ToolResult {
-        content: message.into(),
+        content: Content::Text(message.into()),
         is_error: true,
         metadata: Value::Null,
     }
 }
 
-pub fn success_result(content: String, metadata: Value) -> ToolResult {
+/// `content` is text (a `String`), or a `Content` with images or files.
+pub fn success_result(content: impl Into<Content>, metadata: Value) -> ToolResult {
     ToolResult {
-        content,
+        content: content.into(),
         is_error: false,
         metadata,
     }
@@ -237,7 +238,8 @@ async fn run_rust_tool(tool_name: &str, run: impl FnOnce() -> Result<String, Str
 
 /// Calls `tool.invoke(arguments)`, or `tool.invoke(arguments, ctx)` when a
 /// context is given, awaiting the result if the tool is async.
-/// `invoke` returns text, or a `ToolReturn` (text plus metadata for the app).
+/// `invoke` returns text, or a `ToolReturn`: content (text, or a list of text,
+/// images and files) plus metadata for the app.
 async fn run_python_tool(
     python_tool: &Py<PyAny>,
     arguments: &Map<String, Value>,
@@ -260,11 +262,12 @@ async fn run_python_tool(
     .await?;
     Python::attach(|py| {
         let tool_result = tool_result.bind(py);
-        if let Ok(content) = tool_result.extract::<String>() {
-            return Ok(success_result(content, Value::Null));
+        // Text, or a list of text, images and files; otherwise a `ToolReturn`.
+        if !tool_result.hasattr("metadata")? {
+            return Ok(success_result(content_from_python(tool_result)?, Value::Null));
         }
         Ok(success_result(
-            tool_result.getattr("content")?.extract()?,
+            content_from_python(&tool_result.getattr("content")?)?,
             python_to_json(&tool_result.getattr("metadata")?)?,
         ))
     })

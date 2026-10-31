@@ -7,7 +7,8 @@
 //! `openai_responses.rs` does the same for the Responses API, and
 //! `model_api.rs` picks one of them; the agent loop does not change.
 //! This API has no reasoning to send back, so the `reasoning` of assistant
-//! messages is never sent.
+//! messages is never sent. Its tool messages only take text: the images and
+//! files of tool results go in a user message after them.
 
 use futures::StreamExt;
 use pyo3::prelude::*;
@@ -17,7 +18,7 @@ use serde_json::{Map, Value, json};
 
 use crate::client::ClientSettings;
 use crate::errors::{InvalidResponseError, api_error, error_for_http_failure, error_for_response};
-use crate::messages::{ContentPart, Message, ToolCall, UserContent, arguments_as_text, arguments_from_text};
+use crate::messages::{Content, ContentPart, Message, ToolCall, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, StopReason};
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
@@ -76,8 +77,16 @@ fn chat_messages(instructions: &str, history: &[Message]) -> Vec<Value> {
         chat_messages.push(json!({"role": "system", "content": instructions}));
     }
 
+    // This API only takes text in tool messages. So the images and files of
+    // tool results wait here, and follow in one user message right after the
+    // tool messages (a user message between them would break the sequence).
+    let mut tool_media: Vec<ContentPart> = Vec::new();
+
     // A waiting tool message has no result yet: a later message for the same call will.
     for message in history.iter().filter(|message| !message.is_waiting()) {
+        if !matches!(message, Message::Tool { .. }) {
+            add_tool_media(&mut chat_messages, &mut tool_media);
+        }
         let chat_message = match message {
             Message::User { content } => json!({"role": "user", "content": user_content(content)}),
             Message::Assistant {
@@ -97,21 +106,53 @@ fn chat_messages(instructions: &str, history: &[Message]) -> Vec<Value> {
                 })).collect::<Vec<_>>(),
             }),
             Message::Tool {
-                tool_call_id, content, ..
+                tool_call_id,
+                name,
+                content,
+                ..
             } => {
-                json!({"role": "tool", "tool_call_id": tool_call_id, "content": content})
+                let media = media_parts(content);
+                let mut text = content.text();
+                if !media.is_empty() {
+                    text.push_str("\n(Its images and files follow in the next message.)");
+                    let label = format!("Images and files from the {name} tool (call {tool_call_id}):");
+                    tool_media.push(ContentPart::Text { text: label });
+                    tool_media.extend(media);
+                }
+                json!({"role": "tool", "tool_call_id": tool_call_id, "content": text.trim_start()})
             }
         };
         chat_messages.push(chat_message);
     }
+    add_tool_media(&mut chat_messages, &mut tool_media);
     chat_messages
 }
 
-/// Text stays a plain string; parts become the API's list of content parts.
-fn user_content(content: &UserContent) -> Value {
+/// The images and files of a tool result (its text goes in the tool message).
+fn media_parts(content: &Content) -> Vec<ContentPart> {
     match content {
-        UserContent::Text(text) => json!(text),
-        UserContent::Parts(parts) => parts
+        Content::Text(_) => Vec::new(),
+        Content::Parts(parts) => parts
+            .iter()
+            .filter(|part| !matches!(part, ContentPart::Text { .. }))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// Sends the waiting images and files of tool results as one user message.
+fn add_tool_media(chat_messages: &mut Vec<Value>, tool_media: &mut Vec<ContentPart>) {
+    if !tool_media.is_empty() {
+        let parts = Content::Parts(std::mem::take(tool_media));
+        chat_messages.push(json!({"role": "user", "content": user_content(&parts)}));
+    }
+}
+
+/// Text stays a plain string; parts become the API's list of content parts.
+fn user_content(content: &Content) -> Value {
+    match content {
+        Content::Text(text) => json!(text),
+        Content::Parts(parts) => parts
             .iter()
             .map(|part| match part {
                 ContentPart::Text { text } => json!({"type": "text", "text": text}),
@@ -476,6 +517,41 @@ mod tests {
             json!({"role": "tool", "tool_call_id": "c", "content": "1"})
         );
         assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn images_from_tools_follow_the_tool_messages() {
+        let history = messages(json!([
+            {"role": "user", "content": "Look at both pages"},
+            {"role": "assistant", "tool_calls": [
+                {"id": "c1", "name": "screenshot", "arguments": {}},
+                {"id": "c2", "name": "screenshot", "arguments": {}},
+            ]},
+            {"role": "tool", "tool_call_id": "c1", "name": "screenshot", "content": [
+                {"type": "text", "text": "Home page"},
+                {"type": "image", "url": "data:image/png;base64,AAA="},
+            ]},
+            {"role": "tool", "tool_call_id": "c2", "name": "screenshot", "content": "Not found"},
+        ]));
+        let body = build_request_body(&request(&history, &Map::new()));
+        let sent = body["messages"].as_array().unwrap();
+        assert_eq!(
+            sent[2],
+            json!({"role": "tool", "tool_call_id": "c1",
+                   "content": "Home page\n(Its images and files follow in the next message.)"})
+        );
+        assert_eq!(
+            sent[3],
+            json!({"role": "tool", "tool_call_id": "c2", "content": "Not found"})
+        );
+        assert_eq!(
+            sent[4],
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "Images and files from the screenshot tool (call c1):"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA="}},
+            ]})
+        );
+        assert_eq!(sent.len(), 5);
     }
 
     #[test]

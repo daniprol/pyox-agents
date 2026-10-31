@@ -46,7 +46,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::messages::{Message, ToolCall};
+use crate::messages::{Content, Message, ToolCall};
 use crate::native_hooks::{self, Hook};
 use crate::usage::Usage;
 
@@ -89,7 +89,8 @@ pub struct ModelRequest {
 /// The result of a tool, as sent back to the model.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
-    pub content: String,
+    /// Text, or parts when the result has images or files.
+    pub content: Content,
     #[serde(default)]
     pub is_error: bool,
     /// Data for the app, never sent to the model (`ToolReturn(metadata=...)`).
