@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeGuard
 
-from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
+from pyox_agents._core import Client, Engine, Run, RunFinished
 from pyox_agents.hooks import Hooks
 from pyox_agents.human_input import OnRequest, Reply
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
@@ -73,7 +73,7 @@ class Agent:
         *,
         model: str,
         prompt: str = "",
-        tools: Sequence[ToolLike | BuiltinTool | Subagent | Callable[..., Any]] = (),
+        tools: Sequence[ToolLike | Subagent | Callable[..., Any]] = (),
         client: Client | None = None,
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
@@ -220,4 +220,4 @@ class Agent:
 
 
 def _is_plain_function(item: object) -> TypeGuard[Callable[..., Any]]:
-    return callable(item) and not isinstance(item, (Tool, BuiltinTool, Subagent)) and not hasattr(item, "invoke")
+    return callable(item) and not isinstance(item, (Tool, Subagent)) and not hasattr(item, "invoke")

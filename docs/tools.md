@@ -49,17 +49,6 @@ await agent.run("What did I order?", deps=database)
 tool, `tool_call_id`, `tool_name`, `approval` and the `ask` and `step` methods
 (see [Human in the loop](human-in-the-loop.md)). [Hooks](hooks.md) get the same `ctx`.
 
-## Built-in Rust tools
-
-Compiled into the library and run entirely in Rust:
-
-```python
-from pyox_agents import Agent, BuiltinTool
-
-agent = Agent(model="gpt-5-mini", tools=[BuiltinTool("read_file"), BuiltinTool("write_file")])
-BuiltinTool.available()  # ['read_file', 'write_file']
-```
-
 ## Your own Rust tools
 
 For tools that must be fast, write them in Rust in your own small package. Describe the arguments with a struct

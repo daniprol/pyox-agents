@@ -1125,7 +1125,6 @@ dependencies = [
  "pyo3-async-runtimes",
  "pyox-tools",
  "reqwest",
- "schemars",
  "serde",
  "serde_json",
  "tokio",
