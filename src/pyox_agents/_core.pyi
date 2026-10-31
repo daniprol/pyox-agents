@@ -40,20 +40,6 @@ class Client:
     def base_url(self) -> str: ...
 
 @final
-class BuiltinTool:
-    """A tool implemented in Rust inside pyox-agents, selected by name."""
-
-    def __init__(self, name: str, *, requires_approval: Any = None) -> None: ...
-    @staticmethod
-    def available() -> list[str]: ...
-    @property
-    def requires_approval(self) -> Any: ...
-    @property
-    def name(self) -> str: ...
-    @property
-    def description(self) -> str: ...
-
-@final
 class Usage:
     """Token counts reported by the API; counts it did not report are 0."""
 

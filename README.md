@@ -239,17 +239,6 @@ await agent.run("What did I order?", deps=database)
 `ctx` has `deps`, `conversation_id`, `turn`, `usage` (tokens used so far), and, inside a
 tool, `tool_call_id` and `tool_name`. Hooks get the same `ctx`.
 
-**Built-in Rust tools.** Compiled into the library and run entirely in Rust:
-
-```python
-from pyox_agents import BuiltinTool
-
-agent = Agent(model="gpt-5-mini", tools=[BuiltinTool("read_file"), BuiltinTool("write_file")])
-BuiltinTool.available()  # ['read_file', 'write_file']
-```
-
-Add one in [`src/tools/builtin.rs`](https://github.com/daniprol/pyox-agents/blob/main/src/tools/builtin.rs).
-
 **Your own Rust tools, compiled separately.** Describe the arguments with a Rust struct and implement the
 `RustTool` trait from the [`pyox-tools`](https://github.com/daniprol/pyox-agents/blob/main/crates/pyox-tools) crate. The JSON schema is generated from the struct
 (doc comments become descriptions), so nothing is repeated in Python:
@@ -277,10 +266,10 @@ import fast_tools
 agent = Agent(model="gpt-5-mini", tools=[fast_tools.count_words])
 ```
 
-The agent calls these Rust functions directly, like the built-in tools: no Python is involved when the model
+The agent calls these Rust functions directly: no Python is involved when the model
 calls them (see [`crates/pyox-tools/src/native.rs`](https://github.com/daniprol/pyox-agents/blob/main/crates/pyox-tools/src/native.rs) for how).
-See [`examples/rust_tool_package`](https://github.com/daniprol/pyox-agents/blob/main/examples/rust_tool_package) for a complete package. Built-in tools use the same
-trait. Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
+See [`examples/rust_tool_package`](https://github.com/daniprol/pyox-agents/blob/main/examples/rust_tool_package) for a complete package (it also has demo
+`read_file` and `write_file` tools). Any object with `name`, `description`, `parameters` and an `invoke(arguments)` method (sync or async) works
 as a tool too.
 
 ## Human in the loop
@@ -448,8 +437,8 @@ async for event in run  ◄─ events ── agent loop     request → stream �
                                        ├── ws.rs, ws_pool.rs  Responses over WebSocket: one connection, the pool
                                        └── tools/           Python tools are awaited on
                                                             Python's event loop; Rust tools
-                                                            (built-in or from your own
-                                                            package) run on a Rust thread
+                                                            (from your own package) run
+                                                            on a Rust thread
 run.ai_sdk(), run.ag_ui(...)  ◄─ text ── run.rs   events in batches → ai_sdk.rs, ag_ui.rs
 ```
 

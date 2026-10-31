@@ -9,13 +9,13 @@ uv sync                               # builds pyox-agents and the example Rust 
 export OPENAI_API_KEY=sk-...
 ```
 
-## 2. An agent with a Python tool and a built-in Rust tool
+## 2. An agent with a Python tool
 
 ```bash
 uv run examples/basic.py
 ```
 
-Streams the answer, shows each tool call, and writes `weather.txt`.
+Streams the answer and shows each tool call.
 
 ## 3. An agent with your own Rust tools
 

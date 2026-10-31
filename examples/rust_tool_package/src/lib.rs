@@ -59,6 +59,50 @@ impl RustTool for MostCommonWords {
     }
 }
 
+/// Read a UTF-8 text file and return its contents.
+///
+/// A demo of a tool that touches the file system: it can read any file the
+/// process can. A real app should limit it to one folder (and maybe ask for
+/// approval with `requires_approval`).
+#[derive(Deserialize, JsonSchema)]
+struct ReadFile {
+    /// Path of the file to read.
+    path: String,
+}
+
+impl RustTool for ReadFile {
+    const NAME: &'static str = "read_file";
+
+    fn run(self) -> Result<String, String> {
+        std::fs::read_to_string(&self.path).map_err(|error| format!("Could not read {}: {error}", self.path))
+    }
+}
+
+/// Write text to a file, creating parent folders and replacing existing content.
+///
+/// Like `read_file`, a demo without any limit on where it writes.
+#[derive(Deserialize, JsonSchema)]
+struct WriteFile {
+    /// Path of the file to write.
+    path: String,
+    /// Text to write.
+    content: String,
+}
+
+impl RustTool for WriteFile {
+    const NAME: &'static str = "write_file";
+
+    fn run(self) -> Result<String, String> {
+        let path = &self.path;
+        if let Some(parent_folder) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent_folder)
+                .map_err(|error| format!("Could not create folder for {path}: {error}"))?;
+        }
+        std::fs::write(path, &self.content).map_err(|error| format!("Could not write {path}: {error}"))?;
+        Ok(format!("Wrote {} bytes to {path}", self.content.len()))
+    }
+}
+
 /// Tool calls with a longer `text` argument are blocked.
 const MAX_TEXT_LENGTH: usize = 10_000;
 
@@ -95,13 +139,16 @@ fn guard() -> Hooks {
         })
 }
 
-/// The Python module: `import fast_tools` gives `fast_tools.count_words`
-/// and `fast_tools.most_common_words`, ready for `Agent(tools=[...])`, and
+/// The Python module: `import fast_tools` gives `fast_tools.count_words`,
+/// `fast_tools.most_common_words`, `fast_tools.read_file` and
+/// `fast_tools.write_file`, ready for `Agent(tools=[...])`, and
 /// `fast_tools.guard`, ready for `Agent(hooks=[...])`.
 #[pymodule]
 fn fast_tools(module: &Bound<'_, PyModule>) -> PyResult<()> {
     add_tool::<CountWords>(module)?;
     add_tool::<MostCommonWords>(module)?;
+    add_tool::<ReadFile>(module)?;
+    add_tool::<WriteFile>(module)?;
     add_hooks(module, "guard", guard())?;
     Ok(())
 }

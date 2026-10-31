@@ -7,7 +7,7 @@ import pytest
 from conftest import MakeAgent
 from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
-from pyox_agents import BuiltinTool, Tool, ToolFinished, ToolStarted
+from pyox_agents import Tool, ToolFinished, ToolStarted
 
 
 def add(a: int, b: int) -> int:
@@ -70,30 +70,6 @@ async def test_failing_and_unknown_tools_are_reported_to_the_model(
     ]
 
 
-async def test_builtin_rust_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent, tmp_path: Path) -> None:
-    path = str(tmp_path / "notes" / "todo.txt")
-    fake_openai.queue(
-        tool_calls_response(tool_call("write_file", path=path, content="buy milk")),
-        tool_calls_response(tool_call("read_file", path=path)),
-        text_response("Done"),
-    )
-    agent = make_agent(tools=[BuiltinTool("write_file"), BuiltinTool("read_file")])
-
-    events = await collect_events(agent.execute("Save a note"))
-
-    assert [event.result for event in events_of_type(events, ToolFinished)] == [f"Wrote 8 bytes to {path}", "buy milk"]
-
-
-async def test_builtin_tool_errors_are_reported(fake_openai: FakeOpenAI, make_agent: MakeAgent, tmp_path: Path) -> None:
-    fake_openai.queue(tool_calls_response(tool_call("read_file", path=str(tmp_path / "nope.txt"))), text_response("."))
-
-    events = await collect_events(make_agent(tools=[BuiltinTool("read_file")]).execute("Read"))
-
-    [finished] = events_of_type(events, ToolFinished)
-    assert finished.is_error
-    assert finished.result.startswith("Could not read")
-
-
 async def test_threaded_tool_like_a_compiled_rust_function(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     # A builtin (C-implemented) function stands in for a function from a compiled Rust package:
     # no Python signature to inspect, so the schema is given explicitly.
@@ -109,13 +85,6 @@ async def test_threaded_tool_like_a_compiled_rust_function(fake_openai: FakeOpen
     events = await collect_events(make_agent(tools=[word_lengths]).execute("Count"))
 
     assert [event.result for event in events_of_type(events, ToolFinished)] == ["[2, 2, 2]"]
-
-
-def test_builtin_tool_lookup() -> None:
-    assert BuiltinTool.available() == ["read_file", "write_file"]
-    assert BuiltinTool("read_file").name == "read_file"
-    with pytest.raises(ValueError, match="Unknown built-in tool"):
-        BuiltinTool("nope")
 
 
 class Greeter:
