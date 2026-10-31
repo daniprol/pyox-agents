@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from conftest import MakeAgent
 from factories import (
     collect_events,
@@ -42,7 +44,7 @@ async def test_request_contains_model_prompt_parameters_and_headers(
     fake_openai: FakeOpenAI, make_agent: MakeAgent
 ) -> None:
     fake_openai.queue(text_response("ok"))
-    agent = make_agent(prompt="Be nice.", model_parameters={"temperature": 0, "stream": False})
+    agent = make_agent(instructions="Be nice.", model_parameters={"temperature": 0, "stream": False})
 
     await agent.run("Hi")
 
@@ -140,3 +142,28 @@ def test_usages_can_be_added() -> None:
     assert repr(Usage()) == (
         "Usage(input_tokens=0, cached_input_tokens=0, output_tokens=0, reasoning_tokens=0, requests=0)"
     )
+
+
+async def test_model_parameter_tools_are_kept_with_function_tools(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    hosted_tool = {"type": "web_search_preview"}  # a provider's own tool
+    fake_openai.queue(text_response("Hi"))
+
+    await make_agent(tools=[add], model_parameters={"tools": [hosted_tool]}).run("Hi")
+
+    tools = fake_openai.requests[0].body["tools"]
+    assert tools[0] == hosted_tool
+    assert tools[1]["function"]["name"] == "add"
+
+
+def test_agent_settings_are_read_only(make_agent: MakeAgent) -> None:
+    agent = make_agent(instructions="Be brief.", tools=[lambda: "pong"])
+
+    assert (agent.model, agent.instructions, agent.api, len(agent.tools)) == ("test-model", "Be brief.", "chat", 1)
+    with pytest.raises(AttributeError):
+        agent.model = "gpt-5"  # ty: ignore[invalid-assignment]

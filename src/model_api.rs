@@ -66,7 +66,8 @@ impl Api {
 /// not copy it.
 pub struct ModelRequest<'a> {
     pub model: &'a str,
-    pub system_prompt: &'a str,
+    /// The system prompt.
+    pub instructions: &'a str,
     /// The whole conversation so far. An adapter may send only part of it
     /// (see `previous_response_id`).
     pub messages: &'a [Message],
@@ -171,7 +172,7 @@ pub mod test_helpers {
     pub fn request<'a>(messages: &'a [Message], model_parameters: &'a Map<String, Value>) -> ModelRequest<'a> {
         ModelRequest {
             model: "m",
-            system_prompt: "",
+            instructions: "",
             messages,
             tools: &[],
             model_parameters,

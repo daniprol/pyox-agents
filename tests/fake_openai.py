@@ -173,13 +173,16 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            for chunk in response.chunks:
-                time.sleep(response.chunk_delay_seconds)
-                event_line = f"event: {chunk['type']}\n" if "type" in chunk else ""
-                self.wfile.write(f"{event_line}data: {json.dumps(chunk)}\n\n".encode())
-                self.wfile.flush()
-            if response.end_with_done:
-                self.wfile.write(b"data: [DONE]\n\n")
+            try:
+                for chunk in response.chunks:
+                    time.sleep(response.chunk_delay_seconds)
+                    event_line = f"event: {chunk['type']}\n" if "type" in chunk else ""
+                    self.wfile.write(f"{event_line}data: {json.dumps(chunk)}\n\n".encode())
+                    self.wfile.flush()
+                if response.end_with_done:
+                    self.wfile.write(b"data: [DONE]\n\n")
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True  # the client stopped reading (e.g. `run.stop()`)
 
         def do_GET(self) -> None:
             """Opens a WebSocket connection, then answers each `response.create` message on it."""

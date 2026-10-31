@@ -17,7 +17,7 @@ def get_weather(city: Annotated[str, "City name"], unit: Literal["C", "F"] = "C"
 
 agent = Agent(
     model="gpt-5-mini",
-    prompt="You are a concise assistant.",
+    instructions="You are a concise assistant.",
     tools=[get_weather],
 )
 

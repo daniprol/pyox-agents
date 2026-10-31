@@ -24,7 +24,7 @@ def delete_file(path: str) -> str:
     return f"Deleted {path}"  # a real tool would delete it here
 
 
-agent = Agent(model="gpt-5-mini", prompt="Be brief.", tools=[book_table, delete_file])
+agent = Agent(model="gpt-5-mini", instructions="Be brief.", tools=[book_table, delete_file])
 app = FastAPI()
 
 

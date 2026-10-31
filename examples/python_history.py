@@ -59,7 +59,7 @@ async def main() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     store = SqlAlchemyHistory(engine)
-    agent = Agent(model="gpt-5-mini", prompt="Be brief.", history_store=store)
+    agent = Agent(model="gpt-5-mini", instructions="Be brief.", history_store=store)
 
     # Run this script twice: the second time, the agent still remembers.
     for prompt in ["My favourite city is Vigo.", "What is my favourite city?"]:

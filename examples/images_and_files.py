@@ -10,7 +10,7 @@ from pyox_agents import Agent, file, image
 
 CAT_PHOTO = "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg"
 
-agent = Agent(model="gpt-5-mini", prompt="Be brief.")
+agent = Agent(model="gpt-5-mini", instructions="Be brief.")
 
 
 async def main(pdf_path: str) -> None:
