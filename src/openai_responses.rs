@@ -83,6 +83,9 @@ pub fn build_request_body(
     if options.encrypted_reasoning {
         add_to_include(&mut body, "reasoning.encrypted_content");
     }
+    if let Some(output_schema) = request.output_schema {
+        add_output_format(&mut body, output_schema);
+    }
 
     if !request.tools.is_empty() {
         let tool_schemas = request
@@ -104,6 +107,21 @@ pub fn build_request_body(
         add_tools(&mut body, tool_schemas);
     }
     Value::Object(body)
+}
+
+/// Asks for an answer matching the schema: `text.format`, next to any other
+/// `text` settings from `model_parameters` (such as `verbosity`).
+fn add_output_format(body: &mut Map<String, Value>, output_schema: &Value) {
+    // `{"type": "json_schema", "name": ..., "schema": ..., "strict": true}`: the
+    // Chat API's `json_schema` object, flattened.
+    let mut format = Map::from_iter([("type".to_string(), json!("json_schema"))]);
+    if let Value::Object(fields) = output_schema {
+        format.extend(fields.clone());
+    }
+    let text = body.entry("text").or_insert_with(|| json!({}));
+    if let Value::Object(text) = text {
+        text.insert("format".into(), Value::Object(format));
+    }
 }
 
 /// The messages that come after the assistant message with this response id,
