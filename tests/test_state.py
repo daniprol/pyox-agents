@@ -5,7 +5,7 @@ from typing import Any
 from conftest import MakeAgent
 from factories import collect_events, events_of_type, run_finished, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
-from pyox_agents import RunContext, StateChanged, ToolFinished, tool
+from pyox_agents import Answer, Approve, RunContext, StateChanged, ToolFinished, tool
 
 
 @tool
@@ -133,3 +133,77 @@ async def test_subagents_see_the_state_only_when_allowed(fake_openai: FakeOpenAI
     [change] = events_of_type(events, StateChanged)
     assert change.subagent_id == "call_0"
     assert run_finished(events).state == {"todos": ["buy", "pack"]}
+
+
+async def test_waiting_tools_change_the_state_once_answered(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    @tool
+    async def add_asked_todo(ctx: RunContext) -> str:
+        """Ask for a todo and add it."""
+        ctx.state["todos"].append("draft")  # discarded when the tool stops to wait, kept when it finishes
+        answer = await ctx.ask("Which todo?")
+        ctx.state["todos"][-1] = answer.value
+        return "added"
+
+    agent = make_agent(tools=[add_asked_todo])
+    fake_openai.queue(tool_calls_response(tool_call("add_asked_todo")))
+
+    stopped_events = await collect_events(agent.execute("Add one", state={"todos": []}))
+
+    assert events_of_type(stopped_events, StateChanged) == []
+    stopped = run_finished(stopped_events)
+    assert stopped.state == {"todos": []}
+
+    fake_openai.queue(text_response("Done"))
+    events = await collect_events(
+        agent.execute(history=stopped.messages, answers={"call_0": Answer("pack")}, state=stopped.state)
+    )
+
+    [change] = events_of_type(events, StateChanged)
+    assert change.delta == [{"op": "add", "path": "/todos/0", "value": "pack"}]
+    assert run_finished(events).state == {"todos": ["pack"]}
+
+
+async def test_a_waiting_subagent_changes_the_state_once_resumed(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    @tool(requires_approval=True)
+    def add_approved_todo(ctx: RunContext, text: str) -> str:
+        """Add a todo, once approved."""
+        ctx.state["todos"].append(text)
+        return "added"
+
+    helper = make_agent(tools=[add_approved_todo])
+    agent = make_agent(tools=[helper.as_tool("helper", "Help", state="write")])
+    fake_openai.queue(
+        tool_calls_response(tool_call("helper", task="Add pack")),
+        tool_calls_response(tool_call("add_approved_todo", text="pack")),
+    )
+
+    stopped = await agent.run("Add pack", state={"todos": []})
+
+    assert stopped.state == {"todos": []}
+
+    fake_openai.queue(text_response("Added"), text_response("Done"))
+    events = await collect_events(
+        agent.execute(history=stopped.messages, answers={"call_0/call_0": Approve()}, state=stopped.state)
+    )
+
+    [change] = events_of_type(events, StateChanged)
+    assert (change.subagent_id, change.state) == ("call_0", {"todos": ["pack"]})
+    assert run_finished(events).state == {"todos": ["pack"]}
+
+
+async def test_a_read_only_subagent_cannot_replace_the_state(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    helper = make_agent(tools=[rename])
+    agent = make_agent(tools=[helper.as_tool("helper", "Help", state="read")])
+    fake_openai.queue(
+        tool_calls_response(tool_call("helper", task="Rename")),
+        tool_calls_response(tool_call("rename", title="Trip")),
+        text_response("Could not"),
+        text_response("Done"),
+    )
+
+    events = await collect_events(agent.execute("Rename", state={"title": "List"}))
+
+    assert tool_results(events)[0] == ("This subagent can only read the state, not change it", True)
+    assert run_finished(events).state == {"title": "List"}

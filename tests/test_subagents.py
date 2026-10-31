@@ -341,3 +341,107 @@ async def test_continuing_needs_a_known_subagent_id(fake_openai: FakeOpenAI, mak
     await assistant.run("Plan")
 
     assert sent_messages(fake_openai, 1)[-1]["content"] == 'There is no conversation with subagent_id "call_7"'
+
+
+async def test_subagents_running_together_keep_their_own_ids(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    researcher = make_agent(tools=[search])
+    writer = make_agent(tools=[researcher.as_tool("research", "Research")])
+    fake_openai.queue(
+        tool_calls_response(tool_call("research", task="Vigo"), tool_call("research", task="Lugo")),
+        text_response("found"),  # both subagents get the same answer: they run at the same time, in any order
+        text_response("found"),
+        text_response("Done"),
+    )
+
+    events = await collect_events(writer.execute("Go"))
+
+    assert sorted((event.call_id, event.task) for event in events_of_type(events, SubagentStarted)) == [
+        ("call_0", "Vigo"),
+        ("call_1", "Lugo"),
+    ]
+    finished = events_of_type(events, SubagentFinished)
+    assert sorted((event.call_id, event.result) for event in finished) == [("call_0", "found"), ("call_1", "found")]
+    assert {delta.subagent_id for delta in events_of_type(events, TextDelta)} == {"call_0", "call_1", None}
+    result = run_finished(events)
+    assert result.usage.requests == 4
+    assert sent_messages(fake_openai, 3)[-2:] == [
+        {"role": "tool", "tool_call_id": "call_0", "content": "found"},
+        {"role": "tool", "tool_call_id": "call_1", "content": "found"},
+    ]
+
+
+async def test_inherited_tools_keep_their_approval_rules(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    travel_agent = make_agent()
+    assistant = make_agent(tools=[book, travel_agent.as_tool("travel", "Book trips", inherit_tools=True)])
+    fake_openai.queue(
+        tool_calls_response(tool_call("travel", task="Book F1")),
+        tool_calls_response(tool_call("book", flight="F1")),
+    )
+
+    stopped = await assistant.run("Book F1")
+
+    assert [(request.call_id, request.kind, request.tool_name) for request in stopped.pending] == [
+        ("call_0/call_0", "approval", "book")
+    ]
+
+
+async def test_subagents_can_use_inherited_frontend_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    location = {"name": "get_location", "description": "The user's location.", "parameters": {"type": "object"}}
+    guide = make_agent()
+    assistant = make_agent(tools=[guide.as_tool("guide", "Guide the user", inherit_tools=True)])
+    fake_openai.queue(
+        tool_calls_response(tool_call("guide", task="Where is the user?")),
+        tool_calls_response(tool_call("get_location")),
+    )
+
+    stopped = await assistant.run("Guide me", frontend_tools=[location])
+
+    assert tool_names(fake_openai, 1) == ["get_location"]
+    [request] = stopped.pending
+    assert (request.call_id, request.kind, request.tool_name) == ("call_0/call_0", "frontend", "get_location")
+
+    fake_openai.queue(text_response("You are in Vigo"), text_response("Welcome to Vigo"))
+    result = await assistant.run(
+        history=stopped.messages, answers={"call_0/call_0": Answer("Vigo")}, frontend_tools=[location]
+    )
+
+    assert result.text == "Welcome to Vigo"
+    assert sent_messages(fake_openai, 2)[-1]["content"] == "Vigo"  # the subagent reads the app's answer
+
+
+async def test_subagent_tools_get_the_same_deps(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    @tool
+    def whoami(ctx: RunContext) -> str:
+        """Say who the user is."""
+        return ctx.deps["user"]
+
+    helper = make_agent(tools=[whoami])
+    agent = make_agent(tools=[helper.as_tool("helper", "Help")])
+    fake_openai.queue(
+        tool_calls_response(tool_call("helper", task="Who?")),
+        tool_calls_response(tool_call("whoami")),
+        text_response("Dani"),
+        text_response("You are Dani"),
+    )
+
+    events = await collect_events(agent.execute("Who am I?", deps={"user": "Dani"}))
+
+    subagent_tool, _ = events_of_type(events, ToolFinished)
+    assert (subagent_tool.call_id, subagent_tool.result) == ("call_0/call_0", "Dani")
+
+
+async def test_a_subagent_that_hits_max_turns_fails_its_tool(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    looper = make_agent(tools=[search], max_turns=1)
+    agent = make_agent(tools=[looper.as_tool("loop", "Loop")])
+    fake_openai.queue(
+        tool_calls_response(tool_call("loop", task="Go")),
+        tool_calls_response(tool_call("search", query="again")),
+        text_response("It gave up"),
+    )
+
+    events = await collect_events(agent.execute("Go"))
+
+    [finished] = events_of_type(events, SubagentFinished)
+    assert finished.is_error
+    assert "Stopped after 1 turns" in finished.result
+    assert run_finished(events).text == "It gave up"

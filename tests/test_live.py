@@ -17,17 +17,24 @@ from pathlib import Path
 import pytest
 
 from conftest import MakeAgent
-from factories import collect_events, events_of_type
+from factories import collect_events, events_of_type, run_finished
 from pyox_agents import (
+    Answer,
     ApiError,
+    Approve,
     AuthenticationError,
     BuiltinTool,
     Choice,
     ChoiceAnswer,
     Client,
+    InputRequested,
     Predicate,
     PredicateAnswer,
+    RunContext,
     RunFinished,
+    StateChanged,
+    SubagentFinished,
+    SubagentStarted,
     TextDelta,
     ToolFinished,
     decide,
@@ -154,3 +161,142 @@ async def test_answers_a_decision(client: Client, model: str) -> None:
     assert isinstance(mood, ChoiceAnswer)
     assert mood.choice == "upset"
     assert decision.usage.input_tokens > 0
+
+
+# Subagents and state -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("api", "model_parameters"), [("chat", NO_REASONING), ("responses", None)], ids=["chat", "responses"]
+)
+async def test_delegates_to_a_subagent(
+    make_agent: MakeAgent, api: str, model_parameters: dict[str, str] | None
+) -> None:
+    secret = secrets.token_hex(4)
+
+    @tool
+    def get_secret() -> str:
+        """Return the secret code."""
+        return secret
+
+    options = {"api": api, "model_parameters": model_parameters}
+    researcher = make_agent(**options, prompt="Use your tools to answer.", tools=[get_secret])
+    agent = make_agent(
+        **options,
+        prompt="You cannot see the secret code. Always ask the `research` tool for it.",
+        tools=[researcher.as_tool("research", "Finds the secret code.")],
+    )
+
+    events = await collect_events(agent.execute("What is the secret code?"))
+
+    [started] = events_of_type(events, SubagentStarted)
+    [finished_subagent] = events_of_type(events, SubagentFinished)
+    assert started.name == "research"
+    assert not finished_subagent.is_error
+    assert finished_subagent.usage.requests >= 2
+    subagent_tools = [event for event in events_of_type(events, ToolFinished) if event.subagent_id == started.call_id]
+    assert [(event.name, event.result) for event in subagent_tools] == [("get_secret", secret)]
+    finished = run_finished(events)
+    assert secret in finished.text
+    assert finished.usage.requests >= 4  # the subagent's requests count too
+
+
+async def test_a_subagent_approval_stops_and_resumes_the_run(make_agent: MakeAgent) -> None:
+    booked: list[str] = []
+
+    @tool(requires_approval=True)
+    def book(city: str) -> str:
+        """Book a trip to a city."""
+        booked.append(city)
+        return f"Booked {city}"
+
+    travel_agent = make_agent(api="responses", prompt="Book what you are asked with `book`.", tools=[book])
+    agent = make_agent(
+        api="responses",
+        prompt="Use the `travel` tool to book trips.",
+        tools=[travel_agent.as_tool("travel", "Books trips.")],
+    )
+
+    stopped = await agent.run("Book a trip to Vigo.")
+
+    [request] = stopped.pending
+    assert (request.kind, request.tool_name) == ("approval", "book")
+    assert request.subagent_id
+    assert request.call_id.startswith(f"{request.subagent_id}/")
+    assert booked == []
+
+    result = await agent.run(history=stopped.messages, answers={request.call_id: Approve()})
+
+    assert result.pending == []
+    assert [city.lower() for city in booked] == ["vigo"]
+    assert result.text.strip()
+
+
+async def test_a_subagent_asks_the_user(make_agent: MakeAgent) -> None:
+    asked: list[InputRequested] = []
+
+    def on_request(request: InputRequested) -> Answer:
+        asked.append(request)
+        return Answer("Dani")
+
+    greeter = make_agent(
+        api="responses",
+        prompt="First call `ask_user` to ask for the user's name. Then reply with a greeting that uses it.",
+    )
+    agent = make_agent(
+        api="responses",
+        prompt="Use the `greet` tool, then repeat its greeting.",
+        tools=[greeter.as_tool("greet", "Greets the user by name.", talk_to="user")],
+    )
+
+    result = await agent.run("Greet me.", on_request=on_request)
+
+    [request] = asked
+    assert (request.kind, request.tool_name) == ("input", "ask_user")
+    assert request.subagent_id
+    assert "Dani" in result.text
+
+
+async def test_a_subagent_asks_the_calling_agent(make_agent: MakeAgent) -> None:
+    planner = make_agent(
+        api="responses",
+        prompt=(
+            "First call `ask_parent` to ask which city the trip is to. "
+            "Then reply with only the city name, in capital letters."
+        ),
+    )
+    agent = make_agent(
+        api="responses",
+        prompt="The trip is to Vigo. Use the `plan` tool, answer any question it asks, then repeat its final answer.",
+        tools=[planner.as_tool("plan", "Plans a trip.", talk_to="parent")],
+    )
+
+    events = await collect_events(agent.execute("Plan my trip."))
+
+    asks = [event for event in events_of_type(events, ToolFinished) if event.name == "ask_parent"]
+    assert len(asks) == 1
+    assert len(events_of_type(events, SubagentStarted)) >= 2  # it asked, then went on with the answer
+    assert "VIGO" in run_finished(events).text.upper()
+
+
+async def test_tools_change_the_state(make_agent: MakeAgent) -> None:
+    @tool
+    def add_todo(ctx: RunContext, text: str) -> str:
+        """Add an item to the user's todo list."""
+        ctx.state["todos"].append(text)
+        return "Added"
+
+    helper = make_agent(api="responses", prompt="Manage the todo list with your tools.", tools=[add_todo])
+    agent = make_agent(
+        api="responses",
+        prompt="Use the `todos` tool to change the user's todo list.",
+        tools=[helper.as_tool("todos", "Changes the todo list.", state="write")],
+    )
+
+    events = await collect_events(agent.execute("Add 'pack' to my todo list.", state={"todos": []}))
+
+    [change] = events_of_type(events, StateChanged)
+    assert change.subagent_id
+    [todo] = change.state["todos"]
+    assert "pack" in todo.lower()
+    assert run_finished(events).state == change.state
