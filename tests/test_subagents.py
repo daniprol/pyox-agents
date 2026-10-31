@@ -91,7 +91,7 @@ async def test_the_subagent_answer_is_the_tool_result(fake_openai: FakeOpenAI, m
         None,
     )
     [finished] = events_of_type(events, SubagentFinished)
-    assert (finished.result, finished.is_error, finished.waiting) == ("Vigo is in Galicia", False, False)
+    assert (finished.result, finished.is_error, finished.stop_reason) == ("Vigo is in Galicia", False, "end")
     assert (finished.usage.requests, finished.usage.input_tokens) == (1, 10)
     # Its text comes in the same stream, marked with its id.
     assert [(delta.text, delta.subagent_id) for delta in events_of_type(events, TextDelta)] == [
@@ -177,6 +177,7 @@ async def test_subagent_errors_are_results_the_calling_agent_can_handle(
 
     [finished] = events_of_type(events, SubagentFinished)
     assert finished.is_error
+    assert finished.stop_reason is None
     assert "Bad model" in finished.result
     [tool_finished] = events_of_type(events, ToolFinished)
     assert tool_finished.is_error
@@ -197,6 +198,7 @@ async def test_subagent_approvals_stop_the_run_and_resume(fake_openai: FakeOpenA
 
     stopped = await assistant.run("Book F1")
 
+    assert stopped.stop_reason == "waiting"
     [request] = stopped.pending
     assert (request.call_id, request.subagent_id, request.kind, request.tool_name) == (
         "call_0/call_0",

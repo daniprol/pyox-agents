@@ -25,6 +25,7 @@ use pyo3::types::PyList;
 use pyo3_async_runtimes::TaskLocals;
 use serde_json::Value;
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::ag_ui::AgUiEncoder;
@@ -37,16 +38,19 @@ use crate::events::AgentEvent;
 #[pyclass(frozen, module = "pyox_agents")]
 pub struct Run {
     queue: Arc<EventQueue>,
+    /// Sets the run's `StopSignal` (see `stop`).
+    stop_sender: watch::Sender<bool>,
 }
 
 impl Run {
-    pub fn new(inputs: RunInputs, receiver: Receiver<PyResult<AgentEvent>>) -> Self {
+    pub fn new(inputs: RunInputs, receiver: Receiver<PyResult<AgentEvent>>, stop_sender: watch::Sender<bool>) -> Self {
         Run {
             queue: Arc::new(EventQueue {
                 not_started: Mutex::new(Some(inputs)),
                 receiver: tokio::sync::Mutex::new(receiver),
                 background_task: Mutex::new(None),
             }),
+            stop_sender,
         }
     }
 }
@@ -67,6 +71,16 @@ impl Run {
                 None => Err(PyStopAsyncIteration::new_err(())), // the run is over
             }
         })
+    }
+
+    /// Python: `run.stop()`. Ends the run at the next safe point, keeping what
+    /// it did: an answer being streamed ends at once (its text so far is
+    /// kept), tools already running finish, and no new request is sent.
+    /// Keep reading: the run still ends with `RunFinished(stop_reason="stopped")`.
+    /// (Stopping reading instead, with `break`, aborts the run and keeps nothing.)
+    fn stop(&self) {
+        // `send_replace` sets the value even when nobody waits for it yet.
+        self.stop_sender.send_replace(true);
     }
 
     /// Python: `async for events in run.batches()`: lists of events, each

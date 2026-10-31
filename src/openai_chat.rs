@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use crate::client::ClientSettings;
 use crate::errors::{InvalidResponseError, api_error, error_for_http_failure, error_for_response};
 use crate::messages::{ContentPart, Message, ToolCall, UserContent, arguments_as_text, arguments_from_text};
-use crate::model_api::{AssistantTurn, ModelRequest};
+use crate::model_api::{AssistantTurn, ModelRequest, StopReason};
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
 
@@ -137,6 +137,8 @@ struct ChunkChoice {
 #[derive(Deserialize)]
 struct ChunkDelta {
     content: Option<String>,
+    /// The model's explanation when it refuses (structured output only).
+    refusal: Option<String>,
     tool_calls: Option<Vec<ToolCallDelta>>,
 }
 
@@ -188,6 +190,7 @@ pub struct ChunkAccumulator {
     usage: Usage,
     /// True once the API said why it stopped; used to detect cut-off streams.
     finished: bool,
+    stop_reason: StopReason,
 }
 
 impl ChunkAccumulator {
@@ -218,8 +221,13 @@ impl ChunkAccumulator {
         let Some(choice) = chunk.choices.and_then(|choices| choices.into_iter().next()) else {
             return Ok(None); // e.g. the final usage-only chunk
         };
-        if choice.finish_reason.is_some() {
+        if let Some(finish_reason) = choice.finish_reason {
             self.finished = true;
+            match finish_reason.as_str() {
+                "length" => self.stop_reason = StopReason::Length,
+                "content_filter" => self.stop_reason = StopReason::Refusal,
+                _ => {} // "stop" or "tool_calls": a normal end
+            }
         }
         let Some(delta) = choice.delta else {
             return Ok(None);
@@ -229,7 +237,11 @@ impl ChunkAccumulator {
             self.add_tool_call_delta(tool_call_delta);
         }
 
-        let new_text = delta.content.filter(|text| !text.is_empty());
+        // A refusal is shown as the answer's text, like the Responses API does.
+        if delta.refusal.is_some() {
+            self.stop_reason = StopReason::Refusal;
+        }
+        let new_text = delta.content.or(delta.refusal).filter(|text| !text.is_empty());
         if let Some(text) = &new_text {
             self.text.push_str(text);
         }
@@ -270,6 +282,7 @@ impl ChunkAccumulator {
             text: self.text,
             tool_calls,
             usage: self.usage,
+            stop_reason: self.stop_reason,
             ..Default::default() // no reasoning or response id in this API
         }
     }
@@ -370,6 +383,23 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn finish_reasons_and_refusals_say_why_the_answer_ended() {
+        let stop_reason = |chunks: &[&str]| {
+            let mut accumulator = ChunkAccumulator::default();
+            for chunk in chunks {
+                accumulator.add_chunk(chunk).unwrap();
+            }
+            accumulator.into_turn().stop_reason
+        };
+        let finished = |reason: &str| format!(r#"{{"choices":[{{"delta":{{}},"finish_reason":"{reason}"}}]}}"#);
+        assert_eq!(stop_reason(&[&finished("stop")]), StopReason::End);
+        assert_eq!(stop_reason(&[&finished("length")]), StopReason::Length);
+        assert_eq!(stop_reason(&[&finished("content_filter")]), StopReason::Refusal);
+        let refusal = r#"{"choices":[{"delta":{"refusal":"I can't help with that."}}]}"#;
+        assert_eq!(stop_reason(&[refusal, &finished("stop")]), StopReason::Refusal);
     }
 
     #[test]

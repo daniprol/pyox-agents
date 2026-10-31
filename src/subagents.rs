@@ -39,6 +39,7 @@ use crate::errors::AgentError;
 use crate::events::{AgentEvent, SubagentFinished, SubagentStarted};
 use crate::human_input::{HumanInput, SharedCallLog};
 use crate::messages::{Message, Reply, ToolCall};
+use crate::model_api::StopReason;
 use crate::state::StateAccess;
 use crate::tools::{Approval, ToolDefinition, ToolImplementation, ToolResult, error_result, success_result};
 
@@ -232,10 +233,13 @@ impl Subagent {
             }),
             extra_tools: self.run_tools(run.tools),
             state: run.context.state.with_access(self.state),
+            stop: run.stop.clone(),
         };
         let mut usage = Usage::default();
+        let mut messages = Vec::new();
         // `Box::pin`: the subagent's loop runs inside this one (Rust needs a box for that).
-        let outcome = Box::pin(run_agent_loop(inputs, run.python_task_locals.clone(), &mut usage)).await;
+        let python_task_locals = run.python_task_locals.clone();
+        let outcome = Box::pin(run_agent_loop(inputs, python_task_locals, &mut usage, &mut messages)).await;
         call_log.lock().unwrap().subagent_usage = usage;
 
         let finished = match outcome {
@@ -244,20 +248,21 @@ impl Subagent {
             Err(error) if Python::attach(|py| error.is_instance_of::<AgentError>(py)) => {
                 let message = Python::attach(|py| error.value(py).to_string());
                 let result = format!("The subagent failed: {message}");
-                self.send_finished(&call, &result, true, false, usage, run).await;
+                self.send_finished(&call, &result, true, None, usage, run).await;
                 return Ok(Some(error_result(result)));
             }
             Err(error) => return Err(error),
         };
 
-        let waiting = !finished.pending.is_empty();
+        let waiting = finished.stop_reason == StopReason::Waiting;
         let result = if waiting {
             String::new()
         } else {
             self.result_for_model(&call, &finished.text, &finished.messages)
         };
         call_log.lock().unwrap().subagent = finished.messages;
-        self.send_finished(&call, &result, false, waiting, usage, run).await;
+        let stop_reason = Some(finished.stop_reason);
+        self.send_finished(&call, &result, false, stop_reason, usage, run).await;
         Ok((!waiting).then(|| success_result(result, Value::Null)))
     }
 
@@ -281,7 +286,7 @@ impl Subagent {
         call: &ToolCall,
         result: &str,
         is_error: bool,
-        waiting: bool,
+        stop_reason: Option<StopReason>,
         usage: Usage,
         run: &ToolRun<'_>,
     ) {
@@ -290,7 +295,7 @@ impl Subagent {
             name: call.name.clone(),
             result: result.to_string(),
             is_error,
-            waiting,
+            stop_reason,
             usage,
             subagent_id: None, // set by the event sender
         };
