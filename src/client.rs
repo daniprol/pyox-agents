@@ -16,6 +16,7 @@ use pyo3::prelude::*;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 
+use crate::errors::retry_after;
 use crate::ws_pool::SocketPool;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -53,7 +54,8 @@ pub struct ClientSettings {
     pub http_client: reqwest::Client,
     pub api_key: Option<String>,
     pub base_url: String,
-    /// How many times to resend a request that failed before any response arrived.
+    /// How many times to resend a request that failed before anything was
+    /// read from its answer: a connection failure, or a status like 429 or 503.
     pub max_retries: u32,
     /// The limit for one whole streamed answer. reqwest applies it to HTTP
     /// requests; WebSocket turns apply it themselves.
@@ -82,14 +84,21 @@ impl ClientSettings {
         self.websocket_unsupported.store(true, Ordering::Relaxed);
     }
 
-    /// Sends `body` as JSON to `base_url + path`.
+    /// Sends `body` as JSON to `base_url + path`, retrying when that is safe.
     ///
-    /// If the request fails before any response arrives (typically a pooled
-    /// connection the server had already closed), nothing was received yet,
-    /// so it is safe to send it again. We retry up to `max_retries` times,
-    /// waiting 0.1 s, then 0.2 s, 0.4 s... Once a response starts, we never
-    /// retry: streamed text may already have reached the user.
-    pub async fn post_json(&self, path: &str, body: &Value) -> Result<reqwest::Response, reqwest::Error> {
+    /// Two kinds of failure are retried, up to `max_retries` times in all,
+    /// always before anything was read from the answer (once text streams,
+    /// it may already be on the user's screen, so we never retry then):
+    ///
+    /// - The request failed before any response arrived (typically a pooled
+    ///   connection the server had already closed). We wait 0.1 s, 0.2 s...
+    /// - The server answered with a status that means "busy, try again"
+    ///   (429, 5xx...; see `is_retryable_status`). We wait as long as it asks
+    ///   (`Retry-After`), or 0.5 s, 1 s, 2 s... If it asks for longer than
+    ///   `MAX_RETRY_DELAY`, we give up at once, so a run never hangs on a quota.
+    ///
+    /// The answer may still be an error status: the caller turns it into an exception.
+    pub async fn post_json(&self, path: &str, body: &Value) -> Result<SentRequest, reqwest::Error> {
         let mut retries_done = 0;
         loop {
             let mut request = self.http_client.post(format!("{}{path}", self.base_url)).json(body);
@@ -101,10 +110,65 @@ impl ClientSettings {
                     wait_before_retry(retries_done).await;
                     retries_done += 1;
                 }
-                result => return result,
+                Err(error) => return Err(error),
+                Ok(response) => {
+                    let status = response.status().as_u16();
+                    // `if ... && let Some(delay) = ...`: every condition must hold,
+                    // and `delay` is then the value inside the `Some`.
+                    if retries_done < self.max_retries
+                        && is_retryable_status(status)
+                        && let Some(delay) = status_retry_delay(response.headers(), retries_done)
+                    {
+                        tokio::time::sleep(delay).await;
+                        retries_done += 1;
+                        continue;
+                    }
+                    return Ok(SentRequest {
+                        response,
+                        retries: retries_done,
+                    });
+                }
             }
         }
     }
+}
+
+/// The answer to a request, and how many times it had to be sent again.
+pub struct SentRequest {
+    pub response: reqwest::Response,
+    pub retries: u32,
+}
+
+/// The longest wait for a retry. A server asking for more (a quota reset
+/// in an hour, say) gets an error at once instead of a run that hangs.
+pub const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
+
+/// Status codes that mean "busy or failing for a moment, try again":
+/// timeout, conflict, rate limit, server errors, and 529 ("overloaded").
+pub fn is_retryable_status(status: u16) -> bool {
+    matches!(status, 408 | 409 | 429 | 500 | 502 | 503 | 504 | 529)
+}
+
+/// How long to wait before retrying a request answered with a retryable
+/// status: what the server asked for (`Retry-After`), or `backoff_delay`.
+/// `None` when the server asks for longer than `MAX_RETRY_DELAY`.
+fn status_retry_delay(headers: &HeaderMap, retries_done: u32) -> Option<Duration> {
+    let delay = retry_after(headers).unwrap_or_else(|| backoff_delay(retries_done));
+    (delay <= MAX_RETRY_DELAY).then_some(delay)
+}
+
+/// 0.5 s before the first retry, then 1 s, 2 s... each shortened by up to
+/// a quarter at random ("jitter"), so many clients hit by the same outage
+/// do not all come back at the same moment.
+pub fn backoff_delay(retries_done: u32) -> Duration {
+    let full_delay = Duration::from_millis(500 << retries_done.min(6));
+    // The clock's nanoseconds are random enough for this, without a dependency.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|time| time.subsec_nanos())
+        .unwrap_or_default();
+    let random_fraction = f64::from(nanos % 1000) / 1000.0; // from 0 to 1
+    full_delay.mul_f64(1.0 - 0.25 * random_fraction)
 }
 
 /// Waits 0.1 s before the first retry, then 0.2 s, 0.4 s...
@@ -131,7 +195,8 @@ impl Client {
     /// `api_key` and `base_url` default to the `OPENAI_API_KEY` and
     /// `OPENAI_BASE_URL` environment variables.
     /// `request_timeout_seconds` covers the whole streamed response, so keep it generous.
-    /// `max_retries`: how many times to resend a request that failed before any response arrived.
+    /// `max_retries`: how many times to resend a request that failed before anything
+    /// streamed: a connection failure, or a status like 429 or 503 (see `post_json`).
     /// `transport`: `"http"`, or `"websocket"` to send Responses API requests over
     /// WebSocket connections (Chat Completions requests always use HTTP).
     #[new]

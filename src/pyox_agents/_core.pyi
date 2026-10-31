@@ -364,7 +364,16 @@ class AgentError(Exception):
     usage: Usage | None
     """Tokens the run used before it failed; `None` if raised outside a run."""
 
-class ApiError(AgentError): ...
+class ApiError(AgentError):
+    status_code: int | None
+    """The HTTP status; `None` for an error that came inside a stream."""
+    body: Any
+    """The error body: parsed JSON (usually `{"error": {...}}`) when it is JSON, else the text."""
+    request_id: str | None
+    """OpenAI's id for the request (`x-request-id`), for support."""
+    retry_after_seconds: float | None
+    """How long the server asked to wait before trying again, if it said."""
+
 class AuthenticationError(ApiError): ...
 class RateLimitError(ApiError): ...
 class RequestTimeoutError(AgentError): ...

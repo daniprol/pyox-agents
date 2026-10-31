@@ -14,7 +14,6 @@ from pyox_agents import (
     AuthenticationError,
     Client,
     NetworkError,
-    RateLimitError,
     RequestTimeoutError,
     RunFinished,
     TextDelta,
@@ -232,11 +231,23 @@ async def test_a_lost_cached_response_is_replaced_by_the_whole_history(
 
 
 async def test_api_errors_raise_the_usual_exceptions(fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent) -> None:
-    fake_openai.queue(error_response(429, "Slow down", code="rate_limit_exceeded"))
+    fake_openai.queue(error_response(401, "Wrong key", code="invalid_api_key"))
 
-    with pytest.raises(RateLimitError, match="Slow down"):
+    with pytest.raises(AuthenticationError, match="Wrong key") as error:
         await make_websocket_agent().run("Hi")
+    assert error.value.status_code == 401
     assert len(fake_openai.requests) == 1
+
+
+async def test_busy_errors_are_retried_on_the_same_connection(
+    fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent
+) -> None:
+    fake_openai.queue(error_response(429, "Slow down", code="rate_limit_exceeded"), responses_answer("Hi"))
+
+    result = await make_websocket_agent().run("Hi")
+
+    assert result.text == "Hi"
+    assert [request.connection for request in fake_openai.requests] == [1, 1]
 
 
 async def test_slow_answers_time_out(fake_openai: FakeOpenAI) -> None:

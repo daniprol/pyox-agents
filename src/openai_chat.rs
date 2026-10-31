@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client::ClientSettings;
-use crate::errors::{ApiError, InvalidResponseError, error_for_http_failure, error_for_http_status};
+use crate::errors::{InvalidResponseError, api_error, error_for_http_failure, error_for_response};
 use crate::messages::{ContentPart, Message, ToolCall, UserContent, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest};
 use crate::sse::SseDecoder;
@@ -197,7 +197,7 @@ impl ChunkAccumulator {
             .map_err(|error| InvalidResponseError::new_err(format!("{error}: {chunk_json}")))?;
 
         if let Some(error) = chunk.error {
-            return Err(ApiError::new_err(error.to_string()));
+            return Err(api_error(None, &error.to_string(), None, None));
         }
         if let Some(usage) = chunk.usage {
             self.usage = Usage {
@@ -286,14 +286,13 @@ pub async fn stream_chat_completion(
     request: &ModelRequest<'_>,
     text_output: &mut TextOutput,
 ) -> PyResult<AssistantTurn> {
-    let response = client
+    let sent = client
         .post_json("/chat/completions", &build_request_body(request))
         .await
         .map_err(error_for_http_failure)?;
-    let status = response.status();
-    if !status.is_success() {
-        let response_body = response.text().await.unwrap_or_default();
-        return Err(error_for_http_status(status.as_u16(), &response_body));
+    let response = sent.response;
+    if !response.status().is_success() {
+        return Err(error_for_response(response).await);
     }
 
     let mut sse_decoder = SseDecoder::default();
@@ -323,7 +322,10 @@ pub async fn stream_chat_completion(
     if !received_done && !accumulator.finished {
         return Err(InvalidResponseError::new_err("The response stream ended unexpectedly"));
     }
-    Ok(accumulator.into_turn())
+    Ok(AssistantTurn {
+        retries: sent.retries,
+        ..accumulator.into_turn()
+    })
 }
 
 #[cfg(test)]
