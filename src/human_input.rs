@@ -13,20 +13,26 @@
 //! With neither, the call is *waiting*: the run ends and lists it in
 //! `RunFinished.pending`. Nothing is stored anywhere but in the history.
 //!
+//! Requests from a subagent's tools reach the person the same way, with ids
+//! like `call_0/call_1` (the subagent's call `call_1`, inside the main
+//! agent's call `call_0`). While they wait, the main agent's call `call_0`
+//! waits too, and keeps the subagent's conversation (see `subagents`).
+//!
 //! Python's side (`Answer`, `Approve`, `Deny`, `ApprovalRequired`) lives in
 //! `pyox_agents/human_input.py`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
+use pyox_tools::usage::Usage;
 use serde_json::{Map, Value};
-use tokio::sync::mpsc::Sender;
 
-use crate::events::AgentEvent;
+use crate::events::EventSender;
 use crate::json_convert::{json_to_python, python_to_json};
+pub use crate::messages::waiting_calls;
 use crate::messages::{Message, Reply, Request, RequestKind, ToolCall};
 use crate::python_call::call_python;
 
@@ -34,8 +40,8 @@ use crate::python_call::call_python;
 pub struct HumanInput {
     /// `execute(on_request=...)`: called with each new request; returns a reply or `None`.
     pub on_request: Option<Py<PyAny>>,
-    /// New requests are also sent to Python as `InputRequested` events.
-    pub event_sender: Sender<PyResult<AgentEvent>>,
+    /// Where the run sends its events: new requests are sent as `InputRequested`.
+    pub events: EventSender,
 }
 
 /// Everything one tool call asked so far, shared by the agent loop and the
@@ -56,6 +62,22 @@ pub struct CallLog {
     steps_used: HashSet<String>,
     /// Set when a question was answered with `Deny`: the call's result.
     pub denied: Option<String>,
+    /// The conversation of the subagent this call runs (see `subagents`).
+    pub subagent: Vec<Message>,
+    /// Replies for the subagent's waiting calls, by the subagent's own call ids.
+    pub subagent_answers: HashMap<String, Reply>,
+    /// Tokens the subagent used.
+    pub subagent_usage: Usage,
+    /// What the tool read from `ctx.state`, to apply its changes when it finishes.
+    pub state_view: Option<StateView>,
+}
+
+/// The run's state as a tool sees it through `ctx.state`.
+pub struct StateView {
+    /// The state when the tool first read it.
+    pub before: Value,
+    /// The Python object the tool reads and changes (usually a dict).
+    pub object: Py<PyAny>,
 }
 
 /// What looking up a request in the log found.
@@ -69,9 +91,14 @@ enum Lookup {
 impl CallLog {
     /// A log for `call`, continuing what an earlier run of the call stored (if any).
     pub fn new(call: ToolCall, earlier: Option<&Message>) -> SharedCallLog {
-        let (requests, steps) = match earlier {
-            Some(Message::Tool { requests, steps, .. }) => (requests.clone(), steps.clone()),
-            _ => (Vec::new(), Map::new()),
+        let (requests, steps, subagent) = match earlier {
+            Some(Message::Tool {
+                requests,
+                steps,
+                subagent,
+                ..
+            }) => (requests.clone(), steps.clone(), subagent.clone()),
+            _ => (Vec::new(), Map::new(), Vec::new()),
         };
         Arc::new(Mutex::new(CallLog {
             call,
@@ -80,6 +107,10 @@ impl CallLog {
             requests_made: 0,
             steps_used: HashSet::new(),
             denied: None,
+            subagent,
+            subagent_answers: HashMap::new(),
+            subagent_usage: Usage::default(),
+            state_view: None,
         }))
     }
 
@@ -152,10 +183,8 @@ pub async fn reply_to(
             Lookup::New(position) => (position, InputRequested::new(&log.call, &log.requests[position])),
         }
     };
-    let _ = human_input
-        .event_sender
-        .send(Ok(AgentEvent::InputRequested(event.clone())))
-        .await;
+    // `on_request` gets it as the app sees it (inside a subagent, with ids like `call_0/call_1`).
+    let event = human_input.events.send_request(event).await;
 
     let Some(on_request) = &human_input.on_request else {
         return Ok(None);
@@ -258,6 +287,9 @@ pub struct InputRequested {
     pub key: Option<String>,
     pub data: Value,
     pub metadata: Value,
+    /// The subagent whose tool asks; `None` for the main agent.
+    #[pyo3(get)]
+    pub subagent_id: Option<String>,
 }
 
 impl InputRequested {
@@ -270,7 +302,18 @@ impl InputRequested {
             key: request.key.clone(),
             data: request.data.clone(),
             metadata: request.metadata.clone(),
+            subagent_id: None,
         }
+    }
+
+    /// This request, made inside the subagent that the call `call_id` runs.
+    fn inside_subagent(mut self, call_id: &str) -> Self {
+        self.call_id = format!("{call_id}/{}", self.call_id);
+        self.subagent_id = Some(match self.subagent_id {
+            Some(inner_id) => format!("{call_id}/{inner_id}"),
+            None => call_id.to_string(),
+        });
+        self
     }
 }
 
@@ -311,44 +354,24 @@ impl InputRequested {
     }
 }
 
-/// The requests of the calls still waiting at the end of `messages`.
+/// The requests of the calls still waiting at the end of `messages`. A call
+/// waiting for its subagent lists the subagent's requests instead.
 pub fn pending_requests(messages: &[Message]) -> Vec<InputRequested> {
-    waiting_calls(messages)
-        .into_iter()
-        .filter_map(|(call, message)| {
-            let Message::Tool { requests, .. } = message else {
-                return None;
-            };
-            let request = requests.iter().find(|request| request.answer.is_none())?;
-            Some(InputRequested::new(&call, request))
-        })
-        .collect()
-}
-
-/// The tool calls of the last assistant message that are still waiting, each
-/// with its newest tool message. (A resumed call adds a new tool message for
-/// the same call: the history only grows.)
-pub fn waiting_calls(messages: &[Message]) -> Vec<(ToolCall, &Message)> {
-    let Some(assistant_position) = messages
-        .iter()
-        .rposition(|message| matches!(message, Message::Assistant { .. }))
-    else {
-        return Vec::new();
-    };
-    let Message::Assistant { tool_calls, .. } = &messages[assistant_position] else {
-        unreachable!("rposition found an assistant message");
-    };
-    let later_messages = &messages[assistant_position + 1..];
-    tool_calls
-        .iter()
-        .filter_map(|call| {
-            let newest = later_messages
-                .iter()
-                .rev()
-                .find(|message| matches!(message, Message::Tool { tool_call_id, .. } if *tool_call_id == call.id))?;
-            newest.is_waiting().then(|| (call.clone(), newest))
-        })
-        .collect()
+    let mut pending = Vec::new();
+    for (call, message) in waiting_calls(messages) {
+        let Message::Tool { requests, subagent, .. } = message else {
+            continue;
+        };
+        match requests.iter().find(|request| request.answer.is_none()) {
+            Some(request) => pending.push(InputRequested::new(&call, request)),
+            None => pending.extend(
+                pending_requests(subagent)
+                    .into_iter()
+                    .map(|request| request.inside_subagent(&call.id)),
+            ),
+        }
+    }
+    pending
 }
 
 /// Checks that `reply` fits the request: approvals take `Approve` or `Deny`,

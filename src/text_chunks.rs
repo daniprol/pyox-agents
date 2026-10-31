@@ -21,9 +21,8 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use tokio::sync::mpsc::Sender;
 
-use crate::events::{AgentEvent, TextDelta};
+use crate::events::{AgentEvent, EventSender, TextDelta};
 
 /// The grouping mode, chosen in Python with `text_chunks="delta"`,
 /// `"paragraph"`, `"message"` or a number N.
@@ -155,11 +154,11 @@ impl TextChunker {
 /// and sends each chunk to Python as a `TextDelta` event.
 pub struct TextOutput {
     chunker: TextChunker,
-    event_sender: Sender<PyResult<AgentEvent>>,
+    event_sender: EventSender,
 }
 
 impl TextOutput {
-    pub fn new(mode: TextChunking, event_sender: Sender<PyResult<AgentEvent>>) -> Self {
+    pub fn new(mode: TextChunking, event_sender: EventSender) -> Self {
         TextOutput {
             chunker: TextChunker::new(mode),
             event_sender,
@@ -181,11 +180,11 @@ impl TextOutput {
     }
 
     async fn send(&self, text: String) {
-        // If Python stopped listening, sending fails; the run is being cancelled anyway.
-        let _ = self
-            .event_sender
-            .send(Ok(AgentEvent::TextDelta(TextDelta { text })))
-            .await;
+        let delta = TextDelta {
+            text,
+            subagent_id: None, // set by the sender
+        };
+        self.event_sender.send(AgentEvent::TextDelta(delta)).await;
     }
 }
 

@@ -263,3 +263,131 @@ async def test_client_tools_are_frontend_tools(
     assert fake_openai.requests[1].body["messages"][-1]["content"] == "Vigo"
     assert "TOOL_CALL_RESULT" not in types(events_of(second))  # the client already has it
     protocol_client("ag-ui", second)
+
+
+# Shared state and subagents ---------------------------------------------------------------------
+
+
+@tool
+def add_todo(ctx: RunContext, text: str) -> str:
+    """Add a todo."""
+    ctx.state["todos"].append(text)
+    return "added"
+
+
+async def test_state_changes_stream_as_deltas_on_the_client_state(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, protocol_client: CheckStream
+) -> None:
+    fake_openai.queue(tool_calls_response(tool_call("add_todo", text="pack")), text_response("Added"))
+    body = run_input(user("Add pack"), state={"todos": ["buy"]})
+
+    sse = await read_text(ag_ui.stream(make_agent(tools=[add_todo]), body))
+
+    events = events_of(sse)
+    [delta] = [event for event in events if event["type"] == "STATE_DELTA"]
+    assert delta == {"type": "STATE_DELTA", "delta": [{"op": "add", "path": "/todos/1", "value": "pack"}]}
+    assert types(events).index("STATE_DELTA") < types(events).index("TOOL_CALL_RESULT")
+    protocol_client("ag-ui", sse)
+
+
+async def test_subagents_stream_inside_their_tool_call(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, protocol_client: CheckStream
+) -> None:
+    researcher = make_agent(tools=[add])
+    agent = make_agent(tools=[researcher.as_tool("research", "Research")])
+    fake_openai.queue(
+        tool_calls_response(tool_call("research", task="2 + 3?")),
+        tool_calls_response(tool_call("add", a=2, b=3), text_pieces=("Adding. ",)),
+        text_response("It is 5"),
+        text_response("The answer is 5"),
+    )
+
+    sse = await read_text(agent.execute("Ask the researcher").ag_ui("thread-1", "run-1"))
+
+    events = events_of(sse)
+    assert types(events) == [
+        "RUN_STARTED",
+        "TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END",
+        "SUBAGENT_STARTED",
+        "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END",
+        "TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT",
+        "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END",
+        "SUBAGENT_FINISHED",
+        "TOOL_CALL_RESULT",
+        "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END",
+        "RUN_FINISHED",
+    ]  # fmt: skip
+    assert events[4] == {
+        "type": "SUBAGENT_STARTED",
+        "subagentRunId": "call_0",
+        "name": "research",
+        "parentToolCallId": "call_0",
+    }
+    # Every event of the subagent says so, and its ids are its own.
+    assert all(event.get("subagentRunId") == "call_0" for event in events[5:16])
+    assert events[8]["toolCallId"] == "call_0/call_0"
+    assert events[16] == {
+        "type": "SUBAGENT_FINISHED",
+        "subagentRunId": "call_0",
+        "result": "It is 5",
+        "outcome": {"type": "success"},
+    }
+    assert "subagentRunId" not in events[17]  # the main agent's tool result
+    assert len(protocol_client("ag-ui", sse)) == len(events)
+
+
+async def test_subagent_approvals_are_interrupts_of_the_run(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, protocol_client: CheckStream
+) -> None:
+    conversations: dict[str, list[Any]] = {}
+
+    class MemoryHistory:
+        def load(self, conversation_id: str) -> list[Any]:
+            return conversations.get(conversation_id, [])
+
+        def save(self, conversation_id: str, new_messages_json: str) -> None:
+            conversations.setdefault(conversation_id, []).extend(json.loads(new_messages_json))
+
+    cleaner = make_agent(tools=[delete_file])
+    agent = make_agent(tools=[cleaner.as_tool("clean", "Clean up")], history_store=MemoryHistory())
+    fake_openai.queue(
+        tool_calls_response(tool_call("clean", task="Delete a.txt")),
+        tool_calls_response(tool_call("delete_file", path="a.txt")),
+    )
+
+    sse = await read_text(ag_ui.stream(agent, run_input(user("Clean up")), conversation_id="thread-1"))
+
+    events = events_of(sse)
+    suspended = next(event for event in events if event["type"] == "SUBAGENT_FINISHED")
+    assert suspended["outcome"] == {"type": "suspended", "interruptIds": ["call_0/call_0"]}
+    [interrupt] = events[-1]["outcome"]["interrupts"]
+    assert (interrupt["id"], interrupt["toolCallId"], interrupt["subagentRunId"]) == (
+        "call_0/call_0",
+        "call_0/call_0",
+        "call_0",
+    )
+    protocol_client("ag-ui", sse)
+
+    fake_openai.queue(text_response("Deleted it"), text_response("All clean"))
+    resume = [{"interruptId": "call_0/call_0", "status": "resolved", "payload": {"approved": True}}]
+    sse = await read_text(ag_ui.stream(agent, run_input(resume=resume), conversation_id="thread-1"))
+
+    assert fake_openai.requests[2].body["messages"][-1]["content"] == "deleted a.txt"
+    assert events_of(sse)[-1] == {"type": "RUN_FINISHED", "threadId": "thread-1", "runId": "run-1"}
+    protocol_client("ag-ui", sse)
+
+
+def test_parse_leaves_subagent_messages_out() -> None:
+    body = run_input(
+        user("Research"),
+        {
+            "id": "a1",
+            "role": "assistant",
+            "toolCalls": [{"id": "call_0", "type": "function", "function": {"name": "research", "arguments": "{}"}}],
+        },
+        {"id": "s1", "role": "assistant", "content": "Looking...", "subagentRunId": "call_0"},
+        {"id": "t1", "role": "tool", "toolCallId": "call_0", "content": "Found it"},
+        user("Thanks", "u2"),
+    )
+
+    assert [message["role"] for message in ag_ui.parse(body).history] == ["user", "assistant", "tool"]

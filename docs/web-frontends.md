@@ -71,6 +71,42 @@ for tools that ask more than once or use `ctx.step` (their earlier answers are n
 
 Results of frontend tools are not sent back to the frontend: it made them.
 
+## Shared state and subagents
+
+The run's [state](state.md) is the client's: `ag_ui.stream` and `ai_sdk.stream` run the agent with it, and each
+change a tool makes is sent at once. [Subagents](subagents.md) stream inside the tool call that runs them.
+
+=== "AI SDK"
+
+    | Run event          | In the stream                                                                  |
+    |--------------------|--------------------------------------------------------------------------------|
+    | `StateChanged`     | a `data-state` part (id `state`) with the whole state; it replaces the last one |
+    | a subagent's work  | a `data-subagent` part (id: the tool call's id), sent once per batch of events |
+
+    The `data-state` part stays in the message and comes back with the next request: `ai_sdk.parse` reads the
+    newest one as `ChatRequest.state`. The `data-subagent` part's data is
+    `{toolCallId, name, task, status, result, parts}`: `status` is `running`, `waiting`, `done` or `error`,
+    and `parts` are the subagent's own `text` and `dynamic-tool` parts, ready for your message renderer.
+
+    When a subagent's tool waits for the user, the subagent's tool call waits: its `data-pyox-request` has the
+    request's own id (`call_0/call_1`) in `requestId`, and an approval's `approvalId` is that id. Answer it with
+    `addToolApprovalResponse` or `addToolOutput` on the subagent's tool call, as usual.
+
+=== "AG-UI"
+
+    | Run event          | In the stream                                                     |
+    |--------------------|-------------------------------------------------------------------|
+    | `StateChanged`     | `STATE_DELTA`: a JSON Patch on the state the client sent          |
+    | `SubagentStarted`  | `SUBAGENT_STARTED` (`parentToolCallId`: the tool call running it) |
+    | a subagent's events | the usual events, with `subagentRunId`                           |
+    | `SubagentFinished` | `SUBAGENT_FINISHED` (outcome `suspended` while it waits), or `SUBAGENT_ERROR` |
+
+    A subagent's approvals and questions are interrupts of the run with `subagentRunId`, resumed like any other.
+    `ag_ui.parse` leaves the subagent's messages (the ones with `subagentRunId`) out of the history.
+
+A subagent that waits for the user needs the conversation on the server (`conversation_id=`): its own
+conversation is kept in the history, and the browser's copy does not have it.
+
 ## Errors
 
 A failed run (the API is down, too many turns) ends the stream with the toolkit's error: an `error` chunk for the
@@ -78,7 +114,6 @@ AI SDK, `RUN_ERROR` (with the error's class name as `code`) for AG-UI. Other exc
 
 ## Not supported (yet)
 
-- AG-UI shared state: `state` is passed to your code on `RunInput`, but the agent does not read or send state
-  updates. Subagents and reasoning events are not sent either.
+- AG-UI reasoning events.
 - AI SDK 5 and older: use AI SDK 6 or newer.
 - File parts must be `data:` or `https://` URLs, so a browser can't make your server read a local path.

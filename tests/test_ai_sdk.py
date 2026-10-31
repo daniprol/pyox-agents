@@ -402,3 +402,121 @@ async def test_the_server_can_keep_the_conversation(fake_openai: FakeOpenAI, mak
         "tool",
         "assistant",
     ]
+
+
+# Shared state and subagents ---------------------------------------------------------------------
+
+
+@tool
+def add_todo(ctx: RunContext, text: str) -> str:
+    """Add a todo."""
+    ctx.state["todos"].append(text)
+    return "added"
+
+
+async def test_the_state_travels_in_a_data_part(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, protocol_client: CheckStream
+) -> None:
+    agent = make_agent(tools=[add_todo])
+    fake_openai.queue(tool_calls_response(tool_call("add_todo", text="pack")), text_response("Added"))
+
+    sse = await read_text(agent.execute("Add pack", state={"todos": []}).ai_sdk())
+
+    [state_part] = [chunk for chunk in sse_data(sse) if chunk != "[DONE]" and chunk["type"] == "data-state"]
+    assert state_part == {"type": "data-state", "id": "state", "data": {"todos": ["pack"]}}
+    message = protocol_client("ai-sdk", sse)["message"]
+
+    # The part stays in the message and comes back: the next run starts from it.
+    fake_openai.queue(tool_calls_response(tool_call("add_todo", text="go")), text_response("Added"))
+    body = chat_body(user_ui_message("Add pack"), message, user_ui_message("Add go"))
+    assert ai_sdk.parse(body).state == {"todos": ["pack"]}
+    sse = await read_text(ai_sdk.stream(agent, body))
+    assert [chunk["data"] for chunk in sse_data(sse) if chunk != "[DONE]" and chunk["type"] == "data-state"] == [
+        {"todos": ["pack", "go"]}
+    ]
+
+
+async def test_subagent_work_is_shown_in_a_data_part(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, protocol_client: CheckStream
+) -> None:
+    researcher = make_agent(tools=[add])
+    agent = make_agent(tools=[researcher.as_tool("research", "Research")])
+    fake_openai.queue(
+        tool_calls_response(tool_call("research", task="2 + 3?")),
+        tool_calls_response(tool_call("add", a=2, b=3), text_pieces=("Adding. ",)),
+        text_response("It is 5"),
+        text_response("The answer is 5"),
+    )
+
+    sse = await read_text(agent.execute("Ask").ai_sdk())
+
+    result = protocol_client("ai-sdk", sse)
+    assert result["errors"] == []
+    parts = result["message"]["parts"]
+    tool_part = next(part for part in parts if part["type"] == "tool-research")
+    assert (tool_part["state"], tool_part["output"]) == ("output-available", "It is 5")
+    [subagent_part] = [part for part in parts if part["type"] == "data-subagent"]  # newer ones replace older ones
+    assert subagent_part["id"] == "call_0"
+    assert subagent_part["data"] == {
+        "toolCallId": "call_0",
+        "name": "research",
+        "task": "2 + 3?",
+        "status": "done",
+        "result": "It is 5",
+        "parts": [
+            {"type": "text", "text": "Adding. "},
+            {
+                "type": "dynamic-tool",
+                "toolCallId": "call_0/call_0",
+                "toolName": "add",
+                "state": "output-available",
+                "input": {"a": 2, "b": 3},
+                "output": "5",
+            },
+            {"type": "text", "text": "It is 5"},
+        ],
+    }
+
+
+async def test_subagent_approvals_wait_on_the_subagent_tool_call(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, protocol_client: CheckStream
+) -> None:
+    conversations: dict[str, list[Any]] = {}
+
+    class MemoryHistory:
+        def load(self, conversation_id: str) -> list[Any]:
+            return conversations.get(conversation_id, [])
+
+        def save(self, conversation_id: str, new_messages_json: str) -> None:
+            import json
+
+            conversations.setdefault(conversation_id, []).extend(json.loads(new_messages_json))
+
+    cleaner = make_agent(tools=[delete_file])
+    agent = make_agent(tools=[cleaner.as_tool("clean", "Clean up")], history_store=MemoryHistory())
+    fake_openai.queue(
+        tool_calls_response(tool_call("clean", task="Delete a.txt")),
+        tool_calls_response(tool_call("delete_file", path="a.txt")),
+    )
+
+    first = await read_text(ai_sdk.stream(agent, chat_body(user_ui_message("Clean up")), conversation_id="chat-1"))
+
+    assert {"type": "tool-approval-request", "approvalId": "call_0/call_0", "toolCallId": "call_0"} in sse_data(first)
+    message = protocol_client("ai-sdk", first)["message"]
+    tool_part = next(part for part in message["parts"] if part["type"] == "tool-clean")
+    assert tool_part["state"] == "approval-requested"
+
+    # What `addToolApprovalResponse({id: "call_0/call_0", approved: true})` does.
+    tool_part["state"] = "approval-responded"
+    tool_part["approval"] = {"id": "call_0/call_0", "approved": True}
+    body = chat_body(user_ui_message("Clean up"), message)
+    assert ai_sdk.parse(body).answers == {"call_0/call_0": Approve()}
+
+    fake_openai.queue(text_response("Deleted it"), text_response("All clean"))
+    second = await read_text(ai_sdk.stream(agent, body, conversation_id="chat-1"))
+
+    assert fake_openai.requests[2].body["messages"][-1]["content"] == "deleted a.txt"
+    result = protocol_client("ai-sdk", second, message)
+    assert result["errors"] == []
+    tool_part = next(part for part in result["message"]["parts"] if part["type"] == "tool-clean")
+    assert (tool_part["state"], tool_part["output"]) == ("output-available", "Deleted it")

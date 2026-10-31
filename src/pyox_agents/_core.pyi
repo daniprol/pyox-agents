@@ -107,11 +107,19 @@ class RunContext(Generic[DepsT]):
         """Wait for a person's reply (an `Answer`). See `pyox_agents.human_input`."""
     def step(self, name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Awaitable[Any]:
         """Run `function` once and save its (JSON) result, reused when the call runs again."""
+    @property
+    def state(self) -> Any:
+        """The run's state (`execute(state=...)`). Change it in place or assign it, inside a tool."""
+    @state.setter
+    def state(self, new_state: Any) -> None: ...
 
 @final
 class TextDelta:
     @property
     def text(self) -> str: ...
+    @property
+    def subagent_id(self) -> str | None:
+        """The subagent writing it (the id of the tool call running it); `None` for the main agent."""
 
 @final
 class ToolStarted:
@@ -121,6 +129,8 @@ class ToolStarted:
     def name(self) -> str: ...
     @property
     def arguments(self) -> Any: ...
+    @property
+    def subagent_id(self) -> str | None: ...
 
 @final
 class ToolFinished:
@@ -135,6 +145,53 @@ class ToolFinished:
     @property
     def metadata(self) -> Any:
         """From `ToolReturn(metadata=...)`; never sent to the model."""
+    @property
+    def subagent_id(self) -> str | None: ...
+
+@final
+class StateChanged:
+    """A tool changed the run's state."""
+
+    @property
+    def state(self) -> Any:
+        """The whole state, as it is now."""
+    @property
+    def delta(self) -> list[dict[str, Any]]:
+        """What changed, as a JSON Patch (RFC 6902)."""
+    @property
+    def subagent_id(self) -> str | None: ...
+
+@final
+class SubagentStarted:
+    """A tool call started a subagent. Its events follow, with `subagent_id` set to `call_id`."""
+
+    @property
+    def call_id(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def task(self) -> str: ...
+    @property
+    def subagent_id(self) -> str | None: ...
+
+@final
+class SubagentFinished:
+    """A subagent finished, failed (`is_error`), or waits for a person (`waiting`)."""
+
+    @property
+    def call_id(self) -> str: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def result(self) -> str: ...
+    @property
+    def is_error(self) -> bool: ...
+    @property
+    def waiting(self) -> bool: ...
+    @property
+    def usage(self) -> Usage: ...
+    @property
+    def subagent_id(self) -> str | None: ...
 
 @final
 class InputRequested:
@@ -155,6 +212,9 @@ class InputRequested:
     @property
     def metadata(self) -> Any:
         """For the app only; never sent to the model."""
+    @property
+    def subagent_id(self) -> str | None:
+        """The subagent whose tool asks; `None` for the main agent."""
 
 @final
 class RunFinished:
@@ -173,13 +233,27 @@ class RunFinished:
     def messages(self) -> list[Message]: ...
     @property
     def new_messages(self) -> list[Message]: ...
+    @property
+    def state(self) -> Any:
+        """The state at the end of the run: give it back with `execute(state=...)`."""
     def messages_json(self) -> str: ...
     def new_messages_json(self) -> str: ...
+
+_Event = (
+    TextDelta
+    | ToolStarted
+    | ToolFinished
+    | InputRequested
+    | StateChanged
+    | SubagentStarted
+    | SubagentFinished
+    | RunFinished
+)
 
 @final
 class Run:
     def __aiter__(self) -> Run: ...
-    async def __anext__(self) -> TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished: ...
+    async def __anext__(self) -> _Event: ...
     def batches(self) -> EventBatches:
         """Iterate over lists of events: each holds every event already waiting (at least one)."""
     def ai_sdk(self) -> ProtocolStream:
@@ -259,7 +333,7 @@ def send_decision(
 @final
 class EventBatches:
     def __aiter__(self) -> EventBatches: ...
-    async def __anext__(self) -> list[TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished]: ...
+    async def __anext__(self) -> list[_Event]: ...
 
 @final
 class ProtocolStream:
@@ -297,6 +371,7 @@ class Engine:
         answers: Mapping[str, Any] | None = None,
         on_request: Callable[[InputRequested], Any] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
+        state: Any = None,
     ) -> Run: ...
 
 class AgentError(Exception):

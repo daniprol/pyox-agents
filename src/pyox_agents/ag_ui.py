@@ -24,11 +24,19 @@ resumes with `resume: [{"interruptId": ..., "status": "resolved", "payload": ...
 for an approval, any value for a question. The client's tools (`tools` in the
 request) become frontend tools: the client runs them and sends back tool messages.
 
-`state`, `context` and `forwarded_props` are kept on `RunInput` for your code
-(e.g. pass them as `deps`); the agent does not read or change state on its own.
+Shared state: `stream` runs the agent with the client's `state`. Tools read and
+change it as `ctx.state`, and each change is sent as a `STATE_DELTA`.
+`context` and `forwarded_props` are kept on `RunInput` for your code (e.g.
+pass them as `deps`).
+
+Subagents (`agent.as_tool(...)`) stream between `SUBAGENT_STARTED` and
+`SUBAGENT_FINISHED`, their events marked with `subagentRunId`. The client
+keeps their messages apart (with `subagentRunId`); `parse` leaves them out of
+the history, since the subagent's conversation is not the agent's.
+
 With the history in the client (the default), a tool that asks more than once,
-or uses `ctx.step`, loses its earlier answers: keep the conversation on the
-server (`conversation_id=`) for those.
+uses `ctx.step`, or runs a subagent that waits for the user, loses its earlier
+answers: keep the conversation on the server (`conversation_id=`) for those.
 """
 
 import json
@@ -69,10 +77,12 @@ def stream(agent: Agent, body: bytes | str | Mapping[str, Any], **execute_option
     """Runs the agent for an AG-UI request and returns its AG-UI event stream.
 
     `execute_options` go to `agent.execute` (`deps=...`). With `conversation_id=`, the
-    history comes from the agent's history store instead of the request.
+    history comes from the agent's history store instead of the request. The run's
+    state is the client's, unless `state=` is given.
     """
     run_input = parse(body)
     history = None if "conversation_id" in execute_options else run_input.history or None
+    execute_options.setdefault("state", run_input.state)
     run = agent.execute(
         run_input.prompt,
         history=history,
@@ -86,7 +96,8 @@ def stream(agent: Agent, body: bytes | str | Mapping[str, Any], **execute_option
 def parse(body: bytes | str | Mapping[str, Any]) -> RunInput:
     """Reads an AG-UI `RunAgentInput`: `{threadId, runId, messages, tools?, resume?, state?, ...}`."""
     request = dict(body) if isinstance(body, Mapping) else json.loads(body)
-    agui_messages = list(request.get("messages") or [])
+    # A subagent's messages belong to its own conversation, which the server keeps.
+    agui_messages = [message for message in request.get("messages") or [] if not message.get("subagentRunId")]
     frontend_tools = list(request.get("tools") or [])
     frontend_tool_names = {tool["name"] for tool in frontend_tools}
 

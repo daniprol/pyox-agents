@@ -10,6 +10,8 @@
 //! | `ToolStarted`                 | `tool-input-available`                                     |
 //! | `ToolFinished`                | `tool-output-available`, or `tool-output-error`            |
 //! | `InputRequested`              | `data-pyox-request` (and `tool-approval-request` for approvals) |
+//! | `StateChanged`                | `data-state`: the whole state (it replaces the last one)   |
+//! | a subagent's events           | `data-subagent` (see below)                                |
 //! | `RunFinished`                 | `finish`, then `[DONE]`                                    |
 //! | a pyox-agents error           | `error`, then `[DONE]`                                     |
 //!
@@ -23,8 +25,19 @@
 //! When the call resumes, the part is replaced by one with `waiting: false`.
 //! Approvals need AI SDK 6 or newer. There is no spec: this follows the
 //! chunk schema of the `ai` package (versions 6 and 7).
+//!
+//! A subagent's work is shown in a `data-subagent` part whose id is the id of
+//! the tool call running it: `{toolCallId, name, task, status, result, parts}`,
+//! where `status` is `running`, `waiting`, `done` or `error`, and `parts` are
+//! UI message parts (`text`, `dynamic-tool`). A newer one replaces the older
+//! one; it is sent once per batch of events, not for every piece of text.
+//! When a subagent's tool waits for the person, the subagent's tool call waits:
+//! its `data-pyox-request` has the request's own id in `requestId`, and an
+//! approval's `approvalId` is that id too.
 
-use serde_json::json;
+use std::collections::HashMap;
+
+use serde_json::{Value, json};
 
 use crate::events::AgentEvent;
 use crate::messages::RequestKind;
@@ -41,6 +54,10 @@ pub struct AiSdkEncoder {
     /// The model wrote something in this stream. Tool results before that are
     /// calls the run resumed with the user's answers.
     model_output_seen: bool,
+    /// The `data-subagent` part of each subagent, by its id.
+    subagents: HashMap<String, Value>,
+    /// The subagents whose part changed since it was last sent.
+    changed_subagents: Vec<String>,
 }
 
 impl AiSdkEncoder {
@@ -50,6 +67,9 @@ impl AiSdkEncoder {
     }
 
     pub fn add_event(&mut self, event: &AgentEvent, out: &mut String) {
+        if let Some(subagent_id) = event.subagent_id() {
+            return self.add_subagent_event(subagent_id, event, out);
+        }
         match event {
             AgentEvent::TextDelta(delta) => {
                 if delta.text.is_empty() {
@@ -127,7 +147,36 @@ impl AiSdkEncoder {
                     );
                 }
             }
+            AgentEvent::StateChanged(changed) => {
+                write_sse(
+                    out,
+                    &json!({"type": "data-state", "id": "state", "data": changed.state}),
+                );
+            }
+            AgentEvent::SubagentStarted(started) => {
+                let part = json!({
+                    "toolCallId": started.call_id,
+                    "name": started.name,
+                    "task": started.task,
+                    "status": "running",
+                    "parts": [],
+                });
+                self.subagents.insert(started.call_id.clone(), part);
+                self.subagent_changed(&started.call_id);
+            }
+            AgentEvent::SubagentFinished(finished) => {
+                if let Some(part) = self.subagents.get_mut(&finished.call_id) {
+                    part["status"] = json!(match (finished.is_error, finished.waiting) {
+                        (true, _) => "error",
+                        (false, true) => "waiting",
+                        (false, false) => "done",
+                    });
+                    part["result"] = json!(finished.result);
+                    self.subagent_changed(&finished.call_id);
+                }
+            }
             AgentEvent::RunFinished(finished) => {
+                self.end_batch(out);
                 self.end_text(out);
                 self.end_step(out);
                 let finish_reason = if finished.pending.is_empty() {
@@ -142,9 +191,93 @@ impl AiSdkEncoder {
     }
 
     pub fn add_error(&mut self, message: &str, out: &mut String) {
+        self.end_batch(out);
         self.end_text(out);
         write_sse(out, &json!({"type": "error", "errorText": message}));
         out.push_str("data: [DONE]\n\n");
+    }
+
+    /// Sends the `data-subagent` parts that changed in this batch of events.
+    pub fn end_batch(&mut self, out: &mut String) {
+        for subagent_id in std::mem::take(&mut self.changed_subagents) {
+            let part = &self.subagents[&subagent_id];
+            write_sse(out, &json!({"type": "data-subagent", "id": subagent_id, "data": part}));
+        }
+    }
+
+    fn subagent_changed(&mut self, subagent_id: &str) {
+        if !self.changed_subagents.iter().any(|id| id == subagent_id) {
+            self.changed_subagents.push(subagent_id.to_string());
+        }
+    }
+
+    /// A subagent's event goes into its `data-subagent` part. Only its
+    /// requests are sent at once, on the tool call running the subagent.
+    fn add_subagent_event(&mut self, subagent_id: &str, event: &AgentEvent, out: &mut String) {
+        if let AgentEvent::InputRequested(request) = event {
+            let request_data = json!({
+                "toolCallId": subagent_id,
+                "requestId": request.call_id,
+                "toolName": request.tool_name,
+                "waiting": true,
+                "kind": request.kind.name(),
+                "key": request.key,
+                "data": request.data,
+                "metadata": request.metadata,
+            });
+            write_sse(out, &waiting_part(subagent_id, request_data));
+            if request.kind == RequestKind::Approval {
+                write_sse(
+                    out,
+                    &json!({"type": "tool-approval-request", "approvalId": request.call_id, "toolCallId": subagent_id}),
+                );
+            }
+            return;
+        }
+        let Some(Value::Array(parts)) = self.subagents.get_mut(subagent_id).map(|part| &mut part["parts"]) else {
+            return; // its `SubagentStarted` came first, so this does not happen
+        };
+        match event {
+            AgentEvent::TextDelta(delta) => match parts.last_mut() {
+                Some(last) if last["type"] == "text" => {
+                    let text = format!("{}{}", last["text"].as_str().unwrap_or_default(), delta.text);
+                    last["text"] = json!(text);
+                }
+                _ => parts.push(json!({"type": "text", "text": delta.text})),
+            },
+            AgentEvent::ToolStarted(call) => parts.push(json!({
+                "type": "dynamic-tool",
+                "toolCallId": call.call_id,
+                "toolName": call.name,
+                "state": "input-available",
+                "input": call.arguments,
+            })),
+            AgentEvent::ToolFinished(result) => {
+                let Some(part) = parts
+                    .iter_mut()
+                    .find(|part| part["toolCallId"] == json!(result.call_id))
+                else {
+                    return;
+                };
+                if result.is_error {
+                    part["state"] = json!("output-error");
+                    part["errorText"] = json!(result.result);
+                } else {
+                    part["state"] = json!("output-available");
+                    part["output"] = json!(result.result);
+                }
+            }
+            // The state is the run's, whoever changed it.
+            AgentEvent::StateChanged(changed) => {
+                write_sse(
+                    out,
+                    &json!({"type": "data-state", "id": "state", "data": changed.state}),
+                );
+                return;
+            }
+            _ => return,
+        }
+        self.subagent_changed(subagent_id);
     }
 
     /// Opens a step for model output, closing the previous one if tools ran since.

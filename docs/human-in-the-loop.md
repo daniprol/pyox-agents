@@ -72,6 +72,7 @@ or `"frontend"`, `key`, `data` and `metadata`). Reply with:
 async def ask_the_user(request: InputRequested) -> Reply | None:
     return await websocket.ask(request)  # return None to stop the run instead
 
+
 result = await agent.run("Fly me to Paris", on_request=ask_the_user)
 ```
 
@@ -123,6 +124,11 @@ A waiting call is a tool message with an empty `content` and a `requests` list (
 `metadata` and `answer`, which is `None` while waiting). The model never sees waiting messages. When the call
 resumes, a new tool message is added after it, so history only grows and history stores just append.
 `after_run` hooks see stopped runs too, with `result.pending` set.
+
+## Subagents
+
+A [subagent](subagents.md)'s approvals and questions work the same way, with ids like `call_0/call_1` (the
+subagent's call `call_1`, inside the main agent's call `call_0`): answer them with those ids.
 
 ## Example
 

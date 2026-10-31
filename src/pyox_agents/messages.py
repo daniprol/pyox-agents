@@ -82,6 +82,7 @@ class ToolMessage(TypedDict):
     metadata: NotRequired[Any]  # from `ToolReturn(metadata=...)`
     requests: NotRequired[list[Request]]  # a call whose last request has no answer is waiting
     steps: NotRequired[dict[str, Any]]  # saved `ctx.step(...)` results
+    subagent: NotRequired[list["Message"]]  # the conversation of the subagent this call ran
 
 
 Message = UserMessage | AssistantMessage | ToolMessage
