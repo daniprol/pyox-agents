@@ -14,7 +14,7 @@ client = Client(
     headers={"X-Application": "support"},
     connect_timeout_seconds=10,
     request_timeout_seconds=600,  # covers the whole streamed answer
-    max_retries=2,  # resend requests that failed before any response
+    max_retries=2,  # resend requests that failed (connection errors, 429, 5xx) before anything streamed
     transport="http",  # or "websocket" (Responses API only, see below)
 )
 agent = Agent(client=client, model="gpt-5-mini")
@@ -22,8 +22,19 @@ agent = Agent(client=client, model="gpt-5-mini")
 
 Share one `Client` between agents to reuse its connections.
 
-A request that fails before any response arrives (for example on a pooled connection the server had already
-closed) is sent again, up to `max_retries` times. Once the answer starts streaming it is never retried.
+### Retries
+
+A request is sent again, up to `max_retries` times, when it failed before anything of the answer was read:
+
+- The connection failed before any response arrived (for example a pooled connection the server had already
+  closed). It is sent again after 0.1 s, 0.2 s...
+- The server answered 408, 409, 429, 500, 502, 503, 504 or 529 ("busy, try again"). It is sent again after the
+  wait the server asks for (`retry-after-ms` or `Retry-After`), or else after about 0.5 s, 1 s, 2 s... If the
+  server asks for more than 60 seconds (a quota that resets in an hour, say), the error is raised at once, so a
+  run never hangs.
+
+Once the answer starts streaming it is never retried: its text may already be on the user's screen. Other errors
+(400, 401, 404...) are never retried.
 
 ### WebSocket mode
 
@@ -46,7 +57,8 @@ agent = Agent(client=client, model="gpt-5-mini", api="responses", tools=[...])
   which also tells the server to stop generating.
 - Idle connections are closed after 60 seconds, and any connection is replaced before the servers' 60-minute limit.
 - As over HTTP, a request that failed before any event arrived is sent again on a new connection, up to
-  `max_retries` times. If the server lost the cached response, the whole history is sent instead.
+  `max_retries` times, and an `error` event with a busy status (429, 5xx) before any output is sent again on the
+  same connection. If the server lost the cached response, the whole history is sent instead.
 - If the server does not speak WebSocket (it answers 404, 405 or 426), the client switches to HTTP for good.
 
 The connection is opened with the same settings as HTTP requests: `headers`, the API key, proxies and timeouts.
@@ -96,15 +108,26 @@ All exceptions inherit from `AgentError`, so one `except` catches them all:
 | `HookError`              | a Rust hook failed, or a hook returned something invalid          |
 
 ```python
-from pyox_agents import AgentError, RateLimitError
+from pyox_agents import AgentError, ApiError
 
 try:
     result = await agent.run("Hi")
-except RateLimitError:
-    ...  # wait and try again
+except ApiError as error:
+    print(error.status_code, error.body, error.request_id)
 except AgentError as error:
     print(f"The run failed: {error}")
 ```
+
+An `ApiError` has the details as attributes, so there is no message to parse:
+
+| Attribute             | What it holds                                                             |
+|-----------------------|---------------------------------------------------------------------------|
+| `status_code`         | the HTTP status (`None` for an error that came inside a stream)           |
+| `body`                | the error body, as parsed JSON when it is JSON (`{"error": {...}}`)       |
+| `request_id`          | OpenAI's id for the request (`x-request-id`), for support                 |
+| `retry_after_seconds` | how long the server asked to wait, if it said                             |
+
+A `RateLimitError` or a 5xx `ApiError` comes after the retries (see [Retries](#retries)).
 
 Errors inside tools don't raise: the model gets the error message and the run continues
 (see [Tools](tools.md#python-tools)).

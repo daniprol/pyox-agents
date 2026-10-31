@@ -46,7 +46,10 @@ async def test_events_that_piled_up_come_in_one_batch(fake_openai: FakeOpenAI, m
 
 
 async def test_a_failing_run_raises_after_its_events(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
-    fake_openai.queue(tool_calls_response(tool_call("add", a=1, b=2)), error_response(500, "Down"))
+    fake_openai.queue(
+        tool_calls_response(tool_call("add", a=1, b=2)),
+        *[error_response(500, "Down", headers={"retry-after-ms": "1"})] * 3,
+    )
     batches = make_agent(tools=[add]).execute("1 + 2?").batches()
 
     events: list[AgentEvent] = []

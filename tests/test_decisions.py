@@ -193,7 +193,7 @@ async def test_a_history_becomes_input_items_without_reasoning(fake_openai: Fake
 
 
 async def test_api_errors_raise_the_usual_exceptions(fake_openai: FakeOpenAI, client: Client) -> None:
-    fake_openai.queue(ErrorResponse(429, '{"error": {"message": "Slow down"}}'))
+    fake_openai.queue(*[ErrorResponse(429, '{"error": {"message": "Slow down"}}', {"retry-after-ms": "1"})] * 3)
 
     with pytest.raises(RateLimitError, match="Slow down"):
         await decide("Hi", {"ok": Predicate("Is it ok?")}, client=client)

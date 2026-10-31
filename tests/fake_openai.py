@@ -49,6 +49,7 @@ class ErrorResponse:
 
     status: int
     body: str
+    headers: dict[str, str] = field(default_factory=dict)  # e.g. {"retry-after-ms": "10"}; HTTP only
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,8 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
 
             if isinstance(response, ErrorResponse):
                 self.send_response(response.status)
+                for name, value in response.headers.items():
+                    self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(response.body.encode())
                 return

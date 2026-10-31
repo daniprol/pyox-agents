@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::client::Client;
-use crate::errors::{InvalidResponseError, error_for_http_failure, error_for_http_status};
+use crate::errors::{InvalidResponseError, error_for_http_failure, error_for_response, header_text};
 use crate::history_store::messages_from_python;
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::prompt_from_python;
@@ -70,17 +70,13 @@ pub fn send_decision<'py>(
         let response = client
             .post_json("/decisions", &request_body)
             .await
-            .map_err(error_for_http_failure)?;
-        let status = response.status();
-        let request_id = response
-            .headers()
-            .get("x-request-id")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        let response_body = response.text().await.map_err(error_for_http_failure)?;
-        if !status.is_success() {
-            return Err(error_for_http_status(status.as_u16(), &response_body));
+            .map_err(error_for_http_failure)?
+            .response;
+        if !response.status().is_success() {
+            return Err(error_for_response(response).await);
         }
+        let request_id = header_text(response.headers(), "x-request-id");
+        let response_body = response.text().await.map_err(error_for_http_failure)?;
         read_decision(&response_body, request_id)
     })
 }

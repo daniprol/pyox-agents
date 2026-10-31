@@ -30,9 +30,10 @@ use pyox_tools::usage::Usage;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::client::{ClientSettings, Transport, wait_before_retry};
+use crate::client::{ClientSettings, Transport, backoff_delay, is_retryable_status, wait_before_retry};
 use crate::errors::{
-    ApiError, InvalidResponseError, NetworkError, RequestTimeoutError, error_for_http_failure, error_for_http_status,
+    InvalidResponseError, NetworkError, RequestTimeoutError, api_error, error_for_http_failure, error_for_http_status,
+    error_for_response,
 };
 use crate::messages::{ContentPart, Message, Reasoning, ToolCall, UserContent, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions};
@@ -339,7 +340,7 @@ impl EventReader {
                 self.turn = Some(turn_from_response(response));
                 Ok(None)
             }
-            "response.failed" | "error" => Err(ApiError::new_err(event_json.to_string())),
+            "response.failed" | "error" => Err(api_error(None, event_json, None, None)),
             _ => Ok(None), // events we do not need
         }
     }
@@ -458,25 +459,30 @@ async fn stream_over_http(
     let mut previous_response_id = response_to_continue(request, options, None);
     loop {
         let request_body = build_request_body(request, options, previous_response_id);
-        let response = client
+        let sent = client
             .post_json("/responses", &request_body)
             .await
             .map_err(error_for_http_failure)?;
-        let status = response.status();
-        if status.is_success() {
-            return read_events(response, text_output).await;
+        if sent.response.status().is_success() {
+            let turn = read_events(sent.response, text_output).await?;
+            return Ok(AssistantTurn {
+                retries: sent.retries,
+                ..turn
+            });
         }
 
-        let response_body = response.text().await.unwrap_or_default();
+        let error = error_for_response(sent.response).await;
         // The stored response we continue from is gone (deleted, or older than
         // OpenAI keeps them). If it is in our messages, we have the whole
         // conversation: send all of it instead. This happens at most once,
         // since the second request has no `previous_response_id`.
-        if have_whole_history(request, previous_response_id) && response_body.contains("previous_response_not_found") {
+        if have_whole_history(request, previous_response_id)
+            && error.to_string().contains("previous_response_not_found")
+        {
             previous_response_id = None;
             continue;
         }
-        return Err(error_for_http_status(status.as_u16(), &response_body));
+        return Err(error);
     }
 }
 
@@ -515,6 +521,9 @@ enum WebSocketFailure {
     /// connection: the connection failed, or the server closed it at its
     /// 60-minute limit (`websocket_connection_limit_reached`).
     BeforeAnyEvent(PyErr),
+    /// The server answered "busy, try again" (429, 5xx) before any output:
+    /// worth sending again on the same connection, after a wait.
+    RetryableStatus(PyErr),
     /// The server no longer has the response we continued from.
     PreviousResponseNotFound(PyErr),
     /// Anything else: raised as is.
@@ -528,8 +537,10 @@ enum WebSocketFailure {
 ///   latest response of each connection in a cache).
 /// - Like `post_json` over HTTP, a request that failed before any event arrived
 ///   (typically a pooled connection the server had closed) is sent again on a
-///   new connection, with all the messages, up to `max_retries` times. Once
-///   events arrive, it is never sent again: text may have reached the user.
+///   new connection, with all the messages, up to `max_retries` times. An
+///   `error` event with a status like 429 or 503 is sent again too, after
+///   `backoff_delay`. Once output arrives, it is never sent again: text may
+///   have reached the user.
 /// - If the server does not speak WebSocket, this client switches to HTTP for good.
 async fn stream_over_websocket(
     client: &ClientSettings,
@@ -575,7 +586,17 @@ async fn stream_over_websocket(
         match result {
             Ok(turn) => {
                 socket.cached_response_id = turn.response_id.clone();
-                return Ok(turn);
+                return Ok(AssistantTurn {
+                    retries: retries_done,
+                    ..turn
+                });
+            }
+            Err(WebSocketFailure::RetryableStatus(error)) => {
+                if retries_done == client.max_retries {
+                    return Err(error);
+                }
+                tokio::time::sleep(backoff_delay(retries_done)).await;
+                retries_done += 1;
             }
             Err(WebSocketFailure::BeforeAnyEvent(error)) => {
                 run_socket.close();
@@ -678,6 +699,7 @@ fn error_instead_of_response(event_json: &str) -> Option<WebSocketFailure> {
     Some(match code.as_str() {
         "websocket_connection_limit_reached" => WebSocketFailure::BeforeAnyEvent(error),
         "previous_response_not_found" => WebSocketFailure::PreviousResponseNotFound(error),
+        _ if event.status.is_some_and(is_retryable_status) => WebSocketFailure::RetryableStatus(error),
         _ => WebSocketFailure::Failed(error),
     })
 }
@@ -852,6 +874,7 @@ mod tests {
                     reasoning_tokens: 3,
                     requests: 1,
                 },
+                retries: 0,
             }
         );
     }
@@ -891,6 +914,8 @@ mod tests {
 
     #[test]
     fn error_events_say_whether_to_reconnect_or_resend_everything() {
+        // The errors get their details as Python attributes, so Python must be running.
+        Python::initialize();
         let event = |code: &str| format!(r#"{{"type":"error","status":400,"error":{{"code":"{code}"}}}}"#);
         assert!(matches!(
             error_instead_of_response(&event("websocket_connection_limit_reached")),
@@ -903,6 +928,10 @@ mod tests {
         assert!(matches!(
             error_instead_of_response(&event("invalid_request")),
             Some(WebSocketFailure::Failed(_))
+        ));
+        assert!(matches!(
+            error_instead_of_response(r#"{"type":"error","status":429,"error":{"code":"rate_limit_exceeded"}}"#),
+            Some(WebSocketFailure::RetryableStatus(_))
         ));
         assert!(error_instead_of_response(r#"{"type":"response.created","response":{}}"#).is_none());
     }
