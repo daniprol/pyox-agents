@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 
 use crate::events::AgentEvent;
 use crate::messages::RequestKind;
+use crate::model_api::StopReason;
 use crate::run::{new_id, write_sse};
 
 pub struct AgUiEncoder {
@@ -181,7 +182,7 @@ impl AgUiEncoder {
                 self.messages.remove(&id);
                 let event = if finished.is_error {
                     json!({"type": "SUBAGENT_ERROR", "subagentRunId": finished.call_id, "message": finished.result})
-                } else if finished.waiting {
+                } else if finished.stop_reason == Some(StopReason::Waiting) {
                     let interrupt_ids: Vec<&Value> = self
                         .interrupts
                         .iter()

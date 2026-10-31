@@ -41,6 +41,7 @@ use serde_json::{Value, json};
 
 use crate::events::AgentEvent;
 use crate::messages::RequestKind;
+use crate::model_api::StopReason;
 use crate::run::{new_id, write_sse};
 
 #[derive(Default)]
@@ -166,11 +167,13 @@ impl AiSdkEncoder {
             }
             AgentEvent::SubagentFinished(finished) => {
                 if let Some(part) = self.subagents.get_mut(&finished.call_id) {
-                    part["status"] = json!(match (finished.is_error, finished.waiting) {
-                        (true, _) => "error",
-                        (false, true) => "waiting",
-                        (false, false) => "done",
-                    });
+                    part["status"] = json!(
+                        match (finished.is_error, finished.stop_reason == Some(StopReason::Waiting)) {
+                            (true, _) => "error",
+                            (false, true) => "waiting",
+                            (false, false) => "done",
+                        }
+                    );
                     part["result"] = json!(finished.result);
                     self.subagent_changed(&finished.call_id);
                 }

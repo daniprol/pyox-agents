@@ -80,6 +80,34 @@ pub struct ModelRequest<'a> {
     pub previous_response_id: Option<&'a str>,
 }
 
+/// Why a run (or one model turn) ended. Python sees the names as `RunFinished.stop_reason`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum StopReason {
+    /// The model finished its answer.
+    #[default]
+    End,
+    /// Tool calls wait for a person: see `RunFinished.pending`.
+    Waiting,
+    /// The answer was cut by the output token limit (or the context window).
+    Length,
+    /// The model refused, or a content filter stopped the answer.
+    Refusal,
+    /// `run.stop()` was called.
+    Stopped,
+}
+
+impl StopReason {
+    pub fn name(self) -> &'static str {
+        match self {
+            StopReason::End => "end",
+            StopReason::Waiting => "waiting",
+            StopReason::Length => "length",
+            StopReason::Refusal => "refusal",
+            StopReason::Stopped => "stopped",
+        }
+    }
+}
+
 /// What the model answered in one turn.
 #[derive(Debug, Default, PartialEq)]
 pub struct AssistantTurn {
@@ -89,6 +117,8 @@ pub struct AssistantTurn {
     pub reasoning: Vec<Reasoning>,
     pub response_id: Option<String>,
     pub usage: Usage,
+    /// `End`, `Length` or `Refusal`: why the model stopped writing.
+    pub stop_reason: StopReason,
     /// How many times the request was sent again (see `ClientSettings::post_json`).
     /// Not shown to users yet: the tracing spans will record it.
     #[allow(dead_code)]

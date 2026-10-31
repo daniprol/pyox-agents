@@ -87,6 +87,16 @@ class ToolMessage(TypedDict):
 
 Message = UserMessage | AssistantMessage | ToolMessage
 
+StopReason = Literal["end", "waiting", "length", "refusal", "stopped"]
+"""Why a run ended (`RunFinished.stop_reason`):
+
+- `"end"`: the model finished its answer.
+- `"waiting"`: tool calls wait for a person (see `RunFinished.pending`).
+- `"length"`: the answer was cut by the output token limit (its tool calls, if any, never run).
+- `"refusal"`: the model refused, or a content filter stopped the answer.
+- `"stopped"`: `run.stop()` was called.
+"""
+
 History = Sequence[Message] | str | bytes
 """Message dicts, or JSON text of a list of them (parsed in Rust, without building dicts)."""
 

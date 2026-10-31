@@ -155,6 +155,9 @@ impl TextChunker {
 pub struct TextOutput {
     chunker: TextChunker,
     event_sender: EventSender,
+    /// All the text of the current message so far, sent or not. When a run
+    /// is stopped mid-answer, this is the partial answer it keeps.
+    message_text: String,
 }
 
 impl TextOutput {
@@ -162,21 +165,25 @@ impl TextOutput {
         TextOutput {
             chunker: TextChunker::new(mode),
             event_sender,
+            message_text: String::new(),
         }
     }
 
     /// Adds a piece of streamed text; sends a chunk if one is ready.
     pub async fn push(&mut self, piece: &str) {
+        self.message_text.push_str(piece);
         if let Some(text) = self.chunker.push(piece) {
             self.send(text).await;
         }
     }
 
-    /// Sends what is left. Called when a model message ends.
-    pub async fn finish(&mut self) {
+    /// Sends what is left. Called when a model message ends (or is
+    /// stopped); returns the message's whole text, and starts a new message.
+    pub async fn finish(&mut self) -> String {
         if let Some(text) = self.chunker.finish() {
             self.send(text).await;
         }
+        std::mem::take(&mut self.message_text)
     }
 
     async fn send(&self, text: String) {

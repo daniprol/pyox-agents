@@ -36,7 +36,7 @@ use crate::errors::{
     error_for_response,
 };
 use crate::messages::{ContentPart, Message, Reasoning, ToolCall, UserContent, arguments_as_text, arguments_from_text};
-use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions};
+use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions, StopReason};
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
 use crate::ws::{OpenError, ResponsesSocket};
@@ -234,6 +234,14 @@ struct FinishedResponse {
     #[serde(default)]
     output: Vec<OutputItem>,
     usage: Option<ResponseUsage>,
+    /// Why a `response.incomplete` was cut short.
+    incomplete_details: Option<IncompleteDetails>,
+}
+
+#[derive(Deserialize)]
+struct IncompleteDetails {
+    /// `"max_output_tokens"` or `"content_filter"`.
+    reason: Option<String>,
 }
 
 /// One item of the response's `output` list. `#[serde(tag = "type")]` picks
@@ -367,8 +375,10 @@ fn turn_from_response(response: FinishedResponse) -> AssistantTurn {
             OutputItem::Message { content } => {
                 for part in content {
                     match part {
-                        MessagePart::OutputText { text } | MessagePart::Refusal { refusal: text } => {
-                            turn.text.push_str(&text)
+                        MessagePart::OutputText { text } => turn.text.push_str(&text),
+                        MessagePart::Refusal { refusal } => {
+                            turn.text.push_str(&refusal);
+                            turn.stop_reason = StopReason::Refusal;
                         }
                         MessagePart::Other => {}
                     }
@@ -397,6 +407,12 @@ fn turn_from_response(response: FinishedResponse) -> AssistantTurn {
     }
     if let Some(usage) = response.usage {
         turn.usage = usage.into_usage();
+    }
+    let incomplete_reason = response.incomplete_details.and_then(|details| details.reason);
+    match incomplete_reason.as_deref() {
+        Some("max_output_tokens") => turn.stop_reason = StopReason::Length,
+        Some("content_filter") => turn.stop_reason = StopReason::Refusal,
+        _ => {}
     }
     turn
 }
@@ -874,6 +890,7 @@ mod tests {
                     reasoning_tokens: 3,
                     requests: 1,
                 },
+                stop_reason: StopReason::End,
                 retries: 0,
             }
         );
@@ -934,6 +951,15 @@ mod tests {
             Some(WebSocketFailure::RetryableStatus(_))
         ));
         assert!(error_instead_of_response(r#"{"type":"response.created","response":{}}"#).is_none());
+    }
+
+    #[test]
+    fn an_incomplete_response_says_why() {
+        let mut reader = EventReader::default();
+        reader
+            .add_event(r#"{"type":"response.incomplete","response":{"id":"resp_1","output":[],"incomplete_details":{"reason":"max_output_tokens"}}}"#)
+            .unwrap();
+        assert_eq!(reader.into_turn().unwrap().stop_reason, StopReason::Length);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Generic, Literal, TypeVar, final
 
-from pyox_agents.messages import History, HistoryStore, LoadHistory, Message, Prompt
+from pyox_agents.messages import History, HistoryStore, LoadHistory, Message, Prompt, StopReason
 
 @final
 class Client:
@@ -162,7 +162,7 @@ class SubagentStarted:
 
 @final
 class SubagentFinished:
-    """A subagent finished, failed (`is_error`), or waits for a person (`waiting`)."""
+    """A subagent finished, failed (`is_error`), or waits for a person (`stop_reason == "waiting"`)."""
 
     @property
     def call_id(self) -> str: ...
@@ -173,7 +173,8 @@ class SubagentFinished:
     @property
     def is_error(self) -> bool: ...
     @property
-    def waiting(self) -> bool: ...
+    def stop_reason(self) -> StopReason | None:
+        """Why the subagent's run ended (`"waiting"`: it waits for a person); `None` when it failed."""
     @property
     def usage(self) -> Usage: ...
     @property
@@ -213,6 +214,9 @@ class RunFinished:
     @property
     def response_id(self) -> str | None: ...
     @property
+    def stop_reason(self) -> StopReason:
+        """Why the run ended: "end", "waiting" (see `pending`), "length", "refusal" or "stopped"."""
+    @property
     def pending(self) -> list[InputRequested]:
         """Requests of tool calls waiting for a person; empty when the run finished normally."""
     @property
@@ -240,6 +244,9 @@ _Event = (
 class Run:
     def __aiter__(self) -> Run: ...
     async def __anext__(self) -> _Event: ...
+    def stop(self) -> None:
+        """End the run at the next safe point, keeping the partial answer; it ends with
+        `RunFinished(stop_reason="stopped")`."""
     def batches(self) -> EventBatches:
         """Iterate over lists of events: each holds every event already waiting (at least one)."""
     def ai_sdk(self) -> ProtocolStream:
@@ -363,6 +370,8 @@ class Engine:
 class AgentError(Exception):
     usage: Usage | None
     """Tokens the run used before it failed; `None` if raised outside a run."""
+    messages: list[Message] | None
+    """The conversation when the run failed (continue with `history=error.messages`); `None` outside a run."""
 
 class ApiError(AgentError):
     status_code: int | None

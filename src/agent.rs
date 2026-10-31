@@ -16,7 +16,7 @@
 //!     after_model_response hooks, then add the assistant message to the history
 //!     run the requested tools (concurrently) and add their results;
 //!         each call goes through before_tool_call and after_tool_call hooks
-//!     stop early if a tool call is waiting for a person
+//!     stop early if a tool call is waiting for a person, or `run.stop()` was called
 //! after_run hooks
 //! save the run's new messages to the history store (if any)
 //! ```
@@ -31,6 +31,12 @@
 //!
 //! A subagent tool runs this same loop for another agent, inside the tool
 //! call (see `subagents`).
+//!
+//! Every run ends with its history: `RunFinished.messages` and a
+//! `stop_reason`, or an error whose `messages` hold the conversation so far.
+//! `run.stop()` ends a run at the next safe point: a streaming answer at once
+//! (its text so far becomes the assistant message), running tools when they
+//! finish. Then `after_run` hooks run and the history store saves, as usual.
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
@@ -46,9 +52,10 @@ use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::usage::Usage;
 use serde_json::{Map, Value};
 use tokio::sync::mpsc::channel;
+use tokio::sync::watch;
 
 use crate::client::{Client, ClientSettings};
-use crate::errors::{HookError, MaxTurnsExceededError, PendingRequestsError, with_usage};
+use crate::errors::{HookError, MaxTurnsExceededError, PendingRequestsError, with_messages, with_usage};
 use crate::events::{AgentEvent, EventSender, RunFinished, ToolFinished, ToolStarted};
 use crate::history_store::{HistoryStore, messages_from_python};
 use crate::hooks::AgentHooks;
@@ -58,7 +65,7 @@ use crate::human_input::{
 };
 use crate::json_convert::python_to_json;
 use crate::messages::{Message, Reply, RequestKind, ToolCall, UserContent, prompt_from_python};
-use crate::model_api::{Api, ModelRequest, last_response_id, stream_model_turn};
+use crate::model_api::{Api, ModelRequest, StopReason, last_response_id, stream_model_turn};
 use crate::run::Run;
 use crate::run_context::Context;
 use crate::state::{RunState, apply_state_changes};
@@ -286,6 +293,8 @@ impl Engine {
         };
 
         let (event_sender, event_receiver) = channel(EVENT_QUEUE_CAPACITY);
+        // `run.stop()` sets this to `true` (see `StopSignal`).
+        let (stop_sender, stop) = watch::channel(false);
         let inputs = RunInputs {
             config: self.config.clone(),
             history,
@@ -301,8 +310,9 @@ impl Engine {
             }),
             extra_tools: frontend_tools,
             state: RunState::new(state),
+            stop,
         };
-        Ok(Run::new(inputs, event_receiver))
+        Ok(Run::new(inputs, event_receiver, stop_sender))
     }
 }
 
@@ -327,19 +337,37 @@ pub struct RunInputs {
     /// (`execute(frontend_tools=...)`), or what a subagent gets from its tool.
     pub extra_tools: Vec<Arc<ToolDefinition>>,
     pub state: RunState,
+    /// Set by `run.stop()`; a subagent shares its caller's.
+    pub stop: StopSignal,
+}
+
+/// `true` once `run.stop()` was called. A `watch` channel holds one value:
+/// one side sets it, the other reads it or waits until it changes (like an
+/// `asyncio.Event` that can be shared between threads).
+pub type StopSignal = watch::Receiver<bool>;
+
+/// Waits until `run.stop()` is called.
+async fn stop_called(stop: &StopSignal) {
+    let mut stop = stop.clone();
+    if stop.wait_for(|stopped| *stopped).await.is_err() {
+        // The `Run` is gone, so nobody can stop it: wait forever (the
+        // dropped run aborts this task anyway).
+        std::future::pending::<()>().await;
+    }
 }
 
 /// Runs the agent loop and makes sure any failure reaches Python as an exception.
 pub async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals) {
     let events = inputs.human_input.events.clone();
     let mut usage = Usage::default();
-    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals, &mut usage))
+    let mut messages = Vec::new();
+    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals, &mut usage, &mut messages))
         .catch_unwind()
         .await;
 
     let error = match loop_result {
         Ok(Ok(finished)) => return events.send(AgentEvent::RunFinished(finished)).await,
-        Ok(Err(python_error)) => with_usage(python_error, usage),
+        Ok(Err(python_error)) => with_messages(with_usage(python_error, usage), &messages),
         // A panic is a bug in this library; report it instead of ending silently.
         Err(_) => PanicException::new_err("pyox-agents crashed while running the agent (this is a bug)"),
     };
@@ -350,12 +378,14 @@ pub async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals
 /// returns the `RunFinished` event (the main run sends it; a subagent's tool
 /// reads it).
 ///
-/// `usage` is kept up to date as the run goes, so the caller knows the tokens
-/// used even when the run fails.
+/// `usage` and `messages` (the conversation) are kept up to date as the run
+/// goes, so the caller has them even when the run fails. On success they
+/// move into the `RunFinished`.
 pub async fn run_agent_loop(
     inputs: RunInputs,
     python_task_locals: TaskLocals,
     usage: &mut Usage,
+    messages: &mut Vec<Message>,
 ) -> PyResult<RunFinished> {
     let RunInputs {
         config,
@@ -369,6 +399,7 @@ pub async fn run_agent_loop(
         human_input,
         extra_tools,
         state,
+        stop,
     } = inputs;
     // The tools of this run: the agent's, plus the ones added for this run.
     let tools: Vec<Arc<ToolDefinition>> = config.tools.iter().cloned().chain(extra_tools).collect();
@@ -379,7 +410,7 @@ pub async fn run_agent_loop(
         None => None,
     };
 
-    let mut messages = match stored_conversation {
+    *messages = match stored_conversation {
         Some((store, conversation_id)) => store.load(conversation_id, &python_task_locals).await?,
         None => history,
     };
@@ -387,14 +418,14 @@ pub async fn run_agent_loop(
     let new_messages_start = messages.len();
 
     // Tool calls the last run left waiting need answers, or are closed by a new prompt.
-    let waiting_count = waiting_calls(&messages).len();
+    let waiting_count = waiting_calls(messages).len();
     if waiting_count > 0 && answers.is_empty() {
         if prompt.is_none() {
             return Err(PyValueError::new_err(format!(
                 "{waiting_count} tool call(s) are waiting for a person: pass `answers={{call_id: ...}}`"
             )));
         }
-        let closed_calls = close_waiting_calls(&messages, config.unanswered)?;
+        let closed_calls = close_waiting_calls(messages, config.unanswered)?;
         messages.extend(closed_calls);
     }
     if let Some(prompt) = prompt {
@@ -426,7 +457,30 @@ pub async fn run_agent_loop(
 
     // Finishes the run: `after_run` hooks, then saving the new messages.
     // (A closure: like a small local function that can use the variables around it.)
-    let finish = async |finished: RunFinished, context: &Context| -> PyResult<RunFinished> {
+    let finish = async |messages: &mut Vec<Message>,
+                        text: String,
+                        turns: u32,
+                        response_id: Option<String>,
+                        stop_reason: StopReason,
+                        context: &Context|
+           -> PyResult<RunFinished> {
+        let pending = pending_requests(messages);
+        let finished = RunFinished {
+            text,
+            turns,
+            usage: context.run.usage,
+            response_id,
+            // `mem::take` moves the messages out, leaving an empty list behind.
+            messages: std::mem::take(messages),
+            new_messages_start,
+            stop_reason: if pending.is_empty() {
+                stop_reason
+            } else {
+                StopReason::Waiting
+            },
+            pending,
+            state: context.state.current(),
+        };
         hooks.after_run(context, &finished, &python_task_locals).await?;
         if let Some((store, conversation_id)) = stored_conversation {
             store
@@ -441,34 +495,29 @@ pub async fn run_agent_loop(
             let run = ToolRun {
                 config: &config,
                 tools: &tools,
-                history: &messages,
+                history: messages,
                 context: &context,
                 python_task_locals: &python_task_locals,
+                stop: &stop,
             };
             resume_waiting_calls(&run, answers).await?
         };
-        add_tool_messages(resumed, &mut messages, usage, &events).await;
-        let pending = pending_requests(&messages);
-        if !pending.is_empty() {
-            let finished = RunFinished {
-                text: String::new(),
-                turns: 0,
-                usage: *usage,
-                response_id: None,
-                messages,
-                new_messages_start,
-                pending,
-                state: context.state.current(),
-            };
-            return finish(finished, &context).await;
+        add_tool_messages(resumed, messages, usage, &events).await;
+        context.run.usage = *usage;
+        if !pending_requests(messages).is_empty() {
+            return finish(messages, String::new(), 0, None, StopReason::Waiting, &context).await;
         }
     }
 
     for turn in 1..=config.max_turns {
+        // `run.stop()` came while the tools ran (or before the run started): send nothing more.
+        if *stop.borrow() {
+            return finish(messages, String::new(), turn - 1, None, StopReason::Stopped, &context).await;
+        }
         context.run.turn = turn;
         // Hooks may change the messages of this one request; the history stays as it is.
         let hooked_messages = hooks
-            .before_model_request(&context, &messages, &python_task_locals)
+            .before_model_request(&context, messages, &python_task_locals)
             .await?;
         // The request can continue from the newest response and send only the
         // messages after it, when OpenAI still has that response (the adapter
@@ -478,25 +527,50 @@ pub async fn run_agent_loop(
         let previous_response_id = if hooked_messages.is_some() {
             run_start_response_id.as_deref()
         } else {
-            last_response_id(&messages).or(run_start_response_id.as_deref())
+            last_response_id(messages).or(run_start_response_id.as_deref())
         };
         let request = ModelRequest {
             model: &config.model,
             system_prompt: &config.system_prompt,
-            messages: hooked_messages.as_ref().unwrap_or(&messages),
+            messages: hooked_messages.as_deref().unwrap_or(messages),
             tools: &tools,
             model_parameters: &config.model_parameters,
             previous_response_id,
         };
-        let assistant_turn =
-            stream_model_turn(&config.client, config.api, &request, &mut run_socket, &mut text_output).await?;
-        text_output.finish().await; // the message ended: send any text still grouped
+        // `select!` runs both at once and keeps the first to finish, dropping
+        // the other (like `asyncio.wait(..., return_when=FIRST_COMPLETED)`
+        // followed by cancelling the rest). Dropping the stream closes it.
+        let streamed = tokio::select! {
+            assistant_turn = stream_model_turn(&config.client, config.api, &request, &mut run_socket, &mut text_output) => Some(assistant_turn?),
+            () = stop_called(&stop) => None,
+        };
+        // The message ended: send any text still grouped.
+        let streamed_text = text_output.finish().await;
+        let Some(assistant_turn) = streamed else {
+            // Stopped mid-answer: keep the text so far (its tool calls were
+            // not complete). Its tokens are not known: the usage arrives last.
+            if !streamed_text.is_empty() {
+                messages.push(Message::Assistant {
+                    content: streamed_text.clone(),
+                    tool_calls: Vec::new(),
+                    reasoning: Vec::new(),
+                    response_id: None,
+                    model: Some(config.model.clone()),
+                });
+            }
+            return finish(messages, streamed_text, turn, None, StopReason::Stopped, &context).await;
+        };
         usage.add(assistant_turn.usage);
         context.run.usage = *usage;
 
+        // An answer cut short may end in a half-written tool call: never run one.
+        let tool_calls = match assistant_turn.stop_reason {
+            StopReason::End => assistant_turn.tool_calls,
+            _ => Vec::new(),
+        };
         let assistant_message = Message::Assistant {
             content: assistant_turn.text,
-            tool_calls: assistant_turn.tool_calls,
+            tool_calls,
             reasoning: assistant_turn.reasoning,
             response_id: assistant_turn.response_id,
             model: Some(config.model.clone()),
@@ -532,9 +606,10 @@ pub async fn run_agent_loop(
                 let run = ToolRun {
                     config: &config,
                     tools: &tools,
-                    history: &messages,
+                    history: messages,
                     context: &context,
                     python_task_locals: &python_task_locals,
+                    stop: &stop,
                 };
                 join_all(
                     tool_calls
@@ -545,26 +620,17 @@ pub async fn run_agent_loop(
                 .into_iter()
                 .collect::<PyResult<Vec<_>>>()?
             };
-            add_tool_messages(tool_messages, &mut messages, usage, &events).await;
+            add_tool_messages(tool_messages, messages, usage, &events).await;
             context.run.usage = *usage;
         }
 
-        let pending = pending_requests(&messages);
+        let waiting = !pending_requests(messages).is_empty();
         // A subagent stops when it asks its calling agent something (see `subagents`).
-        if tool_calls.is_empty() || !pending.is_empty() || asked_parent(&tools, &tool_calls) {
+        if tool_calls.is_empty() || waiting || asked_parent(&tools, &tool_calls) {
             // The last answer arrived in full, so the connection is clean: the next run may use it.
             run_socket.give_back(&config.client);
-            let finished = RunFinished {
-                text,
-                turns: turn,
-                usage: *usage,
-                response_id,
-                messages,
-                new_messages_start,
-                pending,
-                state: context.state.current(),
-            };
-            return finish(finished, &context).await;
+            let stop_reason = assistant_turn.stop_reason;
+            return finish(messages, text, turn, response_id, stop_reason, &context).await;
         }
     }
 
@@ -690,6 +756,8 @@ pub struct ToolRun<'a> {
     pub history: &'a [Message],
     pub context: &'a Context,
     pub python_task_locals: &'a TaskLocals,
+    /// Set by `run.stop()`: a subagent this call runs stops too.
+    pub stop: &'a StopSignal,
 }
 
 /// Runs one tool call and returns its tool message, which is *waiting* when

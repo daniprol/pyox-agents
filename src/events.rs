@@ -20,6 +20,7 @@ use tokio::sync::mpsc::Sender;
 use crate::human_input::InputRequested;
 use crate::json_convert::json_to_python;
 use crate::messages::Message;
+use crate::model_api::StopReason;
 
 /// A piece of the assistant's answer, streamed as soon as it arrives.
 #[pyclass(frozen, get_all, module = "pyox_agents")]
@@ -86,17 +87,24 @@ pub struct SubagentStarted {
 }
 
 /// A subagent stopped: it finished, failed, or waits for a person.
-#[pyclass(frozen, get_all, module = "pyox_agents")]
+#[pyclass(frozen, module = "pyox_agents")]
 pub struct SubagentFinished {
+    #[pyo3(get)]
     pub call_id: String,
+    #[pyo3(get)]
     pub name: String,
     /// What the calling agent reads as the tool's result (empty while it waits).
+    #[pyo3(get)]
     pub result: String,
+    #[pyo3(get)]
     pub is_error: bool,
-    /// It waits for a person: its requests are in `RunFinished.pending`.
-    pub waiting: bool,
+    /// Why the subagent's run ended, as for `RunFinished`: `"waiting"` means
+    /// its requests are in `RunFinished.pending`. `None` when it failed.
+    pub stop_reason: Option<StopReason>,
     /// Tokens the subagent used (also counted in the run's usage).
+    #[pyo3(get)]
     pub usage: Usage,
+    #[pyo3(get)]
     pub subagent_id: Option<String>,
 }
 
@@ -126,6 +134,8 @@ pub struct RunFinished {
     pub pending: Vec<InputRequested>,
     /// The state at the end of the run (`execute(state=...)` plus the tools' changes).
     pub state: Value,
+    /// Why the run ended (see `StopReason`).
+    pub stop_reason: StopReason,
 }
 
 #[pymethods]
@@ -198,10 +208,19 @@ impl SubagentStarted {
 
 #[pymethods]
 impl SubagentFinished {
+    #[getter]
+    fn stop_reason(&self) -> Option<&'static str> {
+        self.stop_reason.map(StopReason::name)
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "SubagentFinished(call_id={:?}, name={:?}, result={:?}, is_error={}, waiting={})",
-            self.call_id, self.name, self.result, self.is_error, self.waiting
+            "SubagentFinished(call_id={:?}, name={:?}, result={:?}, is_error={}, stop_reason={:?})",
+            self.call_id,
+            self.name,
+            self.result,
+            self.is_error,
+            self.stop_reason()
         )
     }
 }
@@ -222,6 +241,14 @@ impl RunFinished {
         messages_to_python(py, self.added_messages())
     }
 
+    /// Why the run ended: `"end"` (the model finished), `"waiting"` (see
+    /// `pending`), `"length"` (cut by the output token limit), `"refusal"`
+    /// (the model refused, or a content filter stopped it) or `"stopped"` (`run.stop()`).
+    #[getter]
+    fn stop_reason(&self) -> &'static str {
+        self.stop_reason.name()
+    }
+
     /// The state at the end of the run: save it, and give it back with `execute(state=...)`.
     #[getter]
     fn state<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -240,8 +267,9 @@ impl RunFinished {
 
     fn __repr__(&self) -> String {
         format!(
-            "RunFinished(text={:?}, turns={}, usage={}, pending={})",
+            "RunFinished(text={:?}, stop_reason={:?}, turns={}, usage={}, pending={})",
             self.text,
+            self.stop_reason.name(),
             self.turns,
             self.usage.__repr__(),
             self.pending.len()
@@ -255,7 +283,7 @@ impl RunFinished {
     }
 }
 
-fn messages_to_python<'py>(py: Python<'py>, messages: &[Message]) -> PyResult<Bound<'py, PyList>> {
+pub fn messages_to_python<'py>(py: Python<'py>, messages: &[Message]) -> PyResult<Bound<'py, PyList>> {
     let list = PyList::empty(py);
     for message in messages {
         let message_json = serde_json::to_value(message).expect("messages always serialize");
