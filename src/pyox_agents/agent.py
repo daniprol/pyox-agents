@@ -1,12 +1,13 @@
 """`Agent`: the main entry point."""
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from pyox_agents._core import Client, Engine, Run, RunFinished
 from pyox_agents.hooks import Hooks
 from pyox_agents.human_input import OnRequest, Reply
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
+from pyox_agents.schema import output_format
 from pyox_agents.subagents import StateAccess, Subagent, TalkTo
 from pyox_agents.tools import Tool, ToolLike, tool
 
@@ -36,7 +37,10 @@ Unanswered = Literal["close", "raise"]
 """
 
 
-class Agent:
+OutputT = TypeVar("OutputT")
+
+
+class Agent(Generic[OutputT]):
     """A model, its instructions (the system prompt) and tools.
 
     Create it once and reuse it: each `execute()` call has its own history,
@@ -66,6 +70,13 @@ class Agent:
     happens to calls still waiting when a new prompt comes instead of answers.
 
     An agent can be another agent's tool: `agent.as_tool(...)` (see `pyox_agents.subagents`).
+
+    `output_type` asks for a structured answer: a dataclass, `TypedDict`, pydantic model or
+    JSON schema dict, sent as a strict JSON schema. `RunFinished.output` has the answer as
+    that type (`None` when the run stops before answering: see `stop_reason`):
+
+        agent = Agent(model="gpt-5-mini", output_type=Ticket)
+        ticket = (await agent.run("Printer on fire")).output  # a `Ticket`
     """
 
     def __init__(
@@ -84,12 +95,15 @@ class Agent:
         store: bool = False,
         encrypted_reasoning: bool = True,
         unanswered: Unanswered = "close",
+        output_type: type[OutputT] | Mapping[str, Any] | None = None,
     ) -> None:
         self._model = model
         self._instructions = instructions
         self._api: Api = api
         # Plain functions are accepted too: they are wrapped with `@tool`.
         self._tools: tuple[ToolLike | Subagent, ...] = tuple(_as_tool(item) for item in tools)
+        self._output_type = output_type
+        output_schema, output_parser = output_format(output_type) if output_type is not None else (None, None)
         self._engine = Engine(
             client=client or Client(),
             model=model,
@@ -104,6 +118,8 @@ class Agent:
             store=store,
             encrypted_reasoning=encrypted_reasoning,
             unanswered=unanswered,
+            output_schema=output_schema,
+            output_parser=output_parser,
         )
 
     # Read-only: the engine copied these when the agent was made, so changing
@@ -124,6 +140,10 @@ class Agent:
     @property
     def tools(self) -> tuple[ToolLike | Subagent, ...]:
         return self._tools
+
+    @property
+    def output_type(self) -> type[OutputT] | Mapping[str, Any] | None:
+        return self._output_type
 
     def execute(
         self,
@@ -192,7 +212,7 @@ class Agent:
         on_request: OnRequest | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
-    ) -> RunFinished:
+    ) -> RunFinished[OutputT]:
         """Run to completion (or until tool calls wait for a person, see `.pending`) and return
         the final event (with `.text` and `.messages`)."""
         # Nobody reads the text as it streams here, so group it per message: fewer events.

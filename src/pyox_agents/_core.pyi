@@ -207,10 +207,15 @@ class InputRequested:
     def subagent_id(self) -> str | None:
         """The subagent whose tool asks; `None` for the main agent."""
 
+OutputT = TypeVar("OutputT")
+
 @final
-class RunFinished:
+class RunFinished(Generic[OutputT]):
     @property
     def text(self) -> str: ...
+    @property
+    def output(self) -> OutputT | None:
+        """The answer as `Agent(output_type=...)`; `None` without one, or when the run did not answer."""
     @property
     def turns(self) -> int: ...
     @property
@@ -355,6 +360,8 @@ class Engine:
         store: bool = False,
         encrypted_reasoning: bool = True,
         unanswered: str = "close",
+        output_schema: Mapping[str, Any] | None = None,
+        output_parser: Callable[[str], Any] | None = None,
     ) -> None: ...
     def execute(
         self,

@@ -11,6 +11,8 @@
 //! `subagent_id` says which subagent sent them (`None` for the main agent),
 //! and their call ids start with it (`call_0/call_1`), so ids stay unique.
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyox_tools::usage::Usage;
@@ -112,8 +114,10 @@ pub struct SubagentFinished {
 }
 
 /// The last event of a run.
+///
+/// `generic`: Python can write `RunFinished[Ticket]`, the type of `output`.
 #[derive(Clone)]
-#[pyclass(frozen, module = "pyox_agents")]
+#[pyclass(frozen, generic, module = "pyox_agents")]
 pub struct RunFinished {
     /// Text of the final assistant message.
     #[pyo3(get)]
@@ -139,6 +143,10 @@ pub struct RunFinished {
     pub state: Value,
     /// Why the run ended (see `StopReason`).
     pub stop_reason: StopReason,
+    /// `Agent(output_type=...)`: the final answer as that type. `None` without
+    /// an `output_type`, or when the run did not end with an answer.
+    /// (`Arc`: a Python object cannot be copied, but the event can share it.)
+    pub output: Option<Arc<Py<PyAny>>>,
 }
 
 #[pymethods]
@@ -257,6 +265,13 @@ impl RunFinished {
     #[getter]
     fn stop_reason(&self) -> &'static str {
         self.stop_reason.name()
+    }
+
+    /// The answer as `Agent(output_type=...)`, or `None` (no `output_type`, or the run
+    /// stopped before answering: see `stop_reason`).
+    #[getter]
+    fn output(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.output.as_ref().map(|output| output.clone_ref(py))
     }
 
     /// The state at the end of the run: save it, and give it back with `execute(state=...)`.

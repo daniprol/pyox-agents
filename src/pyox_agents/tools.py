@@ -3,15 +3,13 @@
 import asyncio
 import inspect
 import json
-import types
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, overload
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Protocol, get_type_hints, overload
 
 from pyox_agents._core import RunContext
 from pyox_agents.messages import ContentPart
-
-JsonSchema = dict[str, Any]
+from pyox_agents.schema import JsonSchema, from_json, json_schema, needs_conversion
 
 ToolContent = str | list[str | ContentPart]
 """What the model reads from a tool: text, or a list of text, images and files."""
@@ -74,6 +72,8 @@ class Tool:
     takes_ctx: bool = False
     requires_approval: RequiresApproval = False
     frontend: bool = False
+    argument_types: Mapping[str, Any] = field(default_factory=dict)
+    """Types of the arguments built from JSON before the call (dataclasses, pydantic models)."""
 
     @staticmethod
     def frontend_tool(name: str, description: str, parameters: JsonSchema) -> "Tool":
@@ -87,6 +87,11 @@ class Tool:
         """Called by the Rust agent loop with the arguments chosen by the model
         (and the context, when `takes_ctx` is set)."""
         positional = (ctx,) if self.takes_ctx else ()
+        if self.argument_types:
+            arguments = {
+                name: from_json(self.argument_types[name], value) if name in self.argument_types else value
+                for name, value in arguments.items()
+            }
         if self.run_in_thread:
             result = await asyncio.to_thread(self.function, *positional, **arguments)
         else:
@@ -148,7 +153,9 @@ def tool(
 ) -> Tool | Callable[[Callable[..., Any]], Tool]:
     """Turn a function into a `Tool`, building the JSON schema from its signature.
 
-    Use `Annotated[str, "description"]` to describe a parameter. A first
+    Parameters can be simple types, lists, `Literal`s, unions, dataclasses, `TypedDict`s
+    or pydantic models (see `pyox_agents.schema`); dataclass and pydantic arguments
+    arrive built from the model's JSON. Use `Annotated[str, "description"]` to describe a parameter. A first
     parameter typed `RunContext` is not shown to the model: it receives the
     run's context (`ctx.deps`, `ctx.conversation_id`, ...).
 
@@ -180,6 +187,7 @@ def tool(
             takes_ctx=takes_ctx(function),
             requires_approval=requires_approval,
             frontend=frontend,
+            argument_types=argument_types(function),
         )
 
     return make_tool if function is None else make_tool(function)
@@ -198,34 +206,27 @@ def parameters_schema(function: Callable[..., Any]) -> JsonSchema:
     type_hints = get_type_hints(function, include_extras=True)
     properties: dict[str, JsonSchema] = {}
     required: list[str] = []
-    parameters = list(inspect.signature(function).parameters.values())
-    for parameter in parameters[1:] if takes_ctx(function) else parameters:
-        properties[parameter.name] = type_schema(type_hints.get(parameter.name, Any))
+    for parameter in _model_parameters(function):
+        properties[parameter.name] = json_schema(type_hints.get(parameter.name, Any))
         if parameter.default is inspect.Parameter.empty:
             required.append(parameter.name)
-    return {"type": "object", "properties": properties, "required": required}
+    # `json_schema` hoists nested `$defs` to the top; do the same across parameters.
+    definitions = {name: value for schema in properties.values() for name, value in schema.pop("$defs", {}).items()}
+    schema: JsonSchema = {"type": "object", "properties": properties, "required": required}
+    return {**schema, "$defs": definitions} if definitions else schema
 
 
-_SIMPLE_TYPES: dict[Any, str] = {str: "string", int: "integer", float: "number", bool: "boolean"}
+def argument_types(function: Callable[..., Any]) -> dict[str, Any]:
+    """The parameters of `function` whose JSON value is built into a dataclass or pydantic model."""
+    type_hints = get_type_hints(function, include_extras=True)
+    return {
+        parameter.name: type_hints[parameter.name]
+        for parameter in _model_parameters(function)
+        if needs_conversion(type_hints.get(parameter.name))
+    }
 
 
-def type_schema(annotation: Any) -> JsonSchema:
-    """JSON schema for one Python type annotation."""
-    origin, args = get_origin(annotation), get_args(annotation)
-
-    if annotation in _SIMPLE_TYPES:
-        return {"type": _SIMPLE_TYPES[annotation]}
-    if origin is Annotated:
-        schema = type_schema(args[0])
-        descriptions = [extra for extra in args[1:] if isinstance(extra, str)]
-        return {**schema, "description": descriptions[0]} if descriptions else schema
-    if origin is Literal:
-        return {"enum": list(args)}
-    if origin in (Union, types.UnionType):
-        options = [type_schema(arg) for arg in args if arg is not type(None)]
-        return options[0] if len(options) == 1 else {"anyOf": options}
-    if annotation is list or origin is list:
-        return {"type": "array", "items": type_schema(args[0])} if args else {"type": "array"}
-    if annotation is dict or origin is dict:
-        return {"type": "object"}
-    return {}  # Any or unknown: accept any JSON value
+def _model_parameters(function: Callable[..., Any]) -> list[inspect.Parameter]:
+    """The parameters the model fills in: all but a first `RunContext` one."""
+    parameters = list(inspect.signature(function).parameters.values())
+    return parameters[1:] if takes_ctx(function) else parameters
