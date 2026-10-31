@@ -173,10 +173,10 @@ impl ToolDefinition {
                 let (context, call_log) = (context.clone(), call_log.clone());
                 let arguments = call_log.lock().unwrap().call.arguments.clone();
                 let answer = call_python(
+                    function,
                     move |py| {
-                        function
-                            .bind(py)
-                            .call1((context.to_python(py, Some(call_log))?, json_to_python(py, &arguments)?))
+                        let ctx = context.to_python(py, Some(call_log))?.into_bound(py).into_any();
+                        Ok(vec![ctx, json_to_python(py, &arguments)?])
                     },
                     python_task_locals,
                 )
@@ -244,18 +244,16 @@ async fn run_python_tool(
     context: Option<(Context, SharedCallLog)>,
     python_task_locals: &TaskLocals,
 ) -> PyResult<ToolResult> {
-    let python_tool = Python::attach(|py| python_tool.clone_ref(py));
+    let invoke = Python::attach(|py| python_tool.bind(py).getattr("invoke").map(Bound::unbind))?;
     let arguments = Value::Object(arguments.clone());
     let tool_result = call_python(
+        invoke,
         move |py| {
-            let arguments_dict = json_to_python(py, &arguments)?;
-            match context {
-                Some((context, call_log)) => {
-                    let ctx = context.to_python(py, Some(call_log))?;
-                    python_tool.bind(py).call_method1("invoke", (arguments_dict, ctx))
-                }
-                None => python_tool.bind(py).call_method1("invoke", (arguments_dict,)),
+            let mut python_arguments = vec![json_to_python(py, &arguments)?];
+            if let Some((context, call_log)) = context {
+                python_arguments.push(context.to_python(py, Some(call_log))?.into_bound(py).into_any());
             }
+            Ok(python_arguments)
         },
         python_task_locals,
     )

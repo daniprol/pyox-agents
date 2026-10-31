@@ -191,7 +191,8 @@ pub async fn reply_to(
     };
     let on_request = Python::attach(|py| on_request.clone_ref(py));
     let reply = call_python(
-        move |py| on_request.bind(py).call1((Py::new(py, event)?,)),
+        on_request,
+        move |py| Ok(vec![Py::new(py, event)?.into_bound(py).into_any()]),
         python_task_locals,
     )
     .await?;

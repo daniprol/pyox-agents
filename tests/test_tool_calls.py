@@ -1,9 +1,5 @@
 """Tool calls inside a run: Python tools, Rust tools and tool errors."""
 
-from pathlib import Path
-
-import pytest
-
 from conftest import MakeAgent
 from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI

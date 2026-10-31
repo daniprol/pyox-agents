@@ -41,8 +41,8 @@ researcher.as_tool(
     "research",
     "Research a topic.",
     inherit_tools=False,  # True: also give it the main agent's tools
-    talk_to=None,         # None, "user" or "parent": who it can ask questions
-    state=None,           # None, "read" or "write": what it may do with the run's state
+    talk_to=None,  # None, "user" or "parent": who it can ask questions
+    state=None,  # None, "read" or "write": what it may do with the run's state
 )
 ```
 
