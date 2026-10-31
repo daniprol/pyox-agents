@@ -2,6 +2,7 @@
 
 import socket
 
+import fast_tools
 import pytest
 
 from conftest import MakeAgent
@@ -12,7 +13,6 @@ from pyox_agents import (
     AgentError,
     ApiError,
     AuthenticationError,
-    BuiltinTool,
     Client,
     InvalidResponseError,
     MaxTurnsExceededError,
@@ -93,7 +93,7 @@ def test_invalid_configuration(client: Client) -> None:
     with pytest.raises(ValueError, match="not a tool"):
         Agent(model="m", client=client, tools=[42])  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="Two tools"):
-        Agent(model="m", client=client, tools=[BuiltinTool("read_file"), BuiltinTool("read_file")])
+        Agent(model="m", client=client, tools=[fast_tools.count_words, fast_tools.count_words])
     with pytest.raises(ValueError, match="Invalid history"):
         Agent(model="m", client=client).execute(history=[{"role": "robot"}])  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="prompt"):

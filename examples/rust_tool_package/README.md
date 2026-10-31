@@ -15,7 +15,7 @@ from pyox_agents import Agent
 
 agent = Agent(
     model="gpt-5-mini",
-    tools=[fast_tools.count_words, fast_tools.most_common_words],
+    tools=[fast_tools.count_words, fast_tools.most_common_words],  # also: read_file, write_file (demos)
     hooks=[fast_tools.guard],  # blocks huge texts, sends only recent messages
 )
 ```
@@ -49,7 +49,7 @@ The argument schema is generated from the struct, so you don't write it by hand.
 Return `Err(message)` to tell the model something went wrong.
 
 When the model calls the tool, the agent runs your Rust function directly:
-no Python is involved, just like the built-in tools.
+no Python is involved.
 
 ## Add hooks
 

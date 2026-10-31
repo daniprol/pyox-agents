@@ -71,7 +71,6 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<run::Run>()?;
     module.add_class::<run::EventBatches>()?;
     module.add_class::<run::ProtocolStream>()?;
-    module.add_class::<tools::BuiltinTool>()?;
     module.add_class::<run_context::PythonRunContext>()?;
 
     module.add_class::<events::TextDelta>()?;

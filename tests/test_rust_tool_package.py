@@ -1,5 +1,7 @@
 """Tools from a separately compiled Rust package (examples/rust_tool_package, built by `uv sync`)."""
 
+from pathlib import Path
+
 import fast_tools
 
 from conftest import MakeAgent
@@ -39,3 +41,20 @@ async def test_agent_runs_rust_tools(fake_openai: FakeOpenAI, make_agent: MakeAg
     assert finished[2].is_error
     assert finished[2].result.startswith("Invalid arguments: missing field `text`")
     assert fake_openai.requests[0].body["tools"][0]["function"]["description"] == "Count the words in a text."
+
+
+async def test_file_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent, tmp_path: Path) -> None:
+    path = str(tmp_path / "notes" / "todo.txt")
+    fake_openai.queue(
+        tool_calls_response(tool_call("write_file", path=path, content="buy milk")),
+        tool_calls_response(tool_call("read_file", path=path), tool_call("read_file", path=path + ".nope")),
+        text_response("Done"),
+    )
+    agent = make_agent(tools=[fast_tools.write_file, fast_tools.read_file])
+
+    events = await collect_events(agent.execute("Save a note"))
+
+    finished = events_of_type(events, ToolFinished)
+    assert [event.result for event in finished[:2]] == [f"Wrote 8 bytes to {path}", "buy milk"]
+    assert finished[2].is_error
+    assert finished[2].result.startswith("Could not read")

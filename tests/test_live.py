@@ -14,6 +14,7 @@ import os
 import secrets
 from pathlib import Path
 
+import fast_tools
 import pytest
 
 from conftest import MakeAgent
@@ -23,7 +24,6 @@ from pyox_agents import (
     ApiError,
     Approve,
     AuthenticationError,
-    BuiltinTool,
     Choice,
     ChoiceAnswer,
     Client,
@@ -111,7 +111,7 @@ async def test_calls_a_rust_tool(make_agent: MakeAgent, tmp_path: Path) -> None:
     secret = secrets.token_hex(4)
     path = tmp_path / "secret.txt"
     path.write_text(secret)
-    agent = make_agent(api="responses", tools=[BuiltinTool("read_file")])
+    agent = make_agent(api="responses", tools=[fast_tools.read_file])
 
     events = await collect_events(agent.execute(f"Read the file {path} and tell me what it says."))
 
