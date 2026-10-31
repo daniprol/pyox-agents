@@ -79,6 +79,9 @@ pub struct ModelRequest<'a> {
     /// server still has it (with `store`, or on the WebSocket connection that
     /// made it) and sends only the messages after it. The Chat API ignores it.
     pub previous_response_id: Option<&'a str>,
+    /// `Agent(output_type=...)`: the JSON schema the answer must match, as
+    /// `{"name": ..., "schema": ..., "strict": true}`.
+    pub output_schema: Option<&'a Value>,
 }
 
 /// Why a run (or one model turn) ended. Python sees the names as `RunFinished.stop_reason`.
@@ -177,6 +180,7 @@ pub mod test_helpers {
             tools: &[],
             model_parameters,
             previous_response_id: None,
+            output_schema: None,
         }
     }
 }

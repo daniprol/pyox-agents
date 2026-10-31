@@ -57,7 +57,9 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::watch;
 
 use crate::client::{Client, ClientSettings};
-use crate::errors::{HookError, MaxTurnsExceededError, PendingRequestsError, with_messages, with_usage};
+use crate::errors::{
+    HookError, InvalidResponseError, MaxTurnsExceededError, PendingRequestsError, with_messages, with_usage,
+};
 use crate::events::{AgentEvent, EventSender, RunFinished, ToolFinished, ToolStarted};
 use crate::history_store::{HistoryStore, messages_from_python};
 use crate::hooks::AgentHooks;
@@ -97,6 +99,33 @@ pub struct AgentConfig {
     history_store: Option<HistoryStore>,
     hooks: AgentHooks,
     unanswered: Unanswered,
+    output: Option<StructuredOutput>,
+}
+
+/// `Agent(output_type=...)`: the answer is JSON matching a schema, turned into a Python value.
+pub struct StructuredOutput {
+    /// `{"name": ..., "schema": ..., "strict": true}`, sent with every request.
+    schema: Value,
+    /// A Python function: the answer's text in, the value out (made by `Agent`).
+    parse: Py<PyAny>,
+}
+
+impl StructuredOutput {
+    /// The answer as a Python value. The model wrote something else than the
+    /// schema asks for (rare in strict mode): `InvalidResponseError`.
+    fn parse(&self, text: &str) -> PyResult<Py<PyAny>> {
+        // Quick work, so it runs right here instead of on a blocking-work thread.
+        Python::attach(|py| {
+            self.parse.call1(py, (text,)).map_err(|error| {
+                let invalid = InvalidResponseError::new_err(format!(
+                    "The answer does not match `output_type`: {}",
+                    error.value(py)
+                ));
+                invalid.set_cause(py, Some(error)); // like `raise ... from error`
+                invalid
+            })
+        })
+    }
 }
 
 /// What to do with tool calls still waiting for a person when a new prompt
@@ -122,6 +151,7 @@ impl Engine {
         *, client, model, instructions = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
         text_chunks = None, history_store = None, hooks = Vec::new(),
         api = "chat", store = false, encrypted_reasoning = true, unanswered = "close",
+        output_schema = None, output_parser = None,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent(...)`
     fn new(
@@ -138,6 +168,8 @@ impl Engine {
         store: bool,
         encrypted_reasoning: bool,
         unanswered: &str,
+        output_schema: Option<Bound<'_, PyDict>>,
+        output_parser: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         let api = Api::from_python(api, store, encrypted_reasoning)?;
         let tools = tools
@@ -168,6 +200,15 @@ impl Engine {
             None => Map::new(),
         };
 
+        let output = match (output_schema, output_parser) {
+            (Some(schema), Some(parse)) => Some(StructuredOutput {
+                schema: python_to_json(schema.as_any())?,
+                parse,
+            }),
+            (None, None) => None,
+            _ => return Err(PyValueError::new_err("Give both `output_schema` and `output_parser`")),
+        };
+
         Ok(Engine {
             config: Arc::new(AgentConfig {
                 client: client.settings.clone(),
@@ -184,6 +225,7 @@ impl Engine {
                 history_store: history_store.as_ref().map(HistoryStore::from_python).transpose()?,
                 hooks: AgentHooks::from_python(&hooks)?,
                 unanswered,
+                output,
             }),
         })
     }
@@ -468,6 +510,19 @@ pub async fn run_agent_loop(
                         context: &Context|
            -> PyResult<RunFinished> {
         let pending = pending_requests(messages);
+        let stop_reason = if pending.is_empty() {
+            stop_reason
+        } else {
+            StopReason::Waiting
+        };
+        // Only a finished answer is parsed: one cut short or refused, or a
+        // subagent stopping to ask its parent (a tool call), gives `None`.
+        let answered = stop_reason == StopReason::End
+            && matches!(messages.last(), Some(Message::Assistant { tool_calls, .. }) if tool_calls.is_empty());
+        let output = match &config.output {
+            Some(output) if answered => Some(Arc::new(output.parse(&text)?)),
+            _ => None,
+        };
         let finished = RunFinished {
             text,
             turns,
@@ -476,11 +531,8 @@ pub async fn run_agent_loop(
             // `mem::take` moves the messages out, leaving an empty list behind.
             messages: std::mem::take(messages),
             new_messages_start,
-            stop_reason: if pending.is_empty() {
-                stop_reason
-            } else {
-                StopReason::Waiting
-            },
+            stop_reason,
+            output,
             pending,
             state: context.state.current(),
         };
@@ -542,6 +594,7 @@ pub async fn run_agent_loop(
         } else {
             last_response_id(messages).or(run_start_response_id.as_deref())
         };
+        let output_schema = config.output.as_ref().map(|output| &output.schema);
         let request = match &hooked {
             Some(hooked) => ModelRequest {
                 model: &config.model,
@@ -550,6 +603,7 @@ pub async fn run_agent_loop(
                 tools: &request_tools,
                 model_parameters: &hooked.model_parameters,
                 previous_response_id,
+                output_schema,
             },
             None => ModelRequest {
                 model: &config.model,
@@ -558,6 +612,7 @@ pub async fn run_agent_loop(
                 tools: &request_tools,
                 model_parameters: &config.model_parameters,
                 previous_response_id,
+                output_schema,
             },
         };
         // `select!` runs both at once and keeps the first to finish, dropping

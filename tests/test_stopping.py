@@ -1,5 +1,6 @@
 """How runs end: `RunFinished.stop_reason`, `run.stop()`, and errors that keep the conversation."""
 
+import asyncio
 import dataclasses
 import json
 from typing import Any
@@ -25,6 +26,7 @@ from pyox_agents import (
     Message,
     TextDelta,
     ToolFinished,
+    ToolStarted,
     tool,
 )
 
@@ -145,13 +147,23 @@ async def test_stop_keeps_the_partial_answer_and_saves_it(fake_openai: FakeOpenA
 async def test_stop_lets_running_tools_finish_and_sends_nothing_more(
     fake_openai: FakeOpenAI, make_agent: MakeAgent
 ) -> None:
+    stopped = asyncio.Event()
+
+    @tool
+    async def ping() -> str:
+        """Ping."""
+        await stopped.wait()  # still running when `run.stop()` comes
+        return "pong"
+
     fake_openai.queue(tool_calls_response(tool_call("ping")), text_response("Never sent"))
     run = make_agent(tools=[ping]).execute("Ping")
 
     events = []
     async for event in run:
         events.append(event)
-        run.stop()  # right after the first event: the tool call has started
+        if isinstance(event, ToolStarted):
+            run.stop()
+            stopped.set()
 
     result = run_finished(events)
     assert result.stop_reason == "stopped"

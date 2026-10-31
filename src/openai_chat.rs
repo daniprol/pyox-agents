@@ -38,6 +38,12 @@ pub fn build_request_body(request: &ModelRequest<'_>) -> Value {
     );
     body.insert("stream".into(), json!(true));
     body.insert("stream_options".into(), json!({"include_usage": true}));
+    if let Some(output_schema) = request.output_schema {
+        body.insert(
+            "response_format".into(),
+            json!({"type": "json_schema", "json_schema": output_schema}),
+        );
+    }
 
     if !request.tools.is_empty() {
         let tool_schemas = request
