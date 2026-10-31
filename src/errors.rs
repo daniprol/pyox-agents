@@ -13,7 +13,7 @@
 //! ├── RequestTimeoutError      the request took too long
 //! ├── NetworkError             could not connect / connection dropped
 //! ├── InvalidResponseError     the API sent something we could not understand
-//! ├── MaxTurnsExceededError    the agent hit its `max_turns` limit
+//! ├── MaxTurnsExceededError    the agent hit its `max_turns` limit (`error.messages` has the work so far)
 //! ├── HistoryError             a history store failed to load or save
 //! ├── HookError                a Rust hook failed, or a hook returned something invalid
 //! └── PendingRequestsError     a new prompt came while tool calls wait for answers
@@ -32,7 +32,9 @@ use pyo3::types::PyString;
 use pyox_tools::usage::Usage;
 use reqwest::header::HeaderMap;
 
+use crate::events::messages_to_python;
 use crate::json_convert::json_to_python;
+use crate::messages::Message;
 
 create_exception!(
     pyox_agents,
@@ -101,6 +103,19 @@ pub fn with_usage(error: PyErr, usage: Usage) -> PyErr {
         if error.is_instance_of::<AgentError>(py) {
             // `let _ =` ignores a failure: the error itself matters more than its usage.
             let _ = error.value(py).setattr("usage", usage);
+        }
+    });
+    error
+}
+
+/// An `AgentError` raised during a run also gets the conversation so far, as
+/// `error.messages`, so the work is not lost: continue with `history=error.messages`.
+pub fn with_messages(error: PyErr, messages: &[Message]) -> PyErr {
+    Python::attach(|py| {
+        if error.is_instance_of::<AgentError>(py)
+            && let Ok(messages) = messages_to_python(py, messages)
+        {
+            let _ = error.value(py).setattr("messages", messages);
         }
     });
     error
@@ -184,6 +199,7 @@ pub fn add_exceptions_to_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let agent_error = py.get_type::<AgentError>();
     // `None` unless the error was raised during a run (see `with_usage`).
     agent_error.setattr("usage", py.None())?;
+    agent_error.setattr("messages", py.None())?; // see `with_messages`
     module.add("AgentError", agent_error)?;
     let api_error = py.get_type::<ApiError>();
     // `None` until an error sets them (see `api_error`).
