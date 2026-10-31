@@ -16,7 +16,7 @@ def get_weather(city: str) -> str:
     return f"Sunny in {city}"
 
 
-agent = Agent(model="gpt-5-mini", prompt="Be concise.", tools=[get_weather])
+agent = Agent(model="gpt-5-mini", instructions="Be concise.", tools=[get_weather])
 
 
 async def main() -> None:
@@ -304,7 +304,7 @@ An agent can be another agent's tool. The subagent works with its own model, pro
 questions still reach the person, and its events come in the same stream (with `subagent_id`):
 
 ```python
-researcher = Agent(model="gpt-5-mini", prompt="Research topics.", tools=[web_search])
+researcher = Agent(model="gpt-5-mini", instructions="Research topics.", tools=[web_search])
 writer = Agent(model="gpt-5", tools=[researcher.as_tool("research", "Research a topic", state="read")])
 ```
 

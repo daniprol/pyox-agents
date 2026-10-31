@@ -25,7 +25,9 @@ use crate::hooks::{Hooks, RunContext};
 use crate::native::{NativeResult, free_result};
 
 /// Bump when `NativeHooksFunctions`, `Hook` or the hook arguments change.
-pub const INTERFACE_VERSION: u32 = 2;
+/// Version 3: `before_model_request` gets a `ModelRequest`, and tool results
+/// may hold content parts (images, files).
+pub const INTERFACE_VERSION: u32 = 3;
 
 /// The capsule name; checked when reading, so a wrong capsule is rejected.
 pub const CAPSULE_NAME: &CStr = c"pyox_tools.native_hooks.v1";

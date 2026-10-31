@@ -23,12 +23,12 @@ def add_todo(ctx: RunContext, text: str) -> str:
 
 researcher = Agent(
     model="gpt-5-mini",
-    prompt="You find places to visit. Answer with a short list.",
+    instructions="You find places to visit. Answer with a short list.",
     tools=[find_places],
 )
 planner = Agent(
     model="gpt-5-mini",
-    prompt="You plan trips. Ask `research` for places, then add each one to the todo list.",
+    instructions="You plan trips. Ask `research` for places, then add each one to the todo list.",
     tools=[add_todo, researcher.as_tool("research", "Find places to visit in a city.", state="read")],
 )
 

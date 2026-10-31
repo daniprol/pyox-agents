@@ -49,6 +49,8 @@ use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3_async_runtimes::TaskLocals;
+// `as`: the hooks' request has the same name as the adapters' `ModelRequest`.
+use pyox_tools::hooks::ModelRequest as HookRequest;
 use pyox_tools::usage::Usage;
 use serde_json::{Map, Value};
 use tokio::sync::mpsc::channel;
@@ -84,7 +86,8 @@ pub struct AgentConfig {
     /// Chat Completions or Responses, with its settings.
     api: Api,
     model: String,
-    system_prompt: String,
+    /// The system prompt (`Agent(instructions=...)`).
+    instructions: String,
     /// `Arc` (a shared pointer) so each run can list them with its own frontend tools.
     pub tools: Vec<Arc<ToolDefinition>>,
     model_parameters: Map<String, Value>,
@@ -116,7 +119,7 @@ pub struct Engine {
 impl Engine {
     #[new]
     #[pyo3(signature = (
-        *, client, model, prompt = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
+        *, client, model, instructions = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
         text_chunks = None, history_store = None, hooks = Vec::new(),
         api = "chat", store = false, encrypted_reasoning = true, unanswered = "close",
     ))]
@@ -124,7 +127,7 @@ impl Engine {
     fn new(
         client: PyRef<'_, Client>,
         model: String,
-        prompt: String,
+        instructions: String,
         tools: Vec<Bound<'_, PyAny>>,
         model_parameters: Option<Bound<'_, PyDict>>,
         max_turns: u32,
@@ -170,7 +173,7 @@ impl Engine {
                 client: client.settings.clone(),
                 api,
                 model,
-                system_prompt: prompt,
+                instructions,
                 tools,
                 model_parameters,
                 max_turns,
@@ -515,27 +518,47 @@ pub async fn run_agent_loop(
             return finish(messages, String::new(), turn - 1, None, StopReason::Stopped, &context).await;
         }
         context.run.turn = turn;
-        // Hooks may change the messages of this one request; the history stays as it is.
-        let hooked_messages = hooks
-            .before_model_request(&context, messages, &python_task_locals)
+        // Hooks may change this one request (instructions, messages, tools,
+        // model parameters); the history stays as it is.
+        let hooked = hooks
+            .before_model_request(
+                &context,
+                || hook_request(&config, &tools, messages),
+                &python_task_locals,
+            )
             .await?;
+        let request_tools = match &hooked {
+            Some(hooked) => tools_named(&tools, &hooked.tools)?,
+            None => tools.clone(), // cheap: a list of shared pointers
+        };
         // The request can continue from the newest response and send only the
         // messages after it, when OpenAI still has that response (the adapter
         // decides). If hooks changed the messages, OpenAI's copy no longer
         // matches them: send them all (on top of the response the run started
         // from, if any).
-        let previous_response_id = if hooked_messages.is_some() {
+        let messages_changed = hooked.as_ref().is_some_and(|hooked| hooked.messages != **messages);
+        let previous_response_id = if messages_changed {
             run_start_response_id.as_deref()
         } else {
             last_response_id(messages).or(run_start_response_id.as_deref())
         };
-        let request = ModelRequest {
-            model: &config.model,
-            system_prompt: &config.system_prompt,
-            messages: hooked_messages.as_deref().unwrap_or(messages),
-            tools: &tools,
-            model_parameters: &config.model_parameters,
-            previous_response_id,
+        let request = match &hooked {
+            Some(hooked) => ModelRequest {
+                model: &config.model,
+                instructions: &hooked.instructions,
+                messages: &hooked.messages,
+                tools: &request_tools,
+                model_parameters: &hooked.model_parameters,
+                previous_response_id,
+            },
+            None => ModelRequest {
+                model: &config.model,
+                instructions: &config.instructions,
+                messages,
+                tools: &request_tools,
+                model_parameters: &config.model_parameters,
+                previous_response_id,
+            },
         };
         // `select!` runs both at once and keeps the first to finish, dropping
         // the other (like `asyncio.wait(..., return_when=FIRST_COMPLETED)`
@@ -638,6 +661,31 @@ pub async fn run_agent_loop(
         "Stopped after {} turns",
         config.max_turns
     )))
+}
+
+/// The request `before_model_request` hooks see: what the agent would send.
+fn hook_request(config: &AgentConfig, tools: &[Arc<ToolDefinition>], messages: &[Message]) -> HookRequest {
+    HookRequest {
+        instructions: config.instructions.clone(),
+        messages: messages.to_vec(),
+        tools: tools.iter().map(|tool| tool.name.clone()).collect(),
+        model_parameters: config.model_parameters.clone(),
+    }
+}
+
+/// The run's tools with these names, in this order (a hook chose them).
+fn tools_named(tools: &[Arc<ToolDefinition>], names: &[String]) -> PyResult<Vec<Arc<ToolDefinition>>> {
+    names
+        .iter()
+        .map(|name| {
+            let tool = tools.iter().find(|tool| tool.name == *name);
+            tool.cloned().ok_or_else(|| {
+                HookError::new_err(format!(
+                    "before_model_request offered {name:?}, which is not one of the run's tools"
+                ))
+            })
+        })
+        .collect()
 }
 
 /// Adds the tool messages to the history, with a `ToolFinished` event for

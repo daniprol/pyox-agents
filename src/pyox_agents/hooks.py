@@ -8,6 +8,15 @@ from pyox_agents._core import RunContext, RunFinished
 from pyox_agents.messages import AssistantMessage, Message, ToolCall
 
 
+class ModelRequest(TypedDict):
+    """What the next model request sends. `before_model_request` hooks may change it, for that request only."""
+
+    instructions: str  # the system prompt (`Agent(instructions=...)`)
+    messages: list[Message]  # what to send; the history itself never changes
+    tools: list[str]  # names of the tools to offer, in order: some of the run's tools
+    model_parameters: dict[str, Any]  # merged into the request body: `tool_choice`, `reasoning`, ...
+
+
 class ToolResult(TypedDict):
     """What a tool gave back, as the model will see it."""
 
@@ -29,8 +38,10 @@ class Hooks:
     or a new value to replace them:
 
     - `before_run(ctx)`: once, when a run starts.
-    - `before_model_request(ctx, messages)`: before each model request. Return
-      other messages to send *for this request only*; the history stays as it is.
+    - `before_model_request(ctx, request)`: before each model request, with the
+      `ModelRequest` (instructions, messages, tool names, model parameters).
+      Return a changed request to send *for this request only*; the history
+      and the agent stay as they are.
     - `after_model_response(ctx, message)`: after each model response, with the
       assistant message (its text was already streamed; its tools haven't run).
     - `before_tool_call(ctx, call)`: before each tool runs. Return a changed call
@@ -49,7 +60,7 @@ class Hooks:
     """
 
     before_run: Callable[[RunContext], MaybeAwaitable[None]] | None = None
-    before_model_request: Callable[[RunContext, list[Message]], MaybeAwaitable[list[Message] | None]] | None = None
+    before_model_request: Callable[[RunContext, ModelRequest], MaybeAwaitable[ModelRequest | None]] | None = None
     after_model_response: Callable[[RunContext, AssistantMessage], MaybeAwaitable[AssistantMessage | None]] | None = (
         None
     )

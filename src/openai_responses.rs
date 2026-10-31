@@ -37,6 +37,7 @@ use crate::errors::{
 };
 use crate::messages::{ContentPart, Message, Reasoning, ToolCall, UserContent, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions, StopReason};
+use crate::openai_chat::add_tools;
 use crate::sse::SseDecoder;
 use crate::text_chunks::TextOutput;
 use crate::ws::{OpenError, ResponsesSocket};
@@ -59,8 +60,8 @@ pub fn build_request_body(
     let mut body = request.model_parameters.clone();
     body.insert("model".into(), json!(request.model));
     // The system prompt. A stored response does not carry it over, so every request sends it.
-    if !request.system_prompt.is_empty() {
-        body.insert("instructions".into(), json!(request.system_prompt));
+    if !request.instructions.is_empty() {
+        body.insert("instructions".into(), json!(request.instructions));
     }
 
     let mut messages_to_send = request.messages;
@@ -98,8 +99,9 @@ pub fn build_request_body(
                     "strict": false,
                 })
             })
-            .collect();
-        body.insert("tools".into(), Value::Array(tool_schemas));
+            .collect::<Vec<_>>();
+        // Hosted tools from `model_parameters` (web search, ...) stay first.
+        add_tools(&mut body, tool_schemas);
     }
     Value::Object(body)
 }
@@ -750,7 +752,7 @@ mod tests {
 
         let body = build_request_body(
             &ModelRequest {
-                system_prompt: "Be brief",
+                instructions: "Be brief",
                 ..request(&history, &parameters)
             },
             STATELESS,

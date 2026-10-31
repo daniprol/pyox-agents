@@ -55,7 +55,7 @@ TOOL_RESULT_ONLY = WHOLE_HISTORY[-1:]
 async def test_streams_text_over_a_websocket(fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent) -> None:
     fake_openai.queue(responses_answer("Hello there!", response_id="resp_7"))
 
-    events = await collect_events(make_websocket_agent(prompt="Be nice.").execute("Hi"))
+    events = await collect_events(make_websocket_agent(instructions="Be nice.").execute("Hi"))
 
     assert [event.text for event in events_of_type(events, TextDelta)] == ["Hello ", "there!"]
     result = events[-1]
