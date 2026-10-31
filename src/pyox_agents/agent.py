@@ -7,6 +7,7 @@ from pyox_agents._core import BuiltinTool, Client, Engine, Run, RunFinished
 from pyox_agents.hooks import Hooks
 from pyox_agents.human_input import OnRequest, Reply
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
+from pyox_agents.subagents import StateAccess, Subagent, TalkTo
 from pyox_agents.tools import Tool, ToolLike, tool
 
 TextChunks = Literal["delta", "paragraph", "message"] | int
@@ -63,6 +64,8 @@ class Agent:
     Tool calls can wait for a person: approvals, `ctx.ask(...)` questions and
     frontend tools (see `pyox_agents.human_input`). `unanswered` says what
     happens to calls still waiting when a new prompt comes instead of answers.
+
+    An agent can be another agent's tool: `agent.as_tool(...)` (see `pyox_agents.subagents`).
     """
 
     def __init__(
@@ -70,7 +73,7 @@ class Agent:
         *,
         model: str,
         prompt: str = "",
-        tools: Sequence[ToolLike | BuiltinTool | Callable[..., Any]] = (),
+        tools: Sequence[ToolLike | BuiltinTool | Subagent | Callable[..., Any]] = (),
         client: Client | None = None,
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
@@ -115,6 +118,7 @@ class Agent:
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
+        state: Any = None,
     ) -> Run:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
 
@@ -137,6 +141,10 @@ class Agent:
         `frontend_tools` adds tools the app runs, for this run only: dicts with `name`,
         `description` and `parameters` (a JSON schema), as AG-UI clients send them.
 
+        `state` is the run's state, shared with the app (usually a dict, anything JSON works).
+        Tools read and change it as `ctx.state`; each change comes as a `StateChanged` event,
+        and `RunFinished.state` has the final state. Nothing is stored: give it again next run.
+
         Read the run event by event (`async for event in run`), in batches of every event
         already waiting (`run.batches()`), or as a web stream (`run.ai_sdk()`, `run.ag_ui(...)`).
         """
@@ -150,6 +158,7 @@ class Agent:
             answers=dict(answers) if answers else None,
             on_request=on_request,
             frontend_tools=[dict(tool) for tool in frontend_tools] if frontend_tools else None,
+            state=state,
         )
 
     async def run(
@@ -163,6 +172,7 @@ class Agent:
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
+        state: Any = None,
     ) -> RunFinished:
         """Run to completion (or until tool calls wait for a person, see `.pending`) and return
         the final event (with `.text` and `.messages`)."""
@@ -177,11 +187,37 @@ class Agent:
             answers=answers,
             on_request=on_request,
             frontend_tools=frontend_tools,
+            state=state,
         ):
             if isinstance(event, RunFinished):
                 return event
         raise RuntimeError("The run ended without a RunFinished event")
 
+    def as_tool(
+        self,
+        name: str,
+        description: str,
+        *,
+        inherit_tools: bool = False,
+        talk_to: TalkTo | None = None,
+        state: StateAccess | None = None,
+    ) -> Subagent:
+        """This agent as a tool for another agent: a subagent (see `pyox_agents.subagents`).
+
+            writer = Agent(model="gpt-5", tools=[researcher.as_tool("research", "Research a topic.")])
+
+        The model calls it with a `task`, and reads the subagent's final answer as the result.
+
+        - `inherit_tools=True` also gives the subagent the calling agent's tools (its own win
+          when names clash).
+        - `talk_to`: who the subagent's model can ask questions: nobody (`None`), the person
+          (`"user"`, with an `ask_user` tool) or the calling agent (`"parent"`, with an
+          `ask_parent` tool; the calling agent can then answer and follow up).
+        - `state`: what the subagent's tools may do with the run's state: nothing (`None`),
+          `"read"` or `"write"`.
+        """
+        return Subagent(self, name, description, inherit_tools=inherit_tools, talk_to=talk_to, state=state)
+
 
 def _is_plain_function(item: object) -> TypeGuard[Callable[..., Any]]:
-    return callable(item) and not isinstance(item, (Tool, BuiltinTool)) and not hasattr(item, "invoke")
+    return callable(item) and not isinstance(item, (Tool, BuiltinTool, Subagent)) and not hasattr(item, "invoke")

@@ -14,6 +14,7 @@
 //!   this library and run entirely in Rust, without touching Python.
 //! - **Frontend tools** (`@tool(frontend=True)`, `Tool.frontend_tool(...)`). They have
 //!   no code here: the app runs them and sends back the result (see `human_input`).
+//! - **Subagents** (`agent.as_tool(...)`): another agent, run by the agent loop (see `subagents`).
 //!
 //! Any tool object may have a `requires_approval` attribute: `True`, or a
 //! function `(ctx, arguments) -> bool` deciding for each call.
@@ -35,6 +36,7 @@ use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::{Request, RequestKind, ToolCall};
 use crate::python_call::call_python;
 use crate::run_context::Context;
+use crate::subagents::{Subagent, subagent_tool_from_python};
 
 /// Everything the agent loop needs to know about one tool.
 pub struct ToolDefinition {
@@ -65,6 +67,12 @@ pub enum ToolImplementation {
     Native(NativeTool),
     /// No code here: the app runs the tool and replies with the result.
     Frontend,
+    /// Another agent (see `subagents`).
+    Subagent(Subagent),
+    /// A subagent's `ask_user(question)`: the person's answer is the result.
+    AskUser,
+    /// A subagent's `ask_parent(question)`: its run stops, and the calling agent gets the question.
+    AskParent,
 }
 
 /// A tool result telling the model something went wrong.
@@ -85,8 +93,11 @@ pub fn success_result(content: String, metadata: Value) -> ToolResult {
 }
 
 impl ToolDefinition {
-    /// Reads a tool given from Python: either a `BuiltinTool` or a Python tool object.
+    /// Reads a tool given from Python: a `BuiltinTool`, a `Subagent` or a Python tool object.
     pub fn from_python(tool: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Some(subagent_tool) = subagent_tool_from_python(tool)? {
+            return Ok(subagent_tool);
+        }
         let approval = match tool.getattr("requires_approval") {
             Ok(requires_approval) if requires_approval.is_callable() => {
                 Approval::WhenFunctionSays(requires_approval.unbind())
@@ -228,7 +239,10 @@ impl ToolDefinition {
                     Err(python_error) => error_result(python_error.to_string()),
                 }
             }
-            ToolImplementation::Frontend => unreachable!("the agent loop asks the app to run frontend tools"),
+            ToolImplementation::Frontend
+            | ToolImplementation::Subagent(_)
+            | ToolImplementation::AskUser
+            | ToolImplementation::AskParent => unreachable!("the agent loop runs these itself"),
         }
     }
 }

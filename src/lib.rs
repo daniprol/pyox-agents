@@ -21,6 +21,8 @@
 //! | `hooks`         | Calling Python or Rust hooks at fixed points of a run         |
 //! | `human_input`   | Tool calls that wait for a person: approvals, `ctx.ask`       |
 //! | `run_context`   | `RunContext`: the `ctx` given to tools and hooks              |
+//! | `state`         | The run's state (`ctx.state`), shared with the app            |
+//! | `subagents`     | Agents the model calls like tools (`agent.as_tool(...)`)      |
 //! | `model_api`     | Picks the API adapter; what a model request and answer hold   |
 //! | `openai_chat`   | Adapter for the OpenAI Chat Completions API                   |
 //! | `openai_responses` | Adapter for the OpenAI Responses API                       |
@@ -53,6 +55,8 @@ mod python_call;
 mod run;
 mod run_context;
 mod sse;
+mod state;
+mod subagents;
 mod text_chunks;
 mod tools;
 mod ws;
@@ -73,6 +77,9 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<events::TextDelta>()?;
     module.add_class::<events::ToolStarted>()?;
     module.add_class::<events::ToolFinished>()?;
+    module.add_class::<events::StateChanged>()?;
+    module.add_class::<events::SubagentStarted>()?;
+    module.add_class::<events::SubagentFinished>()?;
     module.add_class::<events::RunFinished>()?;
     module.add_class::<human_input::InputRequested>()?;
     module.add_class::<pyox_tools::usage::Usage>()?;

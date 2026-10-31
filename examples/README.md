@@ -54,7 +54,15 @@ uv run examples/human_in_the_loop.py
 A tool asks you a question (the run stops and resumes with your answer), then a tool waits for your approval
 (answered live, while the run waits).
 
-## 7. A web server for AI SDK and AG-UI frontends
+## 7. Subagents and shared state
+
+```bash
+uv run examples/subagents.py
+```
+
+A planner asks a researcher subagent for places to visit, then adds them to a todo list kept in the run's state.
+
+## 8. A web server for AI SDK and AG-UI frontends
 
 ```bash
 uv run uvicorn examples.web_server:app --reload

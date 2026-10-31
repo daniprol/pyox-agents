@@ -15,8 +15,13 @@ Events are small, read-only objects backed by Rust. They work with `isinstance` 
 |----------------|----------------------------|------------------------------------------------------------|
 | `TextDelta`    | the model streams text     | `text`                                                     |
 | `ToolStarted`  | a tool call starts         | `call_id`, `name`, `arguments` (dict)                      |
-| `ToolFinished` | a tool call ends           | `call_id`, `name`, `result`, `is_error`                    |
-| `RunFinished`  | the run ends (always last) | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages` |
+| `ToolFinished` | a tool call ends           | `call_id`, `name`, `result`, `is_error`, `metadata`        |
+| `InputRequested` | a tool call waits for a person ([human in the loop](human-in-the-loop.md)) | `call_id`, `kind`, `data`, ... |
+| `StateChanged` | a tool changed the [state](state.md) | `state`, `delta`                                 |
+| `SubagentStarted`, `SubagentFinished` | a [subagent](subagents.md) starts or stops | `call_id`, `name`, ...      |
+| `RunFinished`  | the run ends (always last) | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages`, `pending`, `state` |
+
+A subagent's events come in the same stream, with `subagent_id` set (it is `None` for the main agent's events).
 
 `await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event.
 

@@ -28,6 +28,9 @@
 //! replies, the run stops after the tools and `RunFinished.pending` lists the
 //! requests. The next run passes `answers=`: before the first model request
 //! it runs the waiting calls again with the replies, then carries on.
+//!
+//! A subagent tool runs this same loop for another agent, inside the tool
+//! call (see `subagents`).
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
@@ -42,11 +45,11 @@ use pyo3::types::PyDict;
 use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::usage::Usage;
 use serde_json::{Map, Value};
-use tokio::sync::mpsc::{Sender, channel};
+use tokio::sync::mpsc::channel;
 
 use crate::client::{Client, ClientSettings};
 use crate::errors::{HookError, MaxTurnsExceededError, PendingRequestsError, with_usage};
-use crate::events::{AgentEvent, RunFinished, ToolFinished, ToolStarted};
+use crate::events::{AgentEvent, EventSender, RunFinished, ToolFinished, ToolStarted};
 use crate::history_store::{HistoryStore, messages_from_python};
 use crate::hooks::AgentHooks;
 use crate::human_input::{
@@ -58,6 +61,8 @@ use crate::messages::{Message, Reply, RequestKind, ToolCall, UserContent, prompt
 use crate::model_api::{Api, ModelRequest, last_response_id, stream_model_turn};
 use crate::run::Run;
 use crate::run_context::Context;
+use crate::state::{RunState, apply_state_changes};
+use crate::subagents::{asked_parent, question_of, take_subagent_answers};
 use crate::text_chunks::{TextChunking, TextOutput};
 use crate::tools::{ToolDefinition, ToolImplementation, ToolResult, error_result, success_result};
 use crate::ws_pool::RunSocket;
@@ -67,14 +72,14 @@ use crate::ws_pool::RunSocket;
 const EVENT_QUEUE_CAPACITY: usize = 64;
 
 /// The configuration shared (read-only) by every run of an agent.
-struct AgentConfig {
+pub struct AgentConfig {
     client: ClientSettings,
     /// Chat Completions or Responses, with its settings.
     api: Api,
     model: String,
     system_prompt: String,
     /// `Arc` (a shared pointer) so each run can list them with its own frontend tools.
-    tools: Vec<Arc<ToolDefinition>>,
+    pub tools: Vec<Arc<ToolDefinition>>,
     model_parameters: Map<String, Value>,
     max_turns: u32,
     /// How streamed text is grouped into `TextDelta` events (can be changed per run).
@@ -97,7 +102,7 @@ enum Unanswered {
 /// Python: created by `pyox_agents.Agent`; most users never touch it directly.
 #[pyclass(frozen, module = "pyox_agents")]
 pub struct Engine {
-    config: Arc<AgentConfig>,
+    pub config: Arc<AgentConfig>,
 }
 
 #[pymethods]
@@ -183,9 +188,10 @@ impl Engine {
     /// `on_request` replies live, while the run waits (see `human_input`).
     /// `frontend_tools` adds tools the app runs, for this run only (dicts with
     /// `name`, `description` and `parameters`, as AG-UI clients send them).
+    /// `state` is the run's state, shared with the app (see `state`).
     #[pyo3(signature = (
         prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None,
-        previous_response_id = None, answers = None, on_request = None, frontend_tools = None,
+        previous_response_id = None, answers = None, on_request = None, frontend_tools = None, state = None,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
     fn execute(
@@ -200,6 +206,7 @@ impl Engine {
         answers: Option<Bound<'_, PyDict>>,
         on_request: Option<Py<PyAny>>,
         frontend_tools: Option<Vec<Bound<'_, PyAny>>>,
+        state: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Run> {
         let text_chunks = match text_chunks {
             Some(value) => TextChunking::from_python(&value)?,
@@ -253,7 +260,7 @@ impl Engine {
         let frontend_tools = frontend_tools
             .iter()
             .flatten()
-            .map(ToolDefinition::frontend_from_python)
+            .map(|tool| ToolDefinition::frontend_from_python(tool).map(Arc::new))
             .collect::<PyResult<Vec<_>>>()?;
         for tool in &frontend_tools {
             if self.config.tools.iter().any(|agent_tool| agent_tool.name == tool.name) {
@@ -273,6 +280,11 @@ impl Engine {
             return Err(PyValueError::new_err("Give a prompt, a history, or both"));
         }
 
+        let state = match state {
+            Some(state) => python_to_json(&state)?,
+            None => Value::Null,
+        };
+
         let (event_sender, event_receiver) = channel(EVENT_QUEUE_CAPACITY);
         let inputs = RunInputs {
             config: self.config.clone(),
@@ -281,11 +293,14 @@ impl Engine {
             conversation_id,
             previous_response_id,
             text_chunks,
-            deps: deps.unwrap_or_else(|| py.None()),
+            deps: Arc::new(deps.unwrap_or_else(|| py.None())),
             answers: replies,
-            on_request,
-            frontend_tools,
-            event_sender,
+            human_input: Arc::new(HumanInput {
+                on_request,
+                events: EventSender::new(event_sender),
+            }),
+            extra_tools: frontend_tools,
+            state: RunState::new(state),
         };
         Ok(Run::new(inputs, event_receiver))
     }
@@ -293,46 +308,55 @@ impl Engine {
 
 /// What a run needs to start. Kept aside until the first event is requested.
 pub struct RunInputs {
-    config: Arc<AgentConfig>,
-    text_chunks: TextChunking,
+    pub config: Arc<AgentConfig>,
+    pub text_chunks: TextChunking,
     /// History given directly with `execute(history=...)`.
-    history: Vec<Message>,
-    prompt: Option<UserContent>,
+    pub history: Vec<Message>,
+    pub prompt: Option<UserContent>,
     /// Set when the history is loaded from (and saved to) the history store.
-    conversation_id: Option<String>,
+    pub conversation_id: Option<String>,
     /// The stored response this run continues, from `execute(previous_response_id=...)`.
-    previous_response_id: Option<String>,
+    pub previous_response_id: Option<String>,
     /// Given to tools and hooks as `ctx.deps`.
-    deps: Py<PyAny>,
+    pub deps: Arc<Py<PyAny>>,
     /// Replies to the tool calls the last run left waiting, by call id.
-    answers: HashMap<String, Reply>,
-    /// Python function replying to requests while the run waits.
-    on_request: Option<Py<PyAny>>,
-    /// Tools the app runs, sent with this run only (`execute(frontend_tools=...)`).
-    frontend_tools: Vec<ToolDefinition>,
-    event_sender: Sender<PyResult<AgentEvent>>,
+    pub answers: HashMap<String, Reply>,
+    /// The live `on_request` handler, and where the run's events go.
+    pub human_input: Arc<HumanInput>,
+    /// Tools added for this run only: the app's frontend tools
+    /// (`execute(frontend_tools=...)`), or what a subagent gets from its tool.
+    pub extra_tools: Vec<Arc<ToolDefinition>>,
+    pub state: RunState,
 }
 
 /// Runs the agent loop and makes sure any failure reaches Python as an exception.
 pub async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals) {
-    let event_sender = inputs.event_sender.clone();
+    let events = inputs.human_input.events.clone();
     let mut usage = Usage::default();
     let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals, &mut usage))
         .catch_unwind()
         .await;
 
     let error = match loop_result {
-        Ok(Ok(())) => return,
+        Ok(Ok(finished)) => return events.send(AgentEvent::RunFinished(finished)).await,
         Ok(Err(python_error)) => with_usage(python_error, usage),
         // A panic is a bug in this library; report it instead of ending silently.
         Err(_) => PanicException::new_err("pyox-agents crashed while running the agent (this is a bug)"),
     };
-    let _ = event_sender.send(Err(error)).await;
+    events.send_error(error).await;
 }
 
+/// Runs an agent until it answers (or its tool calls wait for a person), and
+/// returns the `RunFinished` event (the main run sends it; a subagent's tool
+/// reads it).
+///
 /// `usage` is kept up to date as the run goes, so the caller knows the tokens
 /// used even when the run fails.
-async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage: &mut Usage) -> PyResult<()> {
+pub async fn run_agent_loop(
+    inputs: RunInputs,
+    python_task_locals: TaskLocals,
+    usage: &mut Usage,
+) -> PyResult<RunFinished> {
     let RunInputs {
         config,
         history,
@@ -342,17 +366,13 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
         text_chunks,
         deps,
         answers,
-        on_request,
-        frontend_tools,
-        event_sender,
+        human_input,
+        extra_tools,
+        state,
     } = inputs;
-    // The tools of this run: the agent's, plus the frontend tools sent with it.
-    let tools: Vec<Arc<ToolDefinition>> = config
-        .tools
-        .iter()
-        .cloned()
-        .chain(frontend_tools.into_iter().map(Arc::new))
-        .collect();
+    // The tools of this run: the agent's, plus the ones added for this run.
+    let tools: Vec<Arc<ToolDefinition>> = config.tools.iter().cloned().chain(extra_tools).collect();
+    let events = human_input.events.clone();
     // The store and the conversation, when this run loads and saves one.
     let stored_conversation = match &conversation_id {
         Some(conversation_id) => config.history_store.as_ref().map(|store| (store, conversation_id)),
@@ -386,7 +406,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
             conversation_id.unwrap_or_default()
         )));
     }
-    let mut text_output = TextOutput::new(text_chunks, event_sender.clone());
+    let mut text_output = TextOutput::new(text_chunks, events.clone());
     let hooks = &config.hooks;
     // What tools and hooks see as `ctx`; updated as the run goes.
     let mut context = Context {
@@ -394,34 +414,40 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
             conversation_id: conversation_id.clone(),
             ..Default::default()
         },
-        deps: Arc::new(deps),
-        human_input: Arc::new(HumanInput {
-            on_request,
-            event_sender: event_sender.clone(),
-        }),
+        deps,
+        human_input,
+        state,
+        text_chunks,
     };
     hooks.before_run(&context, &python_task_locals).await?;
     // The WebSocket connection of this run (`Client(transport="websocket")`).
     // It is closed when this function returns, unless given back to the pool.
     let mut run_socket = RunSocket::default();
 
-    // Finishes the run: `after_run` hooks, saving the new messages, then the
-    // `RunFinished` event. (A closure: like a small local function that can
-    // use the variables around it.)
-    let finish = async |finished: RunFinished, context: &Context| -> PyResult<()> {
+    // Finishes the run: `after_run` hooks, then saving the new messages.
+    // (A closure: like a small local function that can use the variables around it.)
+    let finish = async |finished: RunFinished, context: &Context| -> PyResult<RunFinished> {
         hooks.after_run(context, &finished, &python_task_locals).await?;
         if let Some((store, conversation_id)) = stored_conversation {
             store
                 .save(conversation_id, finished.added_messages(), &python_task_locals)
                 .await?;
         }
-        let _ = event_sender.send(Ok(AgentEvent::RunFinished(finished))).await;
-        Ok(())
+        Ok(finished)
     };
 
     if !answers.is_empty() {
-        let resumed = resume_waiting_calls(&config, &tools, &messages, answers, &context, &python_task_locals).await?;
-        add_tool_messages(resumed, &mut messages, &event_sender).await;
+        let resumed = {
+            let run = ToolRun {
+                config: &config,
+                tools: &tools,
+                history: &messages,
+                context: &context,
+                python_task_locals: &python_task_locals,
+            };
+            resume_waiting_calls(&run, answers).await?
+        };
+        add_tool_messages(resumed, &mut messages, usage, &events).await;
         let pending = pending_requests(&messages);
         if !pending.is_empty() {
             let finished = RunFinished {
@@ -432,6 +458,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
                 messages,
                 new_messages_start,
                 pending,
+                state: context.state.current(),
             };
             return finish(finished, &context).await;
         }
@@ -495,24 +522,36 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
                     call_id: call.id.clone(),
                     name: call.name.clone(),
                     arguments: call.arguments.clone(),
+                    subagent_id: None, // set by the event sender
                 };
-                let _ = event_sender.send(Ok(AgentEvent::ToolStarted(started))).await;
+                events.send(AgentEvent::ToolStarted(started)).await;
             }
 
             // Run all requested tools at the same time and wait for all of them.
-            let tool_messages = join_all(
-                tool_calls
-                    .iter()
-                    .map(|call| run_tool_call(&config, &tools, call, None, &context, &python_task_locals)),
-            )
-            .await
-            .into_iter()
-            .collect::<PyResult<Vec<_>>>()?;
-            add_tool_messages(tool_messages, &mut messages, &event_sender).await;
+            let tool_messages = {
+                let run = ToolRun {
+                    config: &config,
+                    tools: &tools,
+                    history: &messages,
+                    context: &context,
+                    python_task_locals: &python_task_locals,
+                };
+                join_all(
+                    tool_calls
+                        .iter()
+                        .map(|call| run_tool_call(&run, call, None, HashMap::new())),
+                )
+                .await
+                .into_iter()
+                .collect::<PyResult<Vec<_>>>()?
+            };
+            add_tool_messages(tool_messages, &mut messages, usage, &events).await;
+            context.run.usage = *usage;
         }
 
         let pending = pending_requests(&messages);
-        if tool_calls.is_empty() || !pending.is_empty() {
+        // A subagent stops when it asks its calling agent something (see `subagents`).
+        if tool_calls.is_empty() || !pending.is_empty() || asked_parent(&tools, &tool_calls) {
             // The last answer arrived in full, so the connection is clean: the next run may use it.
             run_socket.give_back(&config.client);
             let finished = RunFinished {
@@ -523,6 +562,7 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
                 messages,
                 new_messages_start,
                 pending,
+                state: context.state.current(),
             };
             return finish(finished, &context).await;
         }
@@ -535,13 +575,16 @@ async fn run_agent_loop(inputs: RunInputs, python_task_locals: TaskLocals, usage
 }
 
 /// Adds the tool messages to the history, with a `ToolFinished` event for
-/// each call that finished (a waiting one has no result yet).
+/// each call that finished (a waiting one has no result yet), and the tokens
+/// the calls used (subagents) to `usage`.
 async fn add_tool_messages(
-    tool_messages: Vec<Message>,
+    tool_messages: Vec<(Message, Usage)>,
     messages: &mut Vec<Message>,
-    event_sender: &Sender<PyResult<AgentEvent>>,
+    usage: &mut Usage,
+    events: &EventSender,
 ) {
-    for message in tool_messages {
+    for (message, call_usage) in tool_messages {
+        usage.add(call_usage);
         if let Message::Tool {
             tool_call_id,
             name,
@@ -560,8 +603,9 @@ async fn add_tool_messages(
                 is_error: *is_error,
                 metadata: metadata.clone(),
                 from_app: requests.iter().any(|request| request.kind == RequestKind::Frontend),
+                subagent_id: None, // set by the event sender
             };
-            let _ = event_sender.send(Ok(AgentEvent::ToolFinished(finished))).await;
+            events.send(AgentEvent::ToolFinished(finished)).await;
         }
         messages.push(message);
     }
@@ -569,47 +613,49 @@ async fn add_tool_messages(
 
 /// Runs again the waiting calls that got a reply in `answers`, at the same
 /// time. Returns their new tool messages (finished, or waiting again).
+///
+/// An answer for `call_0/call_1` is for the call `call_1` of the subagent
+/// that the call `call_0` runs: `call_0` runs again, and passes it on.
 async fn resume_waiting_calls(
-    config: &AgentConfig,
-    tools: &[Arc<ToolDefinition>],
-    messages: &[Message],
+    run: &ToolRun<'_>,
     mut answers: HashMap<String, Reply>,
-    context: &Context,
-    python_task_locals: &TaskLocals,
-) -> PyResult<Vec<Message>> {
-    let waiting = waiting_calls(messages);
-    if let Some(call_id) = answers
-        .keys()
-        .find(|call_id| !waiting.iter().any(|(call, _)| call.id == **call_id))
-    {
+) -> PyResult<Vec<(Message, Usage)>> {
+    let mut answered_calls = Vec::new();
+    for (call, waiting_message) in waiting_calls(run.history) {
+        let reply = answers.remove(&call.id);
+        let subagent_answers = take_subagent_answers(&mut answers, &call.id);
+        if reply.is_none() && subagent_answers.is_empty() {
+            continue; // not answered yet: it stays waiting
+        }
+        let mut message = waiting_message.clone();
+        if let Some(reply) = reply {
+            // Put the reply on the request the call is waiting on.
+            let Message::Tool { requests, .. } = &mut message else {
+                unreachable!("waiting calls always have a tool message");
+            };
+            let Some(request) = requests.iter_mut().find(|request| request.answer.is_none()) else {
+                return Err(PyValueError::new_err(format!(
+                    "Tool call {:?} waits for its subagent: answer the subagent's requests (see `RunFinished.pending`)",
+                    call.id
+                )));
+            };
+            check_reply(request.kind, &reply)?;
+            request.answer = Some(reply);
+        }
+        answered_calls.push((call, message, subagent_answers));
+    }
+    if let Some(call_id) = answers.keys().next() {
         return Err(PyValueError::new_err(format!(
             "Tool call {call_id:?} is not waiting for an answer"
         )));
     }
 
-    let mut answered_calls = Vec::new();
-    for (call, waiting_message) in waiting {
-        let Some(reply) = answers.remove(&call.id) else {
-            continue; // not answered yet: it stays waiting
-        };
-        // Put the reply on the request the call is waiting on.
-        let mut message = waiting_message.clone();
-        let Message::Tool { requests, .. } = &mut message else {
-            unreachable!("waiting calls always have a tool message");
-        };
-        let request = requests
-            .iter_mut()
-            .find(|request| request.answer.is_none())
-            .expect("a waiting message has an unanswered request");
-        check_reply(request.kind, &reply)?;
-        request.answer = Some(reply);
-        answered_calls.push((call, message));
-    }
-
     join_all(
         answered_calls
-            .iter()
-            .map(|(call, message)| run_tool_call(config, tools, call, Some(message), context, python_task_locals)),
+            .into_iter()
+            .map(|(call, message, subagent_answers)| async move {
+                run_tool_call(run, &call, Some(&message), subagent_answers).await
+            }),
     )
     .await
     .into_iter()
@@ -636,24 +682,35 @@ fn close_waiting_calls(messages: &[Message], unanswered: Unanswered) -> PyResult
         .collect())
 }
 
+/// What running a tool call needs from the run it belongs to.
+pub struct ToolRun<'a> {
+    pub config: &'a AgentConfig,
+    pub tools: &'a [Arc<ToolDefinition>],
+    /// The conversation so far: a subagent tool finds earlier conversations in it.
+    pub history: &'a [Message],
+    pub context: &'a Context,
+    pub python_task_locals: &'a TaskLocals,
+}
+
 /// Runs one tool call and returns its tool message, which is *waiting* when
-/// a request got no reply. `earlier` is the call's waiting message when a
-/// resumed run continues it: its replies and saved steps are reused.
+/// a request got no reply, and the tokens it used (when it ran a subagent).
+/// `earlier` is the call's waiting message when a resumed run continues it:
+/// its replies and saved steps are reused. `subagent_answers` are replies for
+/// the waiting calls of the subagent it runs.
 async fn run_tool_call(
-    config: &AgentConfig,
-    tools: &[Arc<ToolDefinition>],
+    run: &ToolRun<'_>,
     call: &ToolCall,
     earlier: Option<&Message>,
-    context: &Context,
-    python_task_locals: &TaskLocals,
-) -> PyResult<Message> {
+    subagent_answers: HashMap<String, Reply>,
+) -> PyResult<(Message, Usage)> {
     let call_log = CallLog::new(call.clone(), earlier);
-    let result = tool_call_result(config, tools, &call_log, context, python_task_locals).await?;
+    call_log.lock().unwrap().subagent_answers = subagent_answers;
+    let result = tool_call_result(run, &call_log).await?;
     // `None` means waiting: no result yet.
     let result = result.unwrap_or_else(|| success_result(String::new(), Value::Null));
 
-    let call_log = call_log.lock().unwrap();
-    Ok(Message::Tool {
+    let mut call_log = call_log.lock().unwrap();
+    let message = Message::Tool {
         tool_call_id: call.id.clone(),
         name: call.name.clone(),
         content: result.content,
@@ -661,7 +718,9 @@ async fn run_tool_call(
         metadata: result.metadata,
         requests: call_log.requests.clone(),
         steps: call_log.steps.clone(),
-    })
+        subagent: std::mem::take(&mut call_log.subagent),
+    };
+    Ok((message, call_log.subagent_usage))
 }
 
 /// The result of one tool call, or `None` when it waits for a person.
@@ -670,13 +729,14 @@ async fn run_tool_call(
 /// for it), the tool itself (or the app, for a frontend tool), then
 /// `after_tool_call` hooks. A hook that fails blocks the call: the model gets
 /// the error as the result.
-async fn tool_call_result(
-    config: &AgentConfig,
-    tools: &[Arc<ToolDefinition>],
-    call_log: &SharedCallLog,
-    context: &Context,
-    python_task_locals: &TaskLocals,
-) -> PyResult<Option<ToolResult>> {
+async fn tool_call_result(run: &ToolRun<'_>, call_log: &SharedCallLog) -> PyResult<Option<ToolResult>> {
+    let ToolRun {
+        config,
+        tools,
+        context,
+        python_task_locals,
+        ..
+    } = *run;
     let hooks = &config.hooks;
     let model_call = call_log.lock().unwrap().call.clone();
     let mut approval_request = None;
@@ -720,10 +780,13 @@ async fn tool_call_result(
         }
     }
 
-    let result = match tool.implementation {
-        // The app runs a frontend tool: its reply is the result.
-        ToolImplementation::Frontend => {
-            let request = new_request(RequestKind::Frontend, call.arguments.clone(), Value::Null);
+    let result = match &tool.implementation {
+        // The app runs a frontend tool, and the person answers `ask_user`: the reply is the result.
+        ToolImplementation::Frontend | ToolImplementation::AskUser => {
+            let request = match tool.implementation {
+                ToolImplementation::Frontend => new_request(RequestKind::Frontend, call.arguments.clone(), Value::Null),
+                _ => new_request(RequestKind::Input, question_of(&call), Value::Null),
+            };
             match reply_to(call_log, request, &context.human_input, python_task_locals).await? {
                 None => return Ok(None),
                 Some(Reply::Answer { value, metadata }) => success_result(text_for_model(value), metadata),
@@ -731,15 +794,32 @@ async fn tool_call_result(
                 Some(Reply::Approve { .. }) => unreachable!("check_reply only lets Answer or Deny through"),
             }
         }
+        // The subagent's run stops after this turn (see `subagents`).
+        ToolImplementation::AskParent => success_result(
+            "Your question was sent. The answer comes in the next message.".to_string(),
+            Value::Null,
+        ),
+        ToolImplementation::Subagent(subagent) => match subagent.run(call_log, run).await? {
+            Some(result) => result,
+            None => return Ok(None),
+        },
         _ => {
             let result = tool.run(&call, call_log, context, python_task_locals).await;
             // A `ctx.ask` inside the tool may have stopped it.
-            let call_log = call_log.lock().unwrap();
-            if call_log.is_waiting() {
-                return Ok(None);
-            }
-            match &call_log.denied {
-                Some(message) => error_result(message.clone()),
+            let stopped = {
+                let call_log = call_log.lock().unwrap();
+                if call_log.is_waiting() {
+                    return Ok(None);
+                }
+                call_log.denied.clone()
+            };
+            match stopped {
+                Some(message) => error_result(message),
+                // The tool finished: apply its changes to `ctx.state`.
+                None if !result.is_error => match apply_state_changes(call_log, context).await {
+                    Ok(()) => result,
+                    Err(message) => error_result(message),
+                },
                 None => result,
             }
         }

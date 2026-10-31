@@ -25,6 +25,9 @@
 //! there, and a later run continues it (see `human_input` in pyox-agents).
 //! Waiting messages are never sent to the model.
 //!
+//! A tool call that ran a subagent keeps the subagent's own conversation in
+//! `subagent`. The call waits while that conversation does.
+//!
 //! Stored history must keep working when this format grows, so new fields
 //! are always optional (`#[serde(default)]`).
 
@@ -74,6 +77,9 @@ pub enum Message {
         /// Saved results of `ctx.step(name, ...)`, by name, reused when the call runs again.
         #[serde(default, skip_serializing_if = "Map::is_empty")]
         steps: Map<String, Value>,
+        /// The conversation of the subagent this call ran, if it ran one.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        subagent: Vec<Message>,
     },
 }
 
@@ -88,16 +94,46 @@ impl Message {
             metadata: Value::Null,
             requests: Vec::new(),
             steps: Map::new(),
+            subagent: Vec::new(),
         }
     }
 
-    /// True for a tool message whose call is still waiting for an answer.
+    /// True for a tool message whose call is still waiting for an answer:
+    /// one of its requests has none, or its subagent waits for one.
     pub fn is_waiting(&self) -> bool {
         match self {
-            Message::Tool { requests, .. } => requests.iter().any(|request| request.answer.is_none()),
+            Message::Tool { requests, subagent, .. } => {
+                requests.iter().any(|request| request.answer.is_none()) || !waiting_calls(subagent).is_empty()
+            }
             _ => false,
         }
     }
+}
+
+/// The tool calls of the last assistant message that are still waiting, each
+/// with its newest tool message. (A resumed call adds a new tool message for
+/// the same call: the history only grows.)
+pub fn waiting_calls(messages: &[Message]) -> Vec<(ToolCall, &Message)> {
+    let Some(assistant_position) = messages
+        .iter()
+        .rposition(|message| matches!(message, Message::Assistant { .. }))
+    else {
+        return Vec::new();
+    };
+    let Message::Assistant { tool_calls, .. } = &messages[assistant_position] else {
+        unreachable!("rposition found an assistant message");
+    };
+    let later_messages = &messages[assistant_position + 1..];
+    tool_calls
+        .iter()
+        .filter_map(|call| {
+            let newest = later_messages
+                .iter()
+                .rev()
+                .find(|message| matches!(message, Message::Tool { tool_call_id, .. } if *tool_call_id == call.id))?;
+            newest.is_waiting().then(|| (call.clone(), newest))
+        })
+        .collect()
 }
 
 /// Something a tool call asked a person (or the app), and the answer once it came.
@@ -294,6 +330,32 @@ mod tests {
         assert!(waiting.is_waiting());
         // Written back exactly as it was read.
         assert_eq!(serde_json::to_value(&waiting).unwrap(), waiting_dict);
+    }
+
+    #[test]
+    fn a_tool_message_waits_while_its_subagent_waits() {
+        let subagent_waiting: Message = serde_json::from_value(json!({
+            "role": "tool", "tool_call_id": "call_0", "name": "research", "content": "",
+            "subagent": [
+                {"role": "user", "content": "Find flights"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "call_0", "name": "book", "arguments": {}}]},
+                {"role": "tool", "tool_call_id": "call_0", "name": "book", "content": "",
+                 "requests": [{"kind": "approval", "answer": null}]},
+            ],
+        }))
+        .unwrap();
+        assert!(subagent_waiting.is_waiting());
+
+        let Message::Tool { mut subagent, .. } = subagent_waiting else {
+            unreachable!()
+        };
+        subagent.push(Message::tool_result(
+            "call_0".into(),
+            "book".into(),
+            "Booked".into(),
+            false,
+        ));
+        assert!(waiting_calls(&subagent).is_empty());
     }
 
     #[test]

@@ -63,6 +63,10 @@ After changing Rust code, `uv sync` (or `uv run ...`) rebuilds it automatically.
 | `ToolFinished` | `call_id`, `name`, `result`, `is_error`                             |
 | `RunFinished`  | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages` |
 
+Tools that wait for a person (`InputRequested`), [shared state](https://daniprol.github.io/pyox-agents/state/)
+(`StateChanged`) and [subagents](https://daniprol.github.io/pyox-agents/subagents/) (`SubagentStarted`,
+`SubagentFinished`) have events too.
+
 They work with `match` too: `case TextDelta(text=text): ...`
 
 `usage` is a `Usage` with the tokens of the whole run: `input_tokens`, `cached_input_tokens`, `output_tokens`,
@@ -304,6 +308,22 @@ result = await agent.run(history=result.messages, answers={result.pending[0].cal
 `metadata` (on requests, replies and `ToolReturn` results) is never sent to the model. A resumed tool runs again
 from its start, with earlier answers returned at once; `ctx.step(name, function)` runs a side effect only once.
 See [Human in the loop](https://github.com/daniprol/pyox-agents/blob/main/docs/human-in-the-loop.md) for approvals, `Deny`, frontend tools and unanswered calls.
+
+## Subagents and shared state
+
+An agent can be another agent's tool. The subagent works with its own model, prompt and tools; its approvals and
+questions still reach the person, and its events come in the same stream (with `subagent_id`):
+
+```python
+researcher = Agent(model="gpt-5-mini", prompt="Research topics.", tools=[web_search])
+writer = Agent(model="gpt-5", tools=[researcher.as_tool("research", "Research a topic", state="read")])
+```
+
+`as_tool` chooses its tools (`inherit_tools=True` adds the writer's), who it can ask (`talk_to="user"` or
+`"parent"`, to go back and forth with the writer) and what it may do with the run's state. The state is a JSON
+document tools change through `ctx.state` (`execute(state={"todos": []})`); each change comes as a `StateChanged`
+event. See [Subagents](https://daniprol.github.io/pyox-agents/subagents/) and
+[State](https://daniprol.github.io/pyox-agents/state/).
 
 ## Web frontends (AI SDK and AG-UI)
 

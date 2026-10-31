@@ -27,6 +27,9 @@ from pyox_agents._core import (
     RunContext,
     RunFinished,
     ScoreAnswer,
+    StateChanged,
+    SubagentFinished,
+    SubagentStarted,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -54,12 +57,22 @@ from pyox_agents.messages import (
     ToolMessage,
     UserMessage,
 )
+from pyox_agents.subagents import StateAccess, Subagent, TalkTo
 from pyox_agents.tools import RequiresApproval, Tool, ToolLike, ToolReturn, tool
 
 DecisionAnswer = PredicateAnswer | ChoiceAnswer | ScoreAnswer | Refusal
 """Any answer in a `Decision`."""
 
-AgentEvent = TextDelta | ToolStarted | ToolFinished | InputRequested | RunFinished
+AgentEvent = (
+    TextDelta
+    | ToolStarted
+    | ToolFinished
+    | InputRequested
+    | StateChanged
+    | SubagentStarted
+    | SubagentFinished
+    | RunFinished
+)
 """Any event yielded while iterating over a run."""
 
 __version__ = _version("pyox-agents")
@@ -116,6 +129,12 @@ __all__ = [
     "RunFinished",
     "Score",
     "ScoreAnswer",
+    "StateAccess",
+    "StateChanged",
+    "Subagent",
+    "SubagentFinished",
+    "SubagentStarted",
+    "TalkTo",
     "TextChunks",
     "TextDelta",
     "TextPart",
