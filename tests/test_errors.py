@@ -1,6 +1,7 @@
 """Failures surface as typed exceptions from the event stream."""
 
 import socket
+import time
 
 import fast_tools
 import pytest
@@ -30,7 +31,8 @@ from pyox_agents import (
 async def test_http_errors_raise_typed_exceptions(
     fake_openai: FakeOpenAI, make_agent: MakeAgent, status: int, exception: type[Exception]
 ) -> None:
-    fake_openai.queue(error_response(status, "nope"))
+    # 429 and 5xx are retried (twice by default) before they raise.
+    fake_openai.queue(*[error_response(status, "nope", headers={"retry-after-ms": "1"})] * 3)
 
     with pytest.raises(exception, match="nope"):
         await make_agent().run("Hi")
@@ -119,3 +121,61 @@ async def test_gives_up_after_max_retries(fake_openai: FakeOpenAI) -> None:
     with pytest.raises(NetworkError):
         await Agent(client=client, model="m").run("Hi")
     assert len(fake_openai.requests) == 2
+
+
+# Retries ------------------------------------------------------------------------------------------
+
+
+async def test_rate_limits_are_retried_after_the_wait_the_server_asks(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    fake_openai.queue(error_response(429, "Slow down", headers={"retry-after-ms": "10"}), text_response("Hi"))
+
+    result = await make_agent().run("Hi")
+
+    assert result.text == "Hi"
+    assert len(fake_openai.requests) == 2
+
+
+async def test_server_errors_raise_with_their_details_after_the_retries(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    headers = {"retry-after-ms": "1", "x-request-id": "req_123"}
+    fake_openai.queue(*[error_response(503, "Overloaded", headers=headers)] * 3)
+
+    with pytest.raises(ApiError) as error:
+        await make_agent().run("Hi")
+
+    assert len(fake_openai.requests) == 3  # the request and 2 retries (`Client(max_retries=2)`)
+    assert error.value.status_code == 503
+    assert error.value.body == {"error": {"message": "Overloaded"}}
+    assert error.value.request_id == "req_123"
+    assert error.value.retry_after_seconds == 0.001
+    assert error.value.usage == Usage()  # no request got an answer
+
+
+async def test_a_long_retry_after_raises_at_once(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    fake_openai.queue(error_response(429, "Quota", headers={"retry-after": "3600"}), text_response("Hi"))
+
+    started = time.monotonic()
+    with pytest.raises(RateLimitError) as error:
+        await make_agent().run("Hi")
+
+    assert time.monotonic() - started < 1
+    assert error.value.retry_after_seconds == 3600
+    assert len(fake_openai.requests) == 1
+
+
+async def test_client_errors_are_not_retried(fake_openai: FakeOpenAI, client: Client) -> None:
+    fake_openai.queue(error_response(400, "Bad request"), text_response("Hi"))
+
+    with pytest.raises(ApiError, match="Bad request") as error:
+        await Agent(client=client, model="m").run("Hi")
+
+    assert error.value.status_code == 400
+    assert len(fake_openai.requests) == 1
+
+
+def test_api_error_fields_are_none_outside_the_api() -> None:
+    error = ApiError("made by hand")
+    assert (error.status_code, error.body, error.request_id, error.retry_after_seconds) == (None, None, None, None)

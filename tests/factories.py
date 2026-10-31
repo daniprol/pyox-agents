@@ -61,12 +61,18 @@ def tool_calls_response(
     return StreamResponse(chunks)
 
 
-def error_response(status: int, message: str, *, code: str | None = None) -> ErrorResponse:
-    """An API error. `code` is the machine-readable `error.code`, e.g. "previous_response_not_found"."""
+def error_response(
+    status: int, message: str, *, code: str | None = None, headers: dict[str, str] | None = None
+) -> ErrorResponse:
+    """An API error. `code` is the machine-readable `error.code`, e.g. "previous_response_not_found".
+
+    Errors that are retried (429, 5xx) wait as long as `Retry-After` says, so tests give a short
+    `headers={"retry-after-ms": "1"}`.
+    """
     error: dict[str, Any] = {"message": message}
     if code is not None:
         error["code"] = code
-    return ErrorResponse(status, json.dumps({"error": error}))
+    return ErrorResponse(status, json.dumps({"error": error}), headers=headers or {})
 
 
 def decision_response(*answers: dict[str, Any], request_id: str = "req_1") -> JsonResponse:

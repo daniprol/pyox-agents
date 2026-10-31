@@ -89,6 +89,10 @@ pub struct AssistantTurn {
     pub reasoning: Vec<Reasoning>,
     pub response_id: Option<String>,
     pub usage: Usage,
+    /// How many times the request was sent again (see `ClientSettings::post_json`).
+    /// Not shown to users yet: the tracing spans will record it.
+    #[allow(dead_code)]
+    pub retries: u32,
 }
 
 /// Sends one request to the agent's API and streams the answer: each piece of
