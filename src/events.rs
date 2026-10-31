@@ -19,7 +19,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::human_input::InputRequested;
 use crate::json_convert::json_to_python;
-use crate::messages::Message;
+use crate::messages::{Content, Message};
 use crate::model_api::StopReason;
 
 /// A piece of the assistant's answer, streamed as soon as it arrives.
@@ -49,8 +49,11 @@ pub struct ToolFinished {
     pub call_id: String,
     #[pyo3(get)]
     pub name: String,
+    /// The result's text (without its images and files, if it has any).
     #[pyo3(get)]
     pub result: String,
+    /// The whole result: text, or parts when it has images or files.
+    pub content: Content,
     #[pyo3(get)]
     pub is_error: bool,
     /// Data for the app from `ToolReturn(metadata=...)`; the model never sees it.
@@ -166,6 +169,13 @@ impl ToolStarted {
 
 #[pymethods]
 impl ToolFinished {
+    /// The whole result: a `str`, or a list of part dicts when it has images or files.
+    #[getter]
+    fn content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let content_json = serde_json::to_value(&self.content).expect("content always serializes");
+        json_to_python(py, &content_json)
+    }
+
     #[getter]
     fn metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         json_to_python(py, &self.metadata)

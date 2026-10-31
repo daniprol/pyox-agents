@@ -29,8 +29,8 @@ use crate::client::Client;
 use crate::errors::{InvalidResponseError, error_for_http_failure, error_for_response, header_text};
 use crate::history_store::messages_from_python;
 use crate::json_convert::{json_to_python, python_to_json};
-use crate::messages::prompt_from_python;
-use crate::openai_responses::{ResponseUsage, input_items, user_content};
+use crate::messages::content_from_python;
+use crate::openai_responses::{ResponseUsage, content_parts, input_items};
 
 // ---------------------------------------------------------------------------
 // Request
@@ -91,8 +91,8 @@ fn decision_input(input: &Bound<'_, PyAny>) -> PyResult<Value> {
         let messages = messages_from_python(input)?;
         return Ok(Value::Array(input_items(&messages, None)));
     }
-    let prompt = prompt_from_python(input)?;
-    Ok(json!([{"role": "user", "content": user_content(&prompt)}]))
+    let prompt = content_from_python(input)?;
+    Ok(json!([{"role": "user", "content": content_parts(&prompt)}]))
 }
 
 /// A history is a list of message dicts, which all have a `"role"`. (Prompt

@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Generic, Literal, TypeVar, final
 
-from pyox_agents.messages import History, HistoryStore, LoadHistory, Message, Prompt, StopReason
+from pyox_agents.messages import ContentPart, History, HistoryStore, LoadHistory, Message, Prompt, StopReason
 
 @final
 class Client:
@@ -125,7 +125,11 @@ class ToolFinished:
     @property
     def name(self) -> str: ...
     @property
-    def result(self) -> str: ...
+    def result(self) -> str:
+        """The result's text (without its images and files, if it has any)."""
+    @property
+    def content(self) -> str | list[ContentPart]:
+        """The whole result: text, or parts when it has images or files."""
     @property
     def is_error(self) -> bool: ...
     @property

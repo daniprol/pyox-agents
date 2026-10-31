@@ -9,8 +9,12 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints, overload
 
 from pyox_agents._core import RunContext
+from pyox_agents.messages import ContentPart
 
 JsonSchema = dict[str, Any]
+
+ToolContent = str | list[str | ContentPart]
+"""What the model reads from a tool: text, or a list of text, images and files."""
 
 
 class ToolLike(Protocol):
@@ -25,7 +29,7 @@ class ToolLike(Protocol):
     def description(self) -> str: ...
     @property
     def parameters(self) -> JsonSchema: ...
-    def invoke(self, arguments: dict[str, Any]) -> "str | ToolReturn | Awaitable[str | ToolReturn]": ...
+    def invoke(self, arguments: dict[str, Any]) -> "ToolContent | ToolReturn | Awaitable[ToolContent | ToolReturn]": ...
 
 
 RequiresApproval = bool | Callable[[RunContext, dict[str, Any]], bool | Awaitable[bool]]
@@ -38,10 +42,11 @@ class ToolReturn:
 
         return ToolReturn(f"Booked {booking.id}", metadata={"receipt_url": booking.url})
 
+    `content` may hold images and files too: `ToolReturn(["The page:", image(png_bytes, media_type="image/png")])`.
     `metadata` is kept in the history and on `ToolFinished.metadata`, never sent to the model.
     """
 
-    content: Any  # text, or anything `json.dumps` accepts
+    content: Any  # text; a list of text, images and files; or anything `json.dumps` accepts
     metadata: Any = None
 
 
@@ -50,7 +55,8 @@ class Tool:
     """A tool the model can call.
 
     `function` receives the arguments as keyword arguments. It can be sync or
-    async, and may return a `str`, a `ToolReturn`, or anything `json.dumps` accepts.
+    async, and may return a `str`, a `ToolReturn`, an `image(...)` or `file(...)`
+    (or a list of them and text), or anything `json.dumps` accepts.
     With `takes_ctx=True` it also gets the run's `RunContext` first.
     Set `run_in_thread=True` for slow sync functions (for example a heavy Rust
     function from a compiled package) so they don't block the event loop.
@@ -77,7 +83,7 @@ class Tool:
         """
         return Tool(name, description, parameters, function=_runs_in_the_frontend, frontend=True)
 
-    async def invoke(self, arguments: dict[str, Any], ctx: RunContext | None = None) -> str | ToolReturn:
+    async def invoke(self, arguments: dict[str, Any], ctx: RunContext | None = None) -> ToolContent | ToolReturn:
         """Called by the Rust agent loop with the arguments chosen by the model
         (and the context, when `takes_ctx` is set)."""
         positional = (ctx,) if self.takes_ctx else ()
@@ -88,12 +94,27 @@ class Tool:
             if inspect.isawaitable(result):
                 result = await result
         if isinstance(result, ToolReturn):
-            return ToolReturn(_as_text(result.content), result.metadata)
-        return _as_text(result)
+            return ToolReturn(_as_content(result.content), result.metadata)
+        return _as_content(result)
 
 
-def _as_text(result: Any) -> str:
-    return result if isinstance(result, str) else json.dumps(result)
+_MEDIA_TYPES = ("image", "file")
+
+
+def _as_content(result: Any) -> ToolContent:
+    """Text stays text; images and files (alone or in a list with text) become content
+    parts; anything else is sent as JSON text."""
+    if isinstance(result, str):
+        return result
+    if _is_media(result):
+        return [result]
+    if isinstance(result, list) and any(_is_media(item) for item in result):
+        return result
+    return json.dumps(result)
+
+
+def _is_media(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("type") in _MEDIA_TYPES and "url" in value
 
 
 def _runs_in_the_frontend(**arguments: Any) -> Any:

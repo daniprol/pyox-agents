@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict, TypeVar
 
 from pyox_agents._core import RunContext, RunFinished
-from pyox_agents.messages import AssistantMessage, Message, ToolCall
+from pyox_agents.messages import AssistantMessage, ContentPart, Message, ToolCall
 
 
 class ModelRequest(TypedDict):
@@ -20,7 +20,7 @@ class ModelRequest(TypedDict):
 class ToolResult(TypedDict):
     """What a tool gave back, as the model will see it."""
 
-    content: str
+    content: str | list[ContentPart]  # parts when the result has images or files
     is_error: bool
     metadata: NotRequired[Any]  # from `ToolReturn(metadata=...)`; never sent to the model
 

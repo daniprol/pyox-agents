@@ -21,7 +21,7 @@
 //! user message       ->  {"role": "user", "content": ...}
 //! assistant message  ->  its reasoning items, then {"role": "assistant", "content": "..."},
 //!                        then one {"type": "function_call", ...} per tool call
-//! tool message       ->  {"type": "function_call_output", "call_id": ..., "output": ...}
+//! tool message       ->  {"type": "function_call_output", "call_id": ..., "output": text or parts}
 //! ```
 
 use futures::StreamExt;
@@ -35,7 +35,7 @@ use crate::errors::{
     InvalidResponseError, NetworkError, RequestTimeoutError, api_error, error_for_http_failure, error_for_http_status,
     error_for_response,
 };
-use crate::messages::{ContentPart, Message, Reasoning, ToolCall, UserContent, arguments_as_text, arguments_from_text};
+use crate::messages::{Content, ContentPart, Message, Reasoning, ToolCall, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions, StopReason};
 use crate::openai_chat::add_tools;
 use crate::sse::SseDecoder;
@@ -134,7 +134,7 @@ pub(crate) fn input_items(messages: &[Message], reasoning_for_model: Option<&str
     // A waiting tool message has no result yet: a later message for the same call will.
     for message in messages.iter().filter(|message| !message.is_waiting()) {
         match message {
-            Message::User { content } => items.push(json!({"role": "user", "content": user_content(content)})),
+            Message::User { content } => items.push(json!({"role": "user", "content": content_parts(content)})),
             Message::Assistant {
                 content,
                 tool_calls,
@@ -162,9 +162,12 @@ pub(crate) fn input_items(messages: &[Message], reasoning_for_model: Option<&str
                     }));
                 }
             }
+            // The output takes the same parts as a user message (text, images, files).
             Message::Tool {
                 tool_call_id, content, ..
-            } => items.push(json!({"type": "function_call_output", "call_id": tool_call_id, "output": content})),
+            } => items.push(
+                json!({"type": "function_call_output", "call_id": tool_call_id, "output": content_parts(content)}),
+            ),
         }
     }
     items
@@ -188,10 +191,11 @@ fn reasoning_item(reasoning: &Reasoning) -> Option<Value> {
 }
 
 /// Text stays a plain string; parts become the API's list of input parts.
-pub(crate) fn user_content(content: &UserContent) -> Value {
+/// Used for user messages and tool outputs alike.
+pub(crate) fn content_parts(content: &Content) -> Value {
     match content {
-        UserContent::Text(text) => json!(text),
-        UserContent::Parts(parts) => parts
+        Content::Text(text) => json!(text),
+        Content::Parts(parts) => parts
             .iter()
             .map(|part| match part {
                 ContentPart::Text { text } => json!({"type": "input_text", "text": text}),
@@ -850,6 +854,25 @@ mod tests {
                 {"type": "input_file", "filename": "a.pdf", "file_data": "data:application/pdf;base64,JVBERg=="},
                 {"type": "input_file", "file_url": "https://example.com/b.pdf"},
             ])
+        );
+    }
+
+    #[test]
+    fn tool_outputs_can_hold_images_and_files() {
+        let history = messages(json!([
+            {"role": "tool", "tool_call_id": "c1", "name": "screenshot", "content": [
+                {"type": "text", "text": "Home page"},
+                {"type": "image", "url": "data:image/png;base64,AAA="},
+            ]},
+        ]));
+        let parameters = Map::new();
+        let body = build_request_body(&request(&history, &parameters), STATELESS, None);
+        assert_eq!(
+            body["input"][0],
+            json!({"type": "function_call_output", "call_id": "c1", "output": [
+                {"type": "input_text", "text": "Home page"},
+                {"type": "input_image", "image_url": "data:image/png;base64,AAA="},
+            ]})
         );
     }
 
