@@ -96,7 +96,12 @@ impl HistoryStore {
             HistoryStore::Python { load, .. } => {
                 let load = Python::attach(|py| load.clone_ref(py));
                 let conversation_id = conversation_id.to_string();
-                let result = call_python(move |py| load.bind(py).call1((conversation_id,)), python_task_locals).await?;
+                let result = call_python(
+                    load,
+                    move |py| Ok(vec![conversation_id.into_pyobject(py)?.into_any()]),
+                    python_task_locals,
+                )
+                .await?;
                 Python::attach(|py| messages_from_python(result.bind(py)).map_err(|error| error.value(py).to_string()))
             }
         };
@@ -125,7 +130,13 @@ impl HistoryStore {
             HistoryStore::Python { save: Some(save), .. } => {
                 let save = Python::attach(|py| save.clone_ref(py));
                 call_python(
-                    move |py| save.bind(py).call1((conversation_id, new_messages_json)),
+                    save,
+                    move |py| {
+                        Ok(vec![
+                            conversation_id.into_pyobject(py)?.into_any(),
+                            new_messages_json.into_pyobject(py)?.into_any(),
+                        ])
+                    },
                     python_task_locals,
                 )
                 .await?;

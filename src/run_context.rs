@@ -214,15 +214,18 @@ impl PythonRunContext {
             let result = match saved {
                 Some(result) => result,
                 None => {
-                    let result = call_python(
-                        move |py| {
-                            function
-                                .bind(py)
-                                .call(args.bind(py), kwargs.as_ref().map(|kwargs| kwargs.bind(py)))
-                        },
-                        &python_task_locals,
-                    )
-                    .await?;
+                    // `functools.partial` holds the arguments, keyword ones included.
+                    let call = Python::attach(|py| -> PyResult<Py<PyAny>> {
+                        let mut partial_arguments = vec![function.into_bound(py)];
+                        partial_arguments.extend(args.bind(py).iter());
+                        let partial = py.import("functools")?.getattr("partial")?;
+                        let call = partial.call(
+                            PyTuple::new(py, partial_arguments)?,
+                            kwargs.as_ref().map(|kwargs| kwargs.bind(py)),
+                        )?;
+                        Ok(call.unbind())
+                    })?;
+                    let result = call_python(call, |_| Ok(Vec::new()), &python_task_locals).await?;
                     let result = Python::attach(|py| python_to_json(result.bind(py)))?;
                     log.lock().unwrap().steps.insert(name, result.clone());
                     result

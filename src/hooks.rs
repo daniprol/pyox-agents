@@ -16,7 +16,6 @@
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
 use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::native_hooks::NativeHooks;
 use serde_json::Value;
@@ -269,10 +268,11 @@ async fn call_python_hook(
 ) -> PyResult<Py<PyAny>> {
     let context = context.clone();
     call_python(
+        function,
         move |py| {
             let mut arguments = vec![context.to_python(py, None)?.into_bound(py).into_any()];
             arguments.extend(make_arguments(py)?);
-            function.bind(py).call1(PyTuple::new(py, arguments)?)
+            Ok(arguments)
         },
         python_task_locals,
     )

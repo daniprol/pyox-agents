@@ -19,10 +19,10 @@ decision = await decide(
     },
 )
 
-decision["urgent"].probability     # 0.97
-decision["team"].choice            # "infra"
-decision["team"].probabilities     # {"infra": 0.96, "billing": 0.04}
-decision["severity"].score         # 1.8
+decision["urgent"].probability  # 0.97
+decision["team"].choice  # "infra"
+decision["team"].probabilities  # {"infra": 0.96, "billing": 0.04}
+decision["severity"].score  # 1.8
 ```
 
 All the questions go in one request, and each answer comes back under its question's name.
@@ -71,10 +71,10 @@ decision = await decide(result.messages, {"done": Predicate("Did the assistant c
 await decide(
     input,
     questions,
-    client=client,                # the same Client as your agents; Client() by default
-    model="gpt-6-luna",           # the default
-    safety_identifier="9f86d0",   # a hashed id of your user, for OpenAI's abuse checks
-    prompt_cache_key="triage",    # groups requests that share a prefix, for the prompt cache
+    client=client,  # the same Client as your agents; Client() by default
+    model="gpt-6-luna",  # the default
+    safety_identifier="9f86d0",  # a hashed id of your user, for OpenAI's abuse checks
+    prompt_cache_key="triage",  # groups requests that share a prefix, for the prompt cache
 )
 ```
 
@@ -106,10 +106,18 @@ agent = Agent(model="gpt-5-mini", tools=[...], hooks=[Hooks(before_tool_call=ris
 ```python
 agents = {"quick": Agent(model="gpt-5-mini"), "deep": Agent(model="gpt-5", prompt="Think it through.")}
 
-decision = await decide(prompt, {"agent": Choice("How hard is this request?", {
-    "quick": "Small talk or a simple question.",
-    "deep": "Needs reasoning, several steps or care.",
-})})
+decision = await decide(
+    prompt,
+    {
+        "agent": Choice(
+            "How hard is this request?",
+            {
+                "quick": "Small talk or a simple question.",
+                "deep": "Needs reasoning, several steps or care.",
+            },
+        )
+    },
+)
 answer = decision["agent"]
 agent = agents[answer.choice] if isinstance(answer, ChoiceAnswer) else agents["deep"]
 result = await agent.run(prompt)

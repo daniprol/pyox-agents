@@ -1,5 +1,6 @@
 """Hooks (`Agent(hooks=[...])`) and the `RunContext` given to tools and hooks."""
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,9 +11,11 @@ from conftest import MakeAgent
 from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
 from pyox_agents import (
+    Approve,
     AssistantMessage,
     HookError,
     Hooks,
+    InputRequested,
     Message,
     RunContext,
     RunFinished,
@@ -195,3 +198,57 @@ async def test_rust_hooks_block_calls_and_trim_requests(fake_openai: FakeOpenAI,
     assert sent[0] == {"role": "user", "content": "question 6"}
     run_finished = events_of_type(events, RunFinished)[0]
     assert len(run_finished.messages) == 35  # the history keeps everything
+
+
+request_id: ContextVar[str] = ContextVar("request_id", default="none")
+
+
+async def test_sync_python_calls_see_the_callers_context_variables(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    """Sync hooks, approval functions, `on_request` and history stores run on another thread, in a copy
+    of the context the run was read in (async ones already ran there)."""
+    seen: list[tuple[str, str]] = []
+
+    def remember(where: str) -> None:
+        seen.append((where, request_id.get()))
+
+    class Store:
+        def load(self, conversation_id: str) -> list[Message]:
+            remember("load")
+            return []
+
+        def save(self, conversation_id: str, new_messages_json: str) -> None:
+            remember("save")
+
+    def needs_approval(ctx: RunContext, arguments: dict[str, Any]) -> bool:
+        remember("requires_approval")
+        return True
+
+    @tool(requires_approval=needs_approval)
+    def delete_file(path: str) -> str:
+        """Delete a file."""
+        return "deleted"
+
+    def approve(request: InputRequested) -> Approve:
+        remember("on_request")
+        request_id.set("changed in on_request")  # a copy: the run's context does not change
+        return Approve()
+
+    fake_openai.queue(tool_calls_response(tool_call("delete_file", path="a.txt")), text_response("Done"))
+    agent = make_agent(
+        tools=[delete_file],
+        history_store=Store(),
+        hooks=[Hooks(before_tool_call=lambda ctx, call: remember("before_tool_call"))],
+    )
+
+    request_id.set("req-42")
+    await agent.run("Delete a.txt", conversation_id="c1", on_request=approve)
+
+    assert seen == [
+        ("load", "req-42"),
+        ("before_tool_call", "req-42"),
+        ("requires_approval", "req-42"),
+        ("on_request", "req-42"),
+        ("save", "req-42"),
+    ]
