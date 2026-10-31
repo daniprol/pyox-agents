@@ -14,7 +14,7 @@ server. The modules read the requests in Python, where they are easy to change.
 ## A server for both
 
 ```python
---8<-- "examples/web_server.py"
+--8 < --"examples/web_server.py"
 ```
 
 `stream(agent, body, **options)` reads the request, runs the agent and returns the stream. `options` go to

@@ -52,5 +52,5 @@ when you can.
 ## Example
 
 ```python
---8<-- "examples/images_and_files.py"
+--8 < --"examples/images_and_files.py"
 ```

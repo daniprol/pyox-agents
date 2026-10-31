@@ -182,7 +182,7 @@ decision = await decide(
     client=client,
 )
 decision["urgent"].probability  # 0.97
-decision["team"].choice         # "infra"
+decision["team"].choice  # "infra"
 ```
 
 Any answer can be a `Refusal` instead. Details and recipes (approval for risky tool calls, picking an agent) in the
