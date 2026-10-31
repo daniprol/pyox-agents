@@ -1,9 +1,9 @@
 """Subagents: an agent the model calls like a tool.
 
-    researcher = Agent(model="gpt-5-mini", prompt="Research topics. Be thorough.", tools=[web_search])
+    researcher = Agent(model="gpt-5-mini", instructions="Research topics. Be thorough.", tools=[web_search])
     writer = Agent(
         model="gpt-5",
-        prompt="Write articles. Use `research` for facts.",
+        instructions="Write articles. Use `research` for facts.",
         tools=[researcher.as_tool("research", "Research a topic and report what you found.")],
     )
 

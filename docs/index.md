@@ -32,7 +32,7 @@ def get_weather(city: str) -> str:
     return f"Sunny in {city}"
 
 
-agent = Agent(model="gpt-5-mini", prompt="Be concise.", tools=[get_weather])
+agent = Agent(model="gpt-5-mini", instructions="Be concise.", tools=[get_weather])
 
 
 async def main() -> None:

@@ -1,7 +1,7 @@
 """`Agent`: the main entry point."""
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal, TypeGuard
+from typing import Any, Literal
 
 from pyox_agents._core import Client, Engine, Run, RunFinished
 from pyox_agents.hooks import Hooks
@@ -37,12 +37,12 @@ Unanswered = Literal["close", "raise"]
 
 
 class Agent:
-    """A model, a system prompt and tools.
+    """A model, its instructions (the system prompt) and tools.
 
     Create it once and reuse it: each `execute()` call has its own history,
     so many runs can happen at the same time.
 
-        agent = Agent(model="gpt-5-mini", prompt="Be brief.", tools=[get_weather])
+        agent = Agent(model="gpt-5-mini", instructions="Be brief.", tools=[get_weather])
         async for event in agent.execute("Weather in Vigo?"):
             ...
 
@@ -72,7 +72,7 @@ class Agent:
         self,
         *,
         model: str,
-        prompt: str = "",
+        instructions: str = "",
         tools: Sequence[ToolLike | Subagent | Callable[..., Any]] = (),
         client: Client | None = None,
         model_parameters: Mapping[str, Any] | None = None,
@@ -85,16 +85,16 @@ class Agent:
         encrypted_reasoning: bool = True,
         unanswered: Unanswered = "close",
     ) -> None:
-        self.model = model
-        self.prompt = prompt
-        self.api = api
+        self._model = model
+        self._instructions = instructions
+        self._api: Api = api
         # Plain functions are accepted too: they are wrapped with `@tool`.
-        self.tools = [tool(item) if _is_plain_function(item) else item for item in tools]
+        self._tools: tuple[ToolLike | Subagent, ...] = tuple(_as_tool(item) for item in tools)
         self._engine = Engine(
             client=client or Client(),
             model=model,
-            prompt=prompt,
-            tools=self.tools,
+            instructions=instructions,
+            tools=list(self._tools),
             model_parameters=dict(model_parameters or {}),
             max_turns=max_turns,
             text_chunks=text_chunks,
@@ -105,6 +105,25 @@ class Agent:
             encrypted_reasoning=encrypted_reasoning,
             unanswered=unanswered,
         )
+
+    # Read-only: the engine copied these when the agent was made, so changing
+    # them later would silently do nothing. Make a new `Agent` instead.
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def instructions(self) -> str:
+        return self._instructions
+
+    @property
+    def api(self) -> Api:
+        return self._api
+
+    @property
+    def tools(self) -> tuple[ToolLike | Subagent, ...]:
+        return self._tools
 
     def execute(
         self,
@@ -219,5 +238,8 @@ class Agent:
         return Subagent(self, name, description, inherit_tools=inherit_tools, talk_to=talk_to, state=state)
 
 
-def _is_plain_function(item: object) -> TypeGuard[Callable[..., Any]]:
-    return callable(item) and not isinstance(item, (Tool, Subagent)) and not hasattr(item, "invoke")
+def _as_tool(item: ToolLike | Subagent | Callable[..., Any]) -> ToolLike | Subagent:
+    """Tools as given; plain functions wrapped with `@tool`."""
+    if isinstance(item, (Tool, Subagent)) or hasattr(item, "invoke"):
+        return item  # ty: ignore[invalid-return-type]  (`hasattr` does not narrow to `ToolLike`)
+    return tool(item) if callable(item) else item  # not a tool at all: the engine raises

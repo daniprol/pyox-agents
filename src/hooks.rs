@@ -17,6 +17,7 @@
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
+use pyox_tools::hooks::ModelRequest;
 use pyox_tools::native_hooks::NativeHooks;
 use serde_json::Value;
 
@@ -102,21 +103,21 @@ impl AgentHooks {
         Ok(())
     }
 
-    /// Returns the messages to send instead of `messages`, if hooks changed them.
+    /// The request as the hooks left it, or `None` when the agent has no
+    /// `before_model_request` hooks. `make_request` builds the request only
+    /// when there are hooks, so agents without them pay nothing.
     pub async fn before_model_request(
         &self,
         context: &Context,
-        messages: &[Message],
+        make_request: impl FnOnce() -> ModelRequest,
         python_task_locals: &TaskLocals,
-    ) -> PyResult<Option<Vec<Message>>> {
+    ) -> PyResult<Option<ModelRequest>> {
         if !self.has(Hook::BeforeModelRequest) {
             return Ok(None);
         }
-        let arguments = vec![to_json(&messages)];
+        let arguments = vec![to_json(&make_request())];
         let changed = self.run(Hook::BeforeModelRequest, context, arguments, python_task_locals);
-        let hooked_messages: Vec<Message> = from_json(Hook::BeforeModelRequest, changed.await?)?;
-        // `None` tells the agent loop nothing changed (it then may send only new messages).
-        Ok((hooked_messages != messages).then_some(hooked_messages))
+        from_json(Hook::BeforeModelRequest, changed.await?).map(Some)
     }
 
     pub async fn after_model_response(

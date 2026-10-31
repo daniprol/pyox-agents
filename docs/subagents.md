@@ -6,10 +6,10 @@ the main agent with `as_tool`:
 ```python
 from pyox_agents import Agent
 
-researcher = Agent(model="gpt-5-mini", prompt="Research topics. Be thorough.", tools=[web_search])
+researcher = Agent(model="gpt-5-mini", instructions="Research topics. Be thorough.", tools=[web_search])
 writer = Agent(
     model="gpt-5",
-    prompt="Write articles. Use `research` to find facts.",
+    instructions="Write articles. Use `research` to find facts.",
     tools=[researcher.as_tool("research", "Research a topic and report what you found.")],
 )
 

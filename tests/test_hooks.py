@@ -17,6 +17,7 @@ from pyox_agents import (
     Hooks,
     InputRequested,
     Message,
+    ModelRequest,
     RunContext,
     RunFinished,
     ToolCall,
@@ -95,8 +96,9 @@ async def test_after_tool_call_changes_results(fake_openai: FakeOpenAI, make_age
 
 
 async def test_before_model_request_changes_only_the_request(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
-    def add_reminder(ctx: RunContext, messages: list[Message]) -> list[Message]:
-        return [*messages, {"role": "user", "content": f"(reminder for turn {ctx.turn}: be brief)"}]
+    def add_reminder(ctx: RunContext, request: ModelRequest) -> ModelRequest:
+        reminder: Message = {"role": "user", "content": f"(reminder for turn {ctx.turn}: be brief)"}
+        return {**request, "messages": [*request["messages"], reminder]}
 
     fake_openai.queue(text_response("Hi"))
     agent = make_agent(hooks=[Hooks(before_model_request=add_reminder)])
@@ -109,6 +111,50 @@ async def test_before_model_request_changes_only_the_request(fake_openai: FakeOp
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi", "tool_calls": [], "model": "test-model"},
     ]
+
+
+async def test_before_model_request_changes_instructions_tools_and_parameters(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    seen: list[ModelRequest] = []
+
+    def focus(ctx: RunContext, request: ModelRequest) -> ModelRequest | None:
+        seen.append(request)
+        if ctx.turn == 1:
+            return None  # sent as the agent would
+        request["instructions"] += " Answer in one word."
+        request["tools"] = [name for name in request["tools"] if name != "add"]
+        request["model_parameters"]["tool_choice"] = "none"
+        return request
+
+    fake_openai.queue(tool_calls_response(tool_call("add", a=1, b=2)), text_response("Three"))
+    agent = make_agent(
+        instructions="Be brief.",
+        tools=[add, list_orders],
+        model_parameters={"temperature": 0},
+        hooks=[Hooks(before_model_request=focus)],
+    )
+
+    await agent.run("1 + 2?")
+
+    assert seen[0]["tools"] == ["add", "list_orders"]
+    assert seen[0]["model_parameters"] == {"temperature": 0}
+    first, second = (request.body for request in fake_openai.requests)
+    assert first["messages"][0] == {"role": "system", "content": "Be brief."}
+    assert [tool["function"]["name"] for tool in first["tools"]] == ["add", "list_orders"]
+    assert "tool_choice" not in first
+    assert second["messages"][0] == {"role": "system", "content": "Be brief. Answer in one word."}
+    assert [tool["function"]["name"] for tool in second["tools"]] == ["list_orders"]
+    assert (second["tool_choice"], second["temperature"]) == ("none", 0)
+    assert agent.instructions == "Be brief."  # the agent itself never changes
+
+
+async def test_before_model_request_cannot_offer_unknown_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    def offer_a_new_tool(ctx: RunContext, request: ModelRequest) -> ModelRequest:
+        return {**request, "tools": ["delete_everything"]}
+
+    with pytest.raises(HookError, match='"delete_everything", which is not one of the run\'s tools'):
+        await make_agent(tools=[add], hooks=[Hooks(before_model_request=offer_a_new_tool)]).run("Hi")
 
 
 async def test_after_model_response_changes_the_answer(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
@@ -159,8 +205,8 @@ async def test_failing_hooks_stop_the_run(fake_openai: FakeOpenAI, make_agent: M
     def no_runs(ctx: RunContext) -> None:
         raise PermissionError("Runs are disabled")
 
-    def broken(ctx: RunContext, messages: list[Message]) -> Any:
-        return "not messages"
+    def broken(ctx: RunContext, request: ModelRequest) -> Any:
+        return "not a request"
 
     with pytest.raises(PermissionError, match="Runs are disabled"):
         await make_agent(hooks=[Hooks(before_run=no_runs)]).run("Hi")

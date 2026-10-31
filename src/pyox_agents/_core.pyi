@@ -340,7 +340,7 @@ class Engine:
         *,
         client: Client,
         model: str,
-        prompt: str = "",
+        instructions: str = "",
         tools: Sequence[Any] = (),
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,

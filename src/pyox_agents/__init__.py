@@ -37,7 +37,7 @@ from pyox_agents._core import (
 from pyox_agents.agent import Agent, Api, TextChunks, Unanswered
 from pyox_agents.content import file, image
 from pyox_agents.decisions import Choice, Predicate, Question, Score, decide
-from pyox_agents.hooks import Hooks, ToolResult
+from pyox_agents.hooks import Hooks, ModelRequest, ToolResult
 from pyox_agents.human_input import Answer, ApprovalRequired, Approve, Deny, OnRequest, Reply
 from pyox_agents.messages import (
     AssistantMessage,
@@ -108,6 +108,7 @@ __all__ = [
     "LoadHistory",
     "MaxTurnsExceededError",
     "Message",
+    "ModelRequest",
     "NetworkError",
     "OnRequest",
     "PendingRequestsError",

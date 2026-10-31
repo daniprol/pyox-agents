@@ -108,7 +108,7 @@ read the run this way too. Numbers in the [benchmarks](benchmarks.md#serving-a-s
 ```python
 agent = Agent(
     model="gpt-5-mini",
-    prompt="Be concise.",  # system prompt
+    instructions="Be concise.",  # system prompt
     model_parameters={"temperature": 0.2},  # sent as-is to the API
     max_turns=20,  # model requests per run before MaxTurnsExceededError
 )

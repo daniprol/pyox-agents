@@ -8,7 +8,7 @@ from pyox_agents import Agent
 
 # Once, at startup: the store owns the database connection pool.
 store = fast_history.sqlite_history("sqlite://chats_sqlx.db")
-agent = Agent(model="gpt-5-mini", prompt="Be brief.", history_store=store)
+agent = Agent(model="gpt-5-mini", instructions="Be brief.", history_store=store)
 
 
 async def main() -> None:

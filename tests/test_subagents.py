@@ -58,8 +58,8 @@ def sent_messages(fake_openai: FakeOpenAI, request_index: int) -> list[dict[str,
 
 
 async def test_the_subagent_answer_is_the_tool_result(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
-    researcher = make_agent(model="small-model", prompt="You research.", tools=[search])
-    writer = make_agent(prompt="You write.", tools=[researcher.as_tool("research", "Research a topic")])
+    researcher = make_agent(model="small-model", instructions="You research.", tools=[search])
+    writer = make_agent(instructions="You write.", tools=[researcher.as_tool("research", "Research a topic")])
     fake_openai.queue(
         tool_calls_response(tool_call("research", task="Find facts about Vigo")),
         text_response("Vigo is in Galicia"),  # the subagent
@@ -308,7 +308,7 @@ async def test_talk_to_user_lets_the_subagent_ask_the_person(fake_openai: FakeOp
 
 
 async def test_talk_to_parent_goes_back_and_forth(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
-    planner = make_agent(prompt="You plan.")
+    planner = make_agent(instructions="You plan.")
     assistant = make_agent(tools=[planner.as_tool("plan", "Plan a trip", talk_to="parent")])
     fake_openai.queue(
         tool_calls_response(tool_call("plan", task="Plan a trip to Vigo")),

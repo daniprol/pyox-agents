@@ -180,10 +180,10 @@ async def test_delegates_to_a_subagent(
         return secret
 
     options = {"api": api, "model_parameters": model_parameters}
-    researcher = make_agent(**options, prompt="Use your tools to answer.", tools=[get_secret])
+    researcher = make_agent(**options, instructions="Use your tools to answer.", tools=[get_secret])
     agent = make_agent(
         **options,
-        prompt="You cannot see the secret code. Always ask the `research` tool for it.",
+        instructions="You cannot see the secret code. Always ask the `research` tool for it.",
         tools=[researcher.as_tool("research", "Finds the secret code.")],
     )
 
@@ -210,10 +210,10 @@ async def test_a_subagent_approval_stops_and_resumes_the_run(make_agent: MakeAge
         booked.append(city)
         return f"Booked {city}"
 
-    travel_agent = make_agent(api="responses", prompt="Book what you are asked with `book`.", tools=[book])
+    travel_agent = make_agent(api="responses", instructions="Book what you are asked with `book`.", tools=[book])
     agent = make_agent(
         api="responses",
-        prompt="Use the `travel` tool to book trips.",
+        instructions="Use the `travel` tool to book trips.",
         tools=[travel_agent.as_tool("travel", "Books trips.")],
     )
 
@@ -241,11 +241,11 @@ async def test_a_subagent_asks_the_user(make_agent: MakeAgent) -> None:
 
     greeter = make_agent(
         api="responses",
-        prompt="First call `ask_user` to ask for the user's name. Then reply with a greeting that uses it.",
+        instructions="First call `ask_user` to ask for the user's name. Then reply with a greeting that uses it.",
     )
     agent = make_agent(
         api="responses",
-        prompt="Use the `greet` tool, then repeat its greeting.",
+        instructions="Use the `greet` tool, then repeat its greeting.",
         tools=[greeter.as_tool("greet", "Greets the user by name.", talk_to="user")],
     )
 
@@ -260,14 +260,16 @@ async def test_a_subagent_asks_the_user(make_agent: MakeAgent) -> None:
 async def test_a_subagent_asks_the_calling_agent(make_agent: MakeAgent) -> None:
     planner = make_agent(
         api="responses",
-        prompt=(
+        instructions=(
             "First call `ask_parent` to ask which city the trip is to. "
             "Then reply with only the city name, in capital letters."
         ),
     )
     agent = make_agent(
         api="responses",
-        prompt="The trip is to Vigo. Use the `plan` tool, answer any question it asks, then repeat its final answer.",
+        instructions=(
+            "The trip is to Vigo. Use the `plan` tool, answer any question it asks, then repeat its final answer."
+        ),
         tools=[planner.as_tool("plan", "Plans a trip.", talk_to="parent")],
     )
 
@@ -286,10 +288,10 @@ async def test_tools_change_the_state(make_agent: MakeAgent) -> None:
         ctx.state["todos"].append(text)
         return "Added"
 
-    helper = make_agent(api="responses", prompt="Manage the todo list with your tools.", tools=[add_todo])
+    helper = make_agent(api="responses", instructions="Manage the todo list with your tools.", tools=[add_todo])
     agent = make_agent(
         api="responses",
-        prompt="Use the `todos` tool to change the user's todo list.",
+        instructions="Use the `todos` tool to change the user's todo list.",
         tools=[helper.as_tool("todos", "Changes the todo list.", state="write")],
     )
 

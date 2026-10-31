@@ -104,7 +104,7 @@ agent = Agent(model="gpt-5-mini", tools=[...], hooks=[Hooks(before_tool_call=ris
 **Pick the agent for a request.** Ask a `Choice` before the run:
 
 ```python
-agents = {"quick": Agent(model="gpt-5-mini"), "deep": Agent(model="gpt-5", prompt="Think it through.")}
+agents = {"quick": Agent(model="gpt-5-mini"), "deep": Agent(model="gpt-5", instructions="Think it through.")}
 
 decision = await decide(
     prompt,

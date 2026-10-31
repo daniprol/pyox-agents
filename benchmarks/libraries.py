@@ -31,7 +31,7 @@ def make_pyox_agent(base_url: str, text_chunks: "TextChunks" = "delta") -> Strea
     agent = Agent(
         client=Client(api_key="not-needed", base_url=base_url),
         model=MODEL,
-        prompt=PROMPT,
+        instructions=PROMPT,
         tools=[get_weather],
         text_chunks=text_chunks,
     )
@@ -230,7 +230,7 @@ def make_pyox_responses_agent(base_url: str, transport: Literal["http", "websock
     agent = Agent(
         client=Client(api_key=API_KEY, base_url=base_url, transport=transport),
         model=RESPONSES_MODEL,
-        prompt=PROMPT,
+        instructions=PROMPT,
         tools=[get_weather],
         api="responses",
         max_turns=MAX_TURNS,

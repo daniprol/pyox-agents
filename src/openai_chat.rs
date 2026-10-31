@@ -13,7 +13,7 @@ use futures::StreamExt;
 use pyo3::prelude::*;
 use pyox_tools::usage::Usage;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::client::ClientSettings;
 use crate::errors::{InvalidResponseError, api_error, error_for_http_failure, error_for_response};
@@ -33,7 +33,7 @@ pub fn build_request_body(request: &ModelRequest<'_>) -> Value {
     body.insert("model".into(), json!(request.model));
     body.insert(
         "messages".into(),
-        Value::Array(chat_messages(request.system_prompt, request.messages)),
+        Value::Array(chat_messages(request.instructions, request.messages)),
     );
     body.insert("stream".into(), json!(true));
     body.insert("stream_options".into(), json!({"include_usage": true}));
@@ -52,16 +52,28 @@ pub fn build_request_body(request: &ModelRequest<'_>) -> Value {
                     }
                 })
             })
-            .collect();
-        body.insert("tools".into(), Value::Array(tool_schemas));
+            .collect::<Vec<_>>();
+        add_tools(&mut body, tool_schemas);
     }
     Value::Object(body)
 }
 
-fn chat_messages(system_prompt: &str, history: &[Message]) -> Vec<Value> {
+/// Adds our function tools after the tools given in `model_parameters` (such
+/// as a provider's hosted tools), instead of replacing them.
+/// The Responses API adapter uses it too.
+pub(crate) fn add_tools(body: &mut Map<String, Value>, tool_schemas: Vec<Value>) {
+    match body.get_mut("tools") {
+        Some(Value::Array(given_tools)) => given_tools.extend(tool_schemas),
+        _ => {
+            body.insert("tools".into(), Value::Array(tool_schemas));
+        }
+    }
+}
+
+fn chat_messages(instructions: &str, history: &[Message]) -> Vec<Value> {
     let mut chat_messages = Vec::with_capacity(history.len() + 1);
-    if !system_prompt.is_empty() {
-        chat_messages.push(json!({"role": "system", "content": system_prompt}));
+    if !instructions.is_empty() {
+        chat_messages.push(json!({"role": "system", "content": instructions}));
     }
 
     // A waiting tool message has no result yet: a later message for the same call will.
@@ -345,7 +357,6 @@ pub async fn stream_chat_completion(
 mod tests {
     use super::*;
     use crate::model_api::test_helpers::{messages, request};
-    use serde_json::Map;
 
     #[test]
     fn text_and_tool_call_fragments_are_assembled() {
@@ -446,7 +457,7 @@ mod tests {
         parameters.insert("stream".into(), json!(false)); // must be overridden
 
         let body = build_request_body(&ModelRequest {
-            system_prompt: "Be brief",
+            instructions: "Be brief",
             ..request(&history, &parameters)
         });
         assert_eq!(body["stream"], json!(true));

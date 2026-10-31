@@ -125,7 +125,8 @@ fn guard() -> Hooks {
             }
             Ok(())
         })
-        .before_model_request(|_context, messages| {
+        .before_model_request(|_context, request| {
+            let messages = &mut request.messages;
             let first_kept = messages.len().saturating_sub(MAX_MESSAGES_PER_REQUEST);
             messages.drain(..first_kept);
             // Start at a user message: tool results without the assistant

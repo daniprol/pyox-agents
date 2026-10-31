@@ -25,14 +25,16 @@
 //! | Hook                   | Receives                    | Can change             |
 //! |------------------------|-----------------------------|------------------------|
 //! | `before_run`           | -                           | -                      |
-//! | `before_model_request` | the messages to send        | the messages to send   |
+//! | `before_model_request` | the request to send         | the request to send    |
 //! | `after_model_response` | the assistant message       | the assistant message  |
 //! | `before_tool_call`     | the tool call               | the tool call          |
 //! | `after_tool_call`      | the tool call and result    | the result             |
 //! | `after_run`            | the whole conversation      | -                      |
 //!
-//! Changes made in `before_model_request` only affect that one request: the
-//! history (and what history stores save) stays as it was.
+//! `before_model_request` gets the whole request (see [`ModelRequest`]): the
+//! instructions, the messages, the names of the tools to offer and the model
+//! parameters. Its changes only affect that one request: the history (and
+//! what history stores save) stays as it was.
 //!
 //! Returning `Err(message)` from `before_tool_call` or `after_tool_call`
 //! blocks the tool: the model gets the message as the tool's error result.
@@ -42,7 +44,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::messages::{Message, ToolCall};
 use crate::native_hooks::{self, Hook};
@@ -57,6 +59,31 @@ pub struct RunContext {
     pub turn: u32,
     /// Tokens used by the run so far.
     pub usage: Usage,
+}
+
+/// What the next model request will send. A `before_model_request` hook may
+/// change any of it, for that one request:
+///
+/// ```ignore
+/// Hooks::new().before_model_request(|context, request| {
+///     request.instructions.push_str("\nAnswer in Galician.");
+///     if context.turn > 5 {
+///         request.tools.retain(|name| name != "web_search"); // stop searching
+///     }
+///     Ok(())
+/// })
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelRequest {
+    /// The system prompt (`Agent(instructions=...)`).
+    pub instructions: String,
+    /// The messages to send. Changing them never changes the history.
+    pub messages: Vec<Message>,
+    /// The names of the tools to offer, in order: some of the run's tools.
+    pub tools: Vec<String>,
+    /// Extra fields for the request body (`Agent(model_parameters=...)`):
+    /// `tool_choice`, `reasoning`, `temperature`...
+    pub model_parameters: Map<String, Value>,
 }
 
 /// The result of a tool, as sent back to the model.
@@ -76,7 +103,7 @@ pub type HookResult = Result<(), String>;
 // One type per hook signature. `Box<dyn Fn ...>` holds any closure;
 // `Send + Sync` lets runs on different threads call it at the same time.
 type BeforeRun = Box<dyn Fn(&RunContext) -> HookResult + Send + Sync>;
-type BeforeModelRequest = Box<dyn Fn(&RunContext, &mut Vec<Message>) -> HookResult + Send + Sync>;
+type BeforeModelRequest = Box<dyn Fn(&RunContext, &mut ModelRequest) -> HookResult + Send + Sync>;
 type AfterModelResponse = Box<dyn Fn(&RunContext, &mut Message) -> HookResult + Send + Sync>;
 type BeforeToolCall = Box<dyn Fn(&RunContext, &mut ToolCall) -> HookResult + Send + Sync>;
 type AfterToolCall = Box<dyn Fn(&RunContext, &ToolCall, &mut ToolResult) -> HookResult + Send + Sync>;
@@ -104,10 +131,10 @@ impl Hooks {
         self
     }
 
-    /// Called before each model request, with the messages about to be sent.
+    /// Called before each model request, with the request about to be sent.
     pub fn before_model_request(
         mut self,
-        hook: impl Fn(&RunContext, &mut Vec<Message>) -> HookResult + Send + Sync + 'static,
+        hook: impl Fn(&RunContext, &mut ModelRequest) -> HookResult + Send + Sync + 'static,
     ) -> Self {
         self.before_model_request = Some(Box::new(hook));
         self
@@ -173,11 +200,11 @@ impl Hooks {
                 Ok(String::new())
             }
             Hook::BeforeModelRequest => {
-                let mut messages: Vec<Message> = next_argument(&mut arguments)?;
+                let mut request: ModelRequest = next_argument(&mut arguments)?;
                 if let Some(before_model_request) = &self.before_model_request {
-                    before_model_request(context, &mut messages)?;
+                    before_model_request(context, &mut request)?;
                 }
-                Ok(to_json(&messages))
+                Ok(to_json(&request))
             }
             Hook::AfterModelResponse => {
                 let mut message: Message = next_argument(&mut arguments)?;

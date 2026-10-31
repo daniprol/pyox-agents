@@ -7,7 +7,18 @@ import pytest
 from conftest import MakeAgent
 from factories import collect_events, error_response, events_of_type, responses_answer, text_response, tool_call
 from fake_openai import ErrorResponse, FakeOpenAI, StreamResponse
-from pyox_agents import ApiError, Hooks, InvalidResponseError, Message, RunContext, RunFinished, TextDelta, Usage, image
+from pyox_agents import (
+    ApiError,
+    Hooks,
+    InvalidResponseError,
+    Message,
+    ModelRequest,
+    RunContext,
+    RunFinished,
+    TextDelta,
+    Usage,
+    image,
+)
 
 
 def add(a: int, b: int) -> int:
@@ -33,7 +44,7 @@ async def test_streams_text_and_sends_a_stateless_request(
 ) -> None:
     fake_openai.queue(responses_answer("Hello there!", response_id="resp_7"))
 
-    events = await collect_events(make_responses_agent(prompt="Be nice.").execute("Hi"))
+    events = await collect_events(make_responses_agent(instructions="Be nice.").execute("Hi"))
 
     assert [event.text for event in events_of_type(events, TextDelta)] == ["Hello ", "there!"]
     result = events[-1]
@@ -250,11 +261,12 @@ async def test_messages_changed_by_hooks_are_all_sent(fake_openai: FakeOpenAI, m
         {"role": "assistant", "content": "Noted", "response_id": "resp_1"},
     ]
 
-    def hide_secrets(ctx: RunContext, messages: list[Message]) -> list[Message]:
-        return [
-            {"role": "user", "content": "[hidden]"} if "secret" in str(message["content"]) else message
-            for message in messages
+    def hide_secrets(ctx: RunContext, request: ModelRequest) -> ModelRequest:
+        messages: list[Message] = [
+            {"role": "user", "content": "[hidden]"} if "secret" in str(message.get("content")) else message
+            for message in request["messages"]
         ]
+        return {**request, "messages": messages}
 
     fake_openai.queue(responses_answer("Ok"))
 
@@ -264,6 +276,43 @@ async def test_messages_changed_by_hooks_are_all_sent(fake_openai: FakeOpenAI, m
     request = fake_openai.requests[0].body
     assert "previous_response_id" not in request
     assert [item["content"] for item in request["input"]] == ["[hidden]", "Noted", "Hi"]
+
+
+async def test_hooks_that_keep_the_messages_keep_continuing_the_stored_response(
+    fake_openai: FakeOpenAI, make_responses_agent: MakeAgent
+) -> None:
+    history: list[Message] = [
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Hello", "response_id": "resp_1"},
+    ]
+
+    def add_the_date(ctx: RunContext, request: ModelRequest) -> ModelRequest:
+        return {**request, "instructions": request["instructions"] + " Today is Friday."}
+
+    fake_openai.queue(responses_answer("Friday"))
+
+    agent = make_responses_agent(instructions="Be brief.", store=True, hooks=[Hooks(before_model_request=add_the_date)])
+    await agent.run("What day is it?", history=history)
+
+    request = fake_openai.requests[0].body
+    assert request["instructions"] == "Be brief. Today is Friday."
+    assert request["previous_response_id"] == "resp_1"
+    assert request["input"] == [{"role": "user", "content": "What day is it?"}]
+
+
+async def test_hosted_tools_are_sent_with_function_tools(
+    fake_openai: FakeOpenAI, make_responses_agent: MakeAgent
+) -> None:
+    def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    fake_openai.queue(responses_answer("Hi"))
+
+    await make_responses_agent(tools=[add], model_parameters={"tools": [{"type": "web_search"}]}).run("Hi")
+
+    tools = fake_openai.requests[0].body["tools"]
+    assert [(tool["type"], tool.get("name")) for tool in tools] == [("web_search", None), ("function", "add")]
 
 
 # Errors and invalid use ---------------------------------------------------------------------------
