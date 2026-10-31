@@ -25,7 +25,7 @@ class FilePart(TypedDict):
 
 
 ContentPart = TextPart | ImagePart | FilePart
-"""One part of a user message. Make images and files with `image(...)` and `file(...)`."""
+"""One part of a user message or tool result. Make images and files with `image(...)` and `file(...)`."""
 
 Prompt = str | Sequence[str | ContentPart]
 """Text, or a list of text, images and files: `["What is this?", image("cat.png")]`."""
@@ -76,7 +76,7 @@ class ToolMessage(TypedDict):
     role: Literal["tool"]
     tool_call_id: str
     name: str
-    content: str
+    content: str | list[ContentPart]  # parts when the result has images or files
     is_error: NotRequired[bool]
     # None of these is ever sent to the model:
     metadata: NotRequired[Any]  # from `ToolReturn(metadata=...)`

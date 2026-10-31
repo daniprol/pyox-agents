@@ -16,6 +16,8 @@
 //! {"role": "assistant", "content": "3", "model": "gpt-5-mini", "response_id": "resp_1",
 //!  "reasoning": [{"id": "rs_1", "summary": ["Adding..."], "encrypted_content": "gAAAA..."}]}
 //! {"role": "tool", "tool_call_id": "call_1", "name": "add", "content": "3", "is_error": False}
+//! {"role": "tool", "tool_call_id": "call_2", "name": "screenshot", "content": [{"type": "text", "text": "The page:"},
+//!  {"type": "image", "url": "data:image/png;base64,..."}]}
 //! ```
 //!
 //! A tool message can also hold data the model never sees: `metadata` (from
@@ -40,7 +42,7 @@ use serde_json::{Map, Value};
 #[serde(tag = "role", rename_all = "snake_case")]
 pub enum Message {
     User {
-        content: UserContent,
+        content: Content,
     },
     Assistant {
         #[serde(default)]
@@ -65,7 +67,8 @@ pub enum Message {
     Tool {
         tool_call_id: String,
         name: String,
-        content: String,
+        /// Text, or parts when the result has images or files.
+        content: Content,
         #[serde(default)]
         is_error: bool,
         /// Data for the app, never sent to the model (`ToolReturn(metadata=...)`).
@@ -89,7 +92,7 @@ impl Message {
         Message::Tool {
             tool_call_id,
             name,
-            content,
+            content: Content::Text(content),
             is_error,
             metadata: Value::Null,
             requests: Vec::new(),
@@ -209,17 +212,37 @@ pub enum Reply {
     },
 }
 
-/// What a user message contains: plain text, or a list of parts when it
-/// has images or files. `#[serde(untagged)]` means there is no tag: a JSON
-/// string is read as `Text`, a JSON list as `Parts`.
+/// What a user message or a tool result contains: plain text, or a list of
+/// parts when it has images or files. `#[serde(untagged)]` means there is no
+/// tag: a JSON string is read as `Text`, a JSON list as `Parts` (so tool
+/// messages stored as text before parts existed load as they are).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum UserContent {
+pub enum Content {
     Text(String),
     Parts(Vec<ContentPart>),
 }
 
-/// One part of a user message. Its `"type"` field says which kind it is.
+impl Content {
+    /// Only the text: the text parts joined by new lines (images and files left out).
+    pub fn text(&self) -> String {
+        match self {
+            Content::Text(text) => text.clone(),
+            Content::Parts(parts) => {
+                let texts: Vec<&str> = parts
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                texts.join("\n")
+            }
+        }
+    }
+}
+
+/// One part of a user message or tool result. Its `"type"` field says which kind it is.
 ///
 /// Images and files are given by URL: a web address (`https://...`), or a
 /// `data:` URL holding the bytes themselves (`data:application/pdf;base64,...`).
@@ -240,15 +263,15 @@ pub enum ContentPart {
 }
 
 /// Lets plain text become user content with `.into()`.
-impl From<String> for UserContent {
+impl From<String> for Content {
     fn from(text: String) -> Self {
-        UserContent::Text(text)
+        Content::Text(text)
     }
 }
 
-impl From<&str> for UserContent {
+impl From<&str> for Content {
     fn from(text: &str) -> Self {
-        UserContent::Text(text.to_string())
+        Content::Text(text.to_string())
     }
 }
 
@@ -372,7 +395,7 @@ mod tests {
 
         assert_eq!(messages[0], Message::User { content: "Hi".into() });
         let Message::User {
-            content: UserContent::Parts(parts),
+            content: Content::Parts(parts),
         } = &messages[1]
         else {
             panic!("expected parts, got {:?}", messages[1]);

@@ -66,7 +66,7 @@ use crate::human_input::{
     reply_from_python, reply_to, unanswered_note, waiting_calls,
 };
 use crate::json_convert::python_to_json;
-use crate::messages::{Message, Reply, RequestKind, ToolCall, UserContent, prompt_from_python};
+use crate::messages::{Content, Message, Reply, RequestKind, ToolCall, content_from_python};
 use crate::model_api::{Api, ModelRequest, StopReason, last_response_id, stream_model_turn};
 use crate::run::Run;
 use crate::run_context::Context;
@@ -280,7 +280,7 @@ impl Engine {
                 )));
             }
         }
-        let prompt = prompt.as_ref().map(prompt_from_python).transpose()?;
+        let prompt = prompt.as_ref().map(content_from_python).transpose()?;
         let history = match history {
             Some(history) => messages_from_python(&history)?,
             None => Vec::new(),
@@ -325,7 +325,7 @@ pub struct RunInputs {
     pub text_chunks: TextChunking,
     /// History given directly with `execute(history=...)`.
     pub history: Vec<Message>,
-    pub prompt: Option<UserContent>,
+    pub prompt: Option<Content>,
     /// Set when the history is loaded from (and saved to) the history store.
     pub conversation_id: Option<String>,
     /// The stored response this run continues, from `execute(previous_response_id=...)`.
@@ -713,7 +713,8 @@ async fn add_tool_messages(
             let finished = ToolFinished {
                 call_id: tool_call_id.clone(),
                 name: name.clone(),
-                result: content.clone(),
+                result: content.text(),
+                content: content.clone(),
                 is_error: *is_error,
                 metadata: metadata.clone(),
                 from_app: requests.iter().any(|request| request.kind == RequestKind::Frontend),

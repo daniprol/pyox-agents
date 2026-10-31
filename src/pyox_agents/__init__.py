@@ -58,7 +58,7 @@ from pyox_agents.messages import (
     UserMessage,
 )
 from pyox_agents.subagents import StateAccess, Subagent, TalkTo
-from pyox_agents.tools import RequiresApproval, Tool, ToolLike, ToolReturn, tool
+from pyox_agents.tools import RequiresApproval, Tool, ToolContent, ToolLike, ToolReturn, tool
 
 DecisionAnswer = PredicateAnswer | ChoiceAnswer | ScoreAnswer | Refusal
 """Any answer in a `Decision`."""
@@ -141,6 +141,7 @@ __all__ = [
     "TextPart",
     "Tool",
     "ToolCall",
+    "ToolContent",
     "ToolFinished",
     "ToolLike",
     "ToolMessage",

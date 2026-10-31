@@ -7,20 +7,20 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 pub use pyox_tools::messages::{
-    ContentPart, Message, Reasoning, Reply, Request, RequestKind, ToolCall, UserContent, waiting_calls,
+    Content, ContentPart, Message, Reasoning, Reply, Request, RequestKind, ToolCall, waiting_calls,
 };
 use serde_json::Value;
 
 use crate::json_convert::python_to_json;
 
-/// Reads a prompt given from Python: a `str`, or a list of strings and part
-/// dicts (as made by `pyox_agents.image(...)` and `file(...)`).
-pub fn prompt_from_python(prompt: &Bound<'_, PyAny>) -> PyResult<UserContent> {
-    if let Ok(text) = prompt.extract::<String>() {
-        return Ok(UserContent::Text(text));
+/// Reads a prompt (or a tool's content) given from Python: a `str`, or a
+/// list of strings and part dicts (as made by `pyox_agents.image(...)` and `file(...)`).
+pub fn content_from_python(content: &Bound<'_, PyAny>) -> PyResult<Content> {
+    if let Ok(text) = content.extract::<String>() {
+        return Ok(Content::Text(text));
     }
-    let Value::Array(items) = python_to_json(prompt)? else {
-        return Err(PyValueError::new_err("The prompt must be a str or a list"));
+    let Value::Array(items) = python_to_json(content)? else {
+        return Err(PyValueError::new_err("Content must be a str or a list"));
     };
     let parts = items
         .into_iter()
@@ -28,10 +28,10 @@ pub fn prompt_from_python(prompt: &Bound<'_, PyAny>) -> PyResult<UserContent> {
             // A plain string in the list is a text part.
             Value::String(text) => Ok(ContentPart::Text { text }),
             part => serde_json::from_value(part)
-                .map_err(|error| PyValueError::new_err(format!("Invalid prompt part: {error}"))),
+                .map_err(|error| PyValueError::new_err(format!("Invalid content part: {error}"))),
         })
         .collect::<PyResult<_>>()?;
-    Ok(UserContent::Parts(parts))
+    Ok(Content::Parts(parts))
 }
 
 /// The APIs want tool arguments as JSON text. Invalid arguments were stored
