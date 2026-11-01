@@ -22,6 +22,7 @@ uv run run_all.py --only langgraph agno     # only some libraries, compared with
 uv run load_test.py --duration 5s           # FastAPI benchmark, quick (~10 min; full run ~1 h)
 uv run websocket_bench.py --runs 100        # Responses API over HTTP and WebSocket (~5 min)
 uv run stream_bench.py                      # streaming as events, batches or AI SDK text (~3 min)
+uv run sync_bench.py                        # the sync API against the async one (~1 min)
 uv run chart.py                             # redraw the README chart from results.json
 ```
 
@@ -167,6 +168,31 @@ Each Python step costs far more than the event it carries. A batch holds the eve
 so batching only pays off when events pile up: a model that answers faster than Python reads it (cached answers,
 a fast local model), or a busy server that falls behind. A real model streaming one piece every few milliseconds
 gives one event per step either way, and the three ways cost about the same.
+
+## Sync code: `agent.run_sync()`
+
+The [sync API](https://daniprol.github.io/pyox-agents/sync/) runs the agent in Rust with no Python event loop. Here
+against the async API and against `asyncio.run` around it, what sync code (a Django view, a Celery task) would do
+without it. 8 at a time means 8 tasks on one event loop for the async API, and 8 threads, like a Gunicorn
+`gthread` worker, for the other two
+([`sync_bench.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/sync_bench.py)).
+
+<!-- sync:start -->
+Intel(R) Xeon(R) Processor @ 2.80GHz. `tool` scenario, 1000 runs per row.
+
+| Way | Runs at a time | Latency p50 | CPU per run | Throughput |
+|---|--:|--:|--:|--:|
+| `await agent.run(...)` | 1 | 2.77 ms | 2.32 ms | 339 runs/s |
+| `agent.run_sync(...)` | 1 | 1.87 ms | 1.01 ms | 505 runs/s |
+| `asyncio.run(agent.run(...))` | 1 | 2.80 ms | 2.55 ms | 340 runs/s |
+| `await agent.run(...)` | 8 | 9.27 ms | 2.07 ms | 726 runs/s |
+| `agent.run_sync(...)` | 8 | 6.50 ms | 0.95 ms | 1143 runs/s |
+| `asyncio.run(agent.run(...))` | 8 | 18.10 ms | 3.67 ms | 429 runs/s |
+<!-- sync:end -->
+
+A sync run takes half the CPU of an async one: each event is a plain hand-over to a waiting thread, where the async
+API goes through the event loop. A sync run still holds its thread until it ends, so for hundreds of runs at once
+an async server is the better fit.
 
 ## Behind a FastAPI streaming endpoint
 
@@ -426,3 +452,4 @@ was rejected (~40 ms delay on reused connections).
 | [`websocket_bench.py`](websocket_bench.py) | Runs the Responses API HTTP / WebSocket comparison and writes the results |
 | [`stream_bench.py`](stream_bench.py) | Compares streaming as events, batches and AI SDK text, and writes the results |
 | [`paced_server.py`](paced_server.py) | Fake Chat Completions server that streams at a real model's pace |
+| [`sync_bench.py`](sync_bench.py) | Compares the sync API with the async one, and writes the results |
