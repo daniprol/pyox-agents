@@ -9,6 +9,7 @@ from pyox_agents.human_input import OnRequest, Reply
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
 from pyox_agents.schema import output_format
 from pyox_agents.subagents import StateAccess, Subagent, TalkTo
+from pyox_agents.telemetry import Instrumentation, recorder_for, require_opentelemetry
 from pyox_agents.tools import Tool, ToolLike, tool
 
 TextChunks = Literal["delta", "paragraph", "message"] | int
@@ -77,12 +78,17 @@ class Agent(Generic[OutputT]):
 
         agent = Agent(model="gpt-5-mini", output_type=Ticket)
         ticket = (await agent.run("Printer on fire")).output  # a `Ticket`
+
+    `name` names the agent in traces. `instrument` says if its runs are traced with OpenTelemetry
+    (see `pyox_agents.telemetry`): `None` follows `pyox_agents.instrument()`, `True` traces with the
+    global providers, `False` never traces, or give an `Instrumentation`.
     """
 
     def __init__(
         self,
         *,
         model: str,
+        name: str | None = None,
         instructions: str = "",
         tools: Sequence[ToolLike | Subagent | Callable[..., Any]] = (),
         client: Client | None = None,
@@ -96,8 +102,13 @@ class Agent(Generic[OutputT]):
         encrypted_reasoning: bool = True,
         unanswered: Unanswered = "close",
         output_type: type[OutputT] | Mapping[str, Any] | None = None,
+        instrument: Instrumentation | bool | None = None,
     ) -> None:
+        if instrument:
+            require_opentelemetry()
         self._model = model
+        self._name = name
+        self._instrument = instrument
         self._instructions = instructions
         self._api: Api = api
         # Plain functions are accepted too: they are wrapped with `@tool`.
@@ -107,6 +118,7 @@ class Agent(Generic[OutputT]):
         self._engine = Engine(
             client=client or Client(),
             model=model,
+            name=name,
             instructions=instructions,
             tools=list(self._tools),
             model_parameters=dict(model_parameters or {}),
@@ -128,6 +140,10 @@ class Agent(Generic[OutputT]):
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def name(self) -> str | None:
+        return self._name
 
     @property
     def instructions(self) -> str:
@@ -198,6 +214,7 @@ class Agent(Generic[OutputT]):
             on_request=on_request,
             frontend_tools=[dict(tool) for tool in frontend_tools] if frontend_tools else None,
             state=state,
+            telemetry=recorder_for(self._instrument),
         )
 
     async def run(

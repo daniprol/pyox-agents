@@ -17,10 +17,11 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::client::ClientSettings;
-use crate::errors::{InvalidResponseError, api_error, error_for_http_failure, error_for_response};
+use crate::errors::{InvalidResponseError, api_error, error_for_http_failure, error_for_response, header_text};
 use crate::messages::{Content, ContentPart, Message, ToolCall, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, StopReason};
 use crate::sse::SseDecoder;
+use crate::telemetry::now_ns;
 use crate::text_chunks::TextOutput;
 
 // ---------------------------------------------------------------------------
@@ -366,14 +367,18 @@ pub async fn stream_chat_completion(
     if !response.status().is_success() {
         return Err(error_for_response(response).await);
     }
+    let request_id = header_text(response.headers(), "x-request-id");
 
     let mut sse_decoder = SseDecoder::default();
     let mut accumulator = ChunkAccumulator::default();
     let mut received_done = false;
+    let mut first_chunk_at = None;
     let mut byte_stream = response.bytes_stream();
 
     'reading: while let Some(network_chunk) = byte_stream.next().await {
         let network_chunk = network_chunk.map_err(error_for_http_failure)?;
+        // `get_or_insert_with`: sets it the first time only.
+        first_chunk_at.get_or_insert_with(now_ns);
         for event_data in sse_decoder.push(&network_chunk) {
             if event_data == "[DONE]" {
                 received_done = true;
@@ -396,6 +401,8 @@ pub async fn stream_chat_completion(
     }
     Ok(AssistantTurn {
         retries: sent.retries,
+        first_chunk_at,
+        request_id,
         ..accumulator.into_turn()
     })
 }

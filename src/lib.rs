@@ -57,6 +57,7 @@ mod run_context;
 mod sse;
 mod state;
 mod subagents;
+mod telemetry;
 mod text_chunks;
 mod tools;
 mod ws;

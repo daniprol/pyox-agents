@@ -74,6 +74,7 @@ use crate::run::Run;
 use crate::run_context::Context;
 use crate::state::{RunState, apply_state_changes};
 use crate::subagents::{asked_parent, question_of, take_subagent_answers};
+use crate::telemetry::{ModelRequestRecord, Span, Telemetry, now_ns};
 use crate::text_chunks::{TextChunking, TextOutput};
 use crate::tools::{ToolDefinition, ToolImplementation, ToolResult, error_result, success_result};
 use crate::ws_pool::RunSocket;
@@ -84,6 +85,8 @@ const EVENT_QUEUE_CAPACITY: usize = 64;
 
 /// The configuration shared (read-only) by every run of an agent.
 pub struct AgentConfig {
+    /// `Agent(name=...)`: names the run's span (see `telemetry`).
+    name: Option<String>,
     client: ClientSettings,
     /// Chat Completions or Responses, with its settings.
     api: Api,
@@ -148,7 +151,7 @@ pub struct Engine {
 impl Engine {
     #[new]
     #[pyo3(signature = (
-        *, client, model, instructions = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
+        *, client, model, name = None, instructions = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
         text_chunks = None, history_store = None, hooks = Vec::new(),
         api = "chat", store = false, encrypted_reasoning = true, unanswered = "close",
         output_schema = None, output_parser = None,
@@ -157,6 +160,7 @@ impl Engine {
     fn new(
         client: PyRef<'_, Client>,
         model: String,
+        name: Option<String>,
         instructions: String,
         tools: Vec<Bound<'_, PyAny>>,
         model_parameters: Option<Bound<'_, PyDict>>,
@@ -211,6 +215,7 @@ impl Engine {
 
         Ok(Engine {
             config: Arc::new(AgentConfig {
+                name,
                 client: client.settings.clone(),
                 api,
                 model,
@@ -241,9 +246,11 @@ impl Engine {
     /// `frontend_tools` adds tools the app runs, for this run only (dicts with
     /// `name`, `description` and `parameters`, as AG-UI clients send them).
     /// `state` is the run's state, shared with the app (see `state`).
+    /// `telemetry` is the recorder that traces this run (see `telemetry`), or `None`.
     #[pyo3(signature = (
         prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None,
         previous_response_id = None, answers = None, on_request = None, frontend_tools = None, state = None,
+        telemetry = None,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
     fn execute(
@@ -259,6 +266,7 @@ impl Engine {
         on_request: Option<Py<PyAny>>,
         frontend_tools: Option<Vec<Bound<'_, PyAny>>>,
         state: Option<Bound<'_, PyAny>>,
+        telemetry: Option<Py<PyAny>>,
     ) -> PyResult<Run> {
         let text_chunks = match text_chunks {
             Some(value) => TextChunking::from_python(&value)?,
@@ -356,6 +364,10 @@ impl Engine {
             extra_tools: frontend_tools,
             state: RunState::new(state),
             stop,
+            telemetry: match telemetry {
+                Some(recorder) => Telemetry::Recorder(Arc::new(recorder)),
+                None => Telemetry::Off,
+            },
         };
         Ok(Run::new(inputs, event_receiver, stop_sender))
     }
@@ -384,6 +396,8 @@ pub struct RunInputs {
     pub state: RunState,
     /// Set by `run.stop()`; a subagent shares its caller's.
     pub stop: StopSignal,
+    /// Where the run's span goes, if the run is traced.
+    pub telemetry: Telemetry,
 }
 
 /// `true` once `run.stop()` was called. A `watch` channel holds one value:
@@ -426,9 +440,36 @@ pub async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals
 /// `usage` and `messages` (the conversation) are kept up to date as the run
 /// goes, so the caller has them even when the run fails. On success they
 /// move into the `RunFinished`.
+///
+/// When the run is traced, everything happens inside its `invoke_agent`
+/// span, and its Python calls see that span as the current one.
 pub async fn run_agent_loop(
     inputs: RunInputs,
     python_task_locals: TaskLocals,
+    usage: &mut Usage,
+    messages: &mut Vec<Message>,
+) -> PyResult<RunFinished> {
+    let config = inputs.config.clone();
+    let (run_span, python_task_locals) = inputs
+        .telemetry
+        .start_run(
+            config.name.as_deref(),
+            &config.model,
+            &config.client.base_url,
+            inputs.conversation_id.as_deref(),
+            &python_task_locals,
+        )
+        .await;
+    let outcome = agent_loop(inputs, python_task_locals, &run_span, usage, messages).await;
+    run_span.finish_run(&outcome, *usage).await;
+    outcome
+}
+
+/// The body of `run_agent_loop`.
+async fn agent_loop(
+    inputs: RunInputs,
+    python_task_locals: TaskLocals,
+    run_span: &Span,
     usage: &mut Usage,
     messages: &mut Vec<Message>,
 ) -> PyResult<RunFinished> {
@@ -445,6 +486,7 @@ pub async fn run_agent_loop(
         extra_tools,
         state,
         stop,
+        telemetry: _, // used by `run_agent_loop`
     } = inputs;
     // The tools of this run: the agent's, plus the ones added for this run.
     let tools: Vec<Arc<ToolDefinition>> = config.tools.iter().cloned().chain(extra_tools).collect();
@@ -554,6 +596,7 @@ pub async fn run_agent_loop(
                 context: &context,
                 python_task_locals: &python_task_locals,
                 stop: &stop,
+                span: run_span,
             };
             resume_waiting_calls(&run, answers).await?
         };
@@ -618,10 +661,22 @@ pub async fn run_agent_loop(
         // `select!` runs both at once and keeps the first to finish, dropping
         // the other (like `asyncio.wait(..., return_when=FIRST_COMPLETED)`
         // followed by cancelling the rest). Dropping the stream closes it.
+        let started_at = now_ns();
         let streamed = tokio::select! {
-            assistant_turn = stream_model_turn(&config.client, config.api, &request, &mut run_socket, &mut text_output) => Some(assistant_turn?),
+            assistant_turn = stream_model_turn(&config.client, config.api, &request, &mut run_socket, &mut text_output) => Some(assistant_turn),
             () = stop_called(&stop) => None,
         };
+        let record = ModelRequestRecord {
+            turn,
+            started_at,
+            ended_at: now_ns(),
+            request: &request,
+            outcome: streamed.as_ref(),
+        };
+        run_span.record_model_request(record).await;
+        // `transpose` turns "maybe a result" into "a result that is maybe
+        // there", so `?` can raise the request's error.
+        let streamed = streamed.transpose()?;
         // The message ended: send any text still grouped.
         let streamed_text = text_output.finish().await;
         let Some(assistant_turn) = streamed else {
@@ -688,6 +743,7 @@ pub async fn run_agent_loop(
                     context: &context,
                     python_task_locals: &python_task_locals,
                     stop: &stop,
+                    span: run_span,
                 };
                 join_all(
                     tool_calls
@@ -862,6 +918,8 @@ pub struct ToolRun<'a> {
     pub python_task_locals: &'a TaskLocals,
     /// Set by `run.stop()`: a subagent this call runs stops too.
     pub stop: &'a StopSignal,
+    /// The run's span: each call's span goes under it.
+    pub span: &'a Span,
 }
 
 /// Runs one tool call and returns its tool message, which is *waiting* when
@@ -869,13 +927,41 @@ pub struct ToolRun<'a> {
 /// `earlier` is the call's waiting message when a resumed run continues it:
 /// its replies and saved steps are reused. `subagent_answers` are replies for
 /// the waiting calls of the subagent it runs.
+///
+/// When the run is traced, the call has its own `execute_tool` span, and its
+/// Python code runs with that span as the current one.
 async fn run_tool_call(
     run: &ToolRun<'_>,
     call: &ToolCall,
     earlier: Option<&Message>,
     subagent_answers: HashMap<String, Reply>,
 ) -> PyResult<(Message, Usage)> {
-    let call_log = CallLog::new(call.clone(), earlier);
+    let tool = run.tools.iter().find(|tool| tool.name == call.name);
+    let description = tool.map_or("", |tool| tool.description.as_str());
+    let kind = tool.map_or("unknown", |tool| tool.implementation.kind());
+    let (span, python_task_locals) = run
+        .span
+        .start_tool(call, description, kind, run.python_task_locals)
+        .await;
+    // The same run, with this call's TaskLocals (`..*run` copies the other fields).
+    let run = ToolRun {
+        python_task_locals: &python_task_locals,
+        ..*run
+    };
+    let outcome = tool_message(&run, call, earlier, subagent_answers, span.clone()).await;
+    span.finish_tool(&outcome).await;
+    outcome
+}
+
+/// The body of `run_tool_call`.
+async fn tool_message(
+    run: &ToolRun<'_>,
+    call: &ToolCall,
+    earlier: Option<&Message>,
+    subagent_answers: HashMap<String, Reply>,
+    span: Span,
+) -> PyResult<(Message, Usage)> {
+    let call_log = CallLog::new(call.clone(), earlier, span);
     call_log.lock().unwrap().subagent_answers = subagent_answers;
     let result = tool_call_result(run, &call_log).await?;
     // `None` means waiting: no result yet.
