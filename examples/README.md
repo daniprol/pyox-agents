@@ -71,6 +71,14 @@ uv run uvicorn examples.web_server:app --reload
 Serves the agent of example 6 to `useChat()` (AI SDK) at `/api/chat` and to AG-UI clients (CopilotKit) at
 `/api/agent`. See [Web frontends](https://daniprol.github.io/pyox-agents/web-frontends/).
 
+## 9. Structured output
+
+```bash
+uv run examples/structured_output.py
+```
+
+Turns a customer message into a `Ticket` dataclass (`Agent(output_type=Ticket)`).
+
 ## Using another OpenAI-compatible server
 
 ```bash

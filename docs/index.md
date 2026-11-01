@@ -2,7 +2,7 @@
 
 Minimal and fast AI agents for Python, with a Rust core. Inspired by [pi](https://github.com/earendil-works/pi).
 
-You define the agent (model, prompt, tools) in Python and iterate over its events.
+You define the agent (model, instructions, tools) in Python and iterate over its events.
 Rust does the heavy lifting: HTTP, streaming decoding, JSON parsing and the agent loop.
 
 !!! note "Status: early"
@@ -60,9 +60,10 @@ print(result.text)
 
 ## Next
 
-- [Streaming](streaming.md): the events of a run and how to group streamed text.
+- [Streaming](streaming.md): the events of a run, how it ends (and `run.stop()`), and grouping streamed text.
 - [Tools](tools.md): Python functions and your own Rust tools.
-- [Images and files](images-and-files.md): send pictures and PDFs in a prompt.
+- [Structured output](structured-output.md): answers as dataclasses, TypedDicts or pydantic models.
+- [Images and files](images-and-files.md): send pictures and PDFs in a prompt, and get them from tools.
 - [History](history.md): continue conversations and store them in a database.
 - [Hooks](hooks.md): watch or change a run at fixed points.
 - [Client and errors](client.md): API keys, other servers, timeouts and retries.

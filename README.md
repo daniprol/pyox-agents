@@ -2,7 +2,7 @@
 
 Minimal and fast AI agents for Python, with a Rust core. Inspired by [pi](https://github.com/earendil-works/pi).
 
-You define the agent (model, prompt, tools) in Python and iterate over its events.
+You define the agent (model, instructions, tools) in Python and iterate over its events.
 Rust does the heavy lifting: HTTP, streaming (SSE) decoding, JSON parsing and the agent loop.
 
 ```python
@@ -56,12 +56,12 @@ After changing Rust code, `uv sync` (or `uv run ...`) rebuilds it automatically.
 
 `agent.execute(...)` returns a `Run` you iterate with `async for`. Events are small, read-only objects backed by Rust:
 
-| Event          | Fields                                                              |
-|----------------|---------------------------------------------------------------------|
-| `TextDelta`    | `text`                                                              |
-| `ToolStarted`  | `call_id`, `name`, `arguments` (dict)                               |
-| `ToolFinished` | `call_id`, `name`, `result`, `is_error`                             |
-| `RunFinished`  | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages` |
+| Event          | Fields                                                                                    |
+|----------------|-------------------------------------------------------------------------------------------|
+| `TextDelta`    | `text`                                                                                    |
+| `ToolStarted`  | `call_id`, `name`, `arguments` (dict)                                                     |
+| `ToolFinished` | `call_id`, `name`, `result` (text), `content` (with images), `is_error`                   |
+| `RunFinished`  | `text`, `stop_reason`, `output`, `turns`, `usage`, `response_id`, `messages`, `new_messages` |
 
 Tools that wait for a person (`InputRequested`), [shared state](https://daniprol.github.io/pyox-agents/state/)
 (`StateChanged`) and [subagents](https://daniprol.github.io/pyox-agents/subagents/) (`SubagentStarted`,
@@ -92,6 +92,11 @@ async for event in agent.execute("Explain asyncio", text_chunks=20):  # override
 `await agent.run(prompt)` runs to the end and returns the `RunFinished` event.
 
 One `Agent` can serve many runs at the same time: each run has its own history.
+
+**How a run ends.** `RunFinished.stop_reason` is `"end"` (the model answered), `"waiting"` (tool calls wait for a
+person), `"length"` (cut by the token limit), `"refusal"` or `"stopped"`. `run.stop()` ends a run at the next safe
+point, keeping the text streamed so far and a valid history; keep reading until `RunFinished`. A run that fails
+raises an `AgentError` with the history so far in `error.messages`, to continue with `history=error.messages`.
 
 ## History
 
@@ -203,6 +208,26 @@ await agent.run(["Summarize this report", file("report.pdf")])
 They stay in the history as parts of the user message: `{"type": "image", "url": ...}` and
 `{"type": "file", "url": ..., "filename": ...}`.
 
+Tools can return them too (`return ToolReturn(["The page:", image(png, media_type="image/png")])`). The Responses
+API gets them in the tool output; Chat Completions tool messages only take text, so they follow in a user message.
+
+## Structured output
+
+`output_type` makes the answer JSON matching a dataclass, `TypedDict`, pydantic model (no dependency: it is used
+by duck typing) or JSON schema, sent in OpenAI's strict mode. `RunFinished.output` has it as that type:
+
+```python
+@dataclass
+class Ticket:
+    team: Literal["billing", "support"]
+    summary: str
+    order_id: str | None  # strict mode: every field is required, so optional ones allow null
+
+
+agent = Agent(model="gpt-5-mini", output_type=Ticket)
+ticket = (await agent.run("Order 1234 arrived broken")).output  # a Ticket (None if refused or cut off)
+```
+
 ## Tools
 
 **Python tools.** Decorate a function (sync or async) with `@tool`. The JSON schema comes from the type hints,
@@ -217,8 +242,9 @@ async def search(query: Annotated[str, "What to look for"], order: Literal["new"
     """Search the documents."""
 ```
 
-Results that are not `str` are sent to the model as JSON. If a tool raises, the model gets the error message
-(and `ToolFinished.is_error` is `True`); the run continues.
+Parameters can also be dataclasses, `TypedDict`s or pydantic models: they get a full schema, and dataclass and
+pydantic arguments arrive built. Results that are not `str` are sent to the model as JSON. If a tool raises, the
+model gets the error message (and `ToolFinished.is_error` is `True`); the run continues.
 
 **Run context.** A tool whose first parameter is typed `RunContext` gets the run's context; the model never sees
 that parameter. Pass what your tools need (a database pool, the current user...) as `deps`:
@@ -345,15 +371,16 @@ Return `None` to leave things as they are, or a new value to replace them:
 | Hook                                   | When                               | Return a new...                         |
 |----------------------------------------|------------------------------------|-----------------------------------------|
 | `before_run(ctx)`                      | a run starts                       | -                                       |
-| `before_model_request(ctx, messages)`  | before each model request          | list of messages, for this request only |
+| `before_model_request(ctx, request)`   | before each model request          | `ModelRequest`, for this request only   |
 | `after_model_response(ctx, message)`   | after each model response          | assistant message                       |
 | `before_tool_call(ctx, call)`          | before each tool call              | call (e.g. other `arguments`)           |
 | `after_tool_call(ctx, call, result)`   | after each tool call               | result (`{"content", "is_error"}`)      |
 | `after_run(ctx, result)`               | the run finished (`RunFinished`)   | -                                       |
 
 Raising in `before_tool_call` or `after_tool_call` blocks the call: the model gets the error as the tool result.
-Raising in any other hook stops the run. Changes made in `before_model_request` don't touch the history, so they
-are a safe place to trim long conversations or add reminders.
+Raising in any other hook stops the run. `before_model_request` gets a `ModelRequest` dict (`instructions`,
+`messages`, `tools` by name, `model_parameters` such as `tool_choice`); changes apply to that request only, so
+it is a safe place to trim long conversations, add reminders or force a tool.
 
 ```python
 from pyox_agents import Hooks, RunContext, RunFinished, ToolCall
@@ -400,7 +427,7 @@ client = Client(
     headers={"X-Application": "support"},
     connect_timeout_seconds=10,
     request_timeout_seconds=600,  # covers the whole streamed answer
-    max_retries=2,  # resend requests that failed before any response
+    max_retries=2,  # resend failed requests (network errors, 429 and 5xx answers)
     transport="http",  # or "websocket" for Responses API requests
 )
 agent = Agent(client=client, model="gpt-5-mini", model_parameters={"temperature": 0.2})
@@ -408,8 +435,9 @@ agent = Agent(client=client, model="gpt-5-mini", model_parameters={"temperature"
 
 Share one `Client` between agents to reuse its connection pool.
 
-A request that fails before any response arrives (for example on a pooled connection the server had already
-closed) is sent again, up to `max_retries` times. Once the answer starts streaming it is never retried.
+A request is sent again, up to `max_retries` times, when it fails before any answer arrives (for example on a
+pooled connection the server had already closed) or the server answers 408, 409, 429 or 5xx. It waits as long
+as the server asks (`Retry-After`), or a short, growing delay. Once the answer starts streaming it is never retried.
 
 **Azure OpenAI** (Microsoft Foundry, v1 API): `Client.azure("https://my-resource.openai.azure.com", api_key=...)`
 (defaults: `$AZURE_OPENAI_ENDPOINT`, `$AZURE_OPENAI_API_KEY`). No `api-version` is needed, and the agent's
@@ -421,6 +449,9 @@ All exceptions inherit from `AgentError`:
 `ApiError` (with `AuthenticationError` and `RateLimitError`), `RequestTimeoutError`, `NetworkError`,
 `InvalidResponseError`, `MaxTurnsExceededError` (the `max_turns` limit, 20 by default), `HistoryError` and
 `HookError` (a Rust hook failed, or a hook returned something invalid).
+
+An `ApiError` has the server's answer: `status_code`, `body`, `request_id` and `retry_after_seconds`. An error
+raised by a run has `usage` (the tokens it used) and `messages` (the history when it failed).
 
 ## How it works
 
@@ -526,6 +557,5 @@ Behind a FastAPI streaming endpoint (one uvicorn process, 100 concurrent users, 
 
 ## Next steps
 
-- Let tools return images (e.g. a screenshot tool), as pi does.
-- More APIs and providers (Responses, Anthropic, Gemini), each as a new adapter next to `openai_chat.rs`.
+- More APIs and providers (Anthropic, Gemini), each as a new adapter next to `openai_chat.rs`.
 - Give Rust tools the run context too (`conversation_id`, `turn`), if a use case needs it.

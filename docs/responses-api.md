@@ -70,7 +70,8 @@ If OpenAI no longer has the response (it was deleted, or is too old), the reques
 history, when the run has it. With only a `previous_response_id`, the error is raised.
 
 If a `before_model_request` hook changes the messages, OpenAI's stored copy no longer matches them, so that
-request sends all of them instead of continuing from the stored response.
+request sends all of them instead of continuing from the stored response. Changing only the instructions, tools or
+model parameters still continues from it.
 
 ## WebSocket mode
 
@@ -86,7 +87,14 @@ Anything else goes in `model_parameters` and is passed through as is, for exampl
 encrypted reasoning is added to it. The fields pyox-agents controls (`model`, `input`, `instructions`, `stream`,
 `store`, `tools`, `previous_response_id`) always win.
 
-Built-in tools of the Responses API (web search, file search, code interpreter) are not supported yet.
+Built-in tools of the Responses API (web search, file search, code interpreter...) go in
+`model_parameters["tools"]`; the agent's own tools are added after them:
+
+```python
+agent = Agent(model="gpt-5-mini", api="responses", model_parameters={"tools": [{"type": "web_search"}]})
+```
+
+OpenAI runs them during the answer: the run sees only the text that uses their results.
 
 ## Azure OpenAI
 
