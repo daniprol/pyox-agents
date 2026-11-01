@@ -6,6 +6,15 @@ break comes with a migration note.
 
 ## [Unreleased]
 
+### Added
+
+- MCP servers: `pyox_agents.mcp.McpTools` gives an agent the tools of any MCP server, over Streamable HTTP
+  (`McpTools.http(url, headers=...)`) or stdio (`McpTools.stdio(command, args)`). Tools keep the server's names,
+  descriptions and schemas (`prefix=`, `include=`, `exclude=` to choose), can need approval
+  (`requires_approval="unless_read_only"`, ...), and send images and structured results. When the server asks
+  the user something, the question becomes an `InputRequested`, answered live or after the run stops. Works with
+  servers on MCP 2025-11-25 and 2026-07-28. Install with `pip install "pyox-agents[mcp]"`.
+
 ## [0.2.0] - 2026-11-01
 
 ### Breaking changes

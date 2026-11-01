@@ -128,6 +128,7 @@ Small surface, the features production agents need:
 | [History](https://daniprol.github.io/pyox-agents/history/) | Plain dicts in and out, JSON parsed in Rust, and pluggable stores in Python or Rust. |
 | [Human in the loop](https://daniprol.github.io/pyox-agents/human-in-the-loop/) | Approvals, questions from inside a tool, and frontend tools. Resumable, with no database. |
 | [Subagents](https://daniprol.github.io/pyox-agents/subagents/) and [state](https://daniprol.github.io/pyox-agents/state/) | Agents as tools, in the same event stream, with a shared JSON state. |
+| [MCP servers](https://daniprol.github.io/pyox-agents/mcp/) | The tools of any MCP server, local or remote, with approvals and questions to the user. |
 | [Hooks](https://daniprol.github.io/pyox-agents/hooks/) | Watch or change a run before and after each model request and tool call. |
 | [Web frontends](https://daniprol.github.io/pyox-agents/web-frontends/) | Serve the Vercel AI SDK (`useChat`) and AG-UI (CopilotKit) protocols, written by Rust. |
 | [Tracing](https://daniprol.github.io/pyox-agents/telemetry/) | OpenTelemetry spans and metrics following the GenAI conventions. Free when off. |

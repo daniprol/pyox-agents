@@ -17,6 +17,7 @@ from pathlib import Path
 import fast_tools
 import pytest
 
+import mcp_server
 from conftest import MakeAgent
 from factories import collect_events, events_of_type, run_finished
 from pyox_agents import (
@@ -40,6 +41,7 @@ from pyox_agents import (
     decide,
     tool,
 )
+from pyox_agents.mcp import McpTools
 
 pytestmark = pytest.mark.live
 
@@ -309,3 +311,40 @@ async def test_tools_change_the_state(make_agent: MakeAgent) -> None:
     [todo] = change.state["todos"]
     assert "pack" in todo.lower()
     assert run_finished(events).state == change.state
+
+
+# MCP: the test server (tests/mcp_server.py) in this process.
+
+
+@pytest.mark.parametrize(
+    ("api", "model_parameters"), [("chat", NO_REASONING), ("responses", None)], ids=["chat", "responses"]
+)
+async def test_calls_an_mcp_tool(make_agent: MakeAgent, api: str, model_parameters: dict[str, str] | None) -> None:
+    # The model must accept the schemas MCP servers make (with `title`s, no `additionalProperties`).
+    async with McpTools(mcp_server.server, include={"add"}) as rooms:
+        agent = make_agent(api=api, model_parameters=model_parameters, tools=rooms.tools)
+        events = await collect_events(agent.execute("Use the add tool to add 1234 and 4321."))
+
+    [finished_tool] = events_of_type(events, ToolFinished)
+    assert (finished_tool.name, finished_tool.result) == ("add", "5555")
+    assert "5555" in run_finished(events).text.replace(",", "")
+
+
+async def test_an_mcp_server_asks_the_user(make_agent: MakeAgent) -> None:
+    mcp_server.bookings.clear()
+    async with McpTools(mcp_server.server, include={"book_room"}) as rooms:
+        agent = make_agent(
+            api="responses",
+            instructions="Call `book_room` right away with the day you are given. Never ask questions.",
+            tools=rooms.tools,
+        )
+        stopped = await agent.run("Book a room for Friday.")
+        assert stopped.pending, f"Nothing waits for an answer. The model said: {stopped.text}"
+        [request] = stopped.pending
+        assert request.data["message"] == "Which floor?"
+
+        result = await agent.run(history=stopped.messages, answers={request.call_id: Answer({"floor": 3})})
+
+    [booking] = mcp_server.bookings
+    assert booking.endswith("on floor 3")
+    assert result.text.strip()

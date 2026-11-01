@@ -84,6 +84,7 @@ asyncio.run(main())
 | Watch or change a run | `hooks=[Hooks(before_tool_call=fn)]` or any object with hook methods; raise in a tool hook to block the call | [hooks](https://daniprol.github.io/pyox-agents/hooks/) |
 | Serve a chat UI | `StreamingResponse(ai_sdk.stream(agent, await request.body()), headers=ai_sdk.HEADERS)`; same with `ag_ui` | [web frontends](https://daniprol.github.io/pyox-agents/web-frontends/) |
 | Images and PDFs | `agent.run(["Describe it", image("cat.png")])`, `file("report.pdf")` | [images and files](https://daniprol.github.io/pyox-agents/images-and-files/) |
+| Tools of an MCP server | `async with McpTools.http(url) as server: Agent(..., tools=server.tools)` from `pyox_agents.mcp` (`pip install "pyox-agents[mcp]"`); also `McpTools.stdio(command, args)` | [MCP servers](https://daniprol.github.io/pyox-agents/mcp/) |
 | Tracing | `pyox_agents.instrument()` after configuring OpenTelemetry (`pip install "pyox-agents[otel]"`) | [tracing](https://daniprol.github.io/pyox-agents/telemetry/) |
 | Other servers, Azure, retries | `Client(base_url=..., api_key=..., max_retries=2)`, `Client.azure(endpoint)` | [client](https://daniprol.github.io/pyox-agents/client/) |
 | Responses API | `Agent(api="responses")`, optionally `store=True` and `Client(transport="websocket")` | [Responses API](https://daniprol.github.io/pyox-agents/responses-api/) |

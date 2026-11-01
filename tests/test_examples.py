@@ -79,6 +79,29 @@ def test_human_in_the_loop_example(fake_openai: FakeOpenAI, tmp_path: Path) -> N
     assert fake_openai.requests[3].body["messages"][-1]["content"] == "Deleted old.log"
 
 
+def test_mcp_tools_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
+    fake_openai.queue(
+        tool_calls_response(tool_call("forecast", city="Vigo")),
+        tool_calls_response(tool_call("book_picnic", city="Vigo")),
+        text_response("Booked for 4"),
+    )
+    environment = {**os.environ, "OPENAI_BASE_URL": fake_openai.base_url, "OPENAI_API_KEY": "test-key"}
+
+    output = subprocess.run(
+        [sys.executable, EXAMPLES / "mcp_tools.py"],
+        cwd=tmp_path,
+        env=environment,
+        input="y\n4\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert output == "Allow book_picnic {'city': 'Vigo'}? [y/n] How many people are coming? Booked for 4\n"
+    assert fake_openai.requests[1].body["messages"][-1]["content"] == "Sunny and 24°C in Vigo"
+    assert fake_openai.requests[2].body["messages"][-1]["content"] == "Picnic for 4 booked in Vigo"
+
+
 def test_subagents_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
     fake_openai.queue(
         tool_calls_response(tool_call("research", task="Places in Vigo")),
