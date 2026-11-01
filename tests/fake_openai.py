@@ -38,6 +38,7 @@ class StreamResponse:
     end_with_done: bool = True  # never sent over WebSocket
     chunk_delay_seconds: float = 0  # wait between chunks, to stop a run in the middle
     close_after_chunks: bool = False  # over WebSocket, close the connection (an HTTP stream always ends)
+    headers: dict[str, str] = field(default_factory=dict)  # e.g. {"x-request-id": "req_1"}; HTTP only
 
 
 @dataclass(frozen=True)
@@ -172,6 +173,8 @@ def _handler_for(fake: FakeOpenAI) -> type[BaseHTTPRequestHandler]:
             time.sleep(response.delay_seconds)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
+            for name, value in response.headers.items():
+                self.send_header(name, value)
             self.end_headers()
             try:
                 for chunk in response.chunks:

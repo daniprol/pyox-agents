@@ -41,6 +41,7 @@ use crate::human_input::{HumanInput, SharedCallLog};
 use crate::messages::{Message, Reply, ToolCall};
 use crate::model_api::StopReason;
 use crate::state::StateAccess;
+use crate::telemetry::Telemetry;
 use crate::tools::{Approval, ToolDefinition, ToolImplementation, ToolResult, error_result, success_result};
 
 /// The name of the tool a subagent with `talk_to="user"` asks the person with.
@@ -234,6 +235,8 @@ impl Subagent {
             extra_tools: self.run_tools(run.tools),
             state: run.context.state.with_access(self.state),
             stop: run.stop.clone(),
+            // Its span goes under this tool call's span.
+            telemetry: Telemetry::InTool(call_log.lock().unwrap().span.clone()),
         };
         let mut usage = Usage::default();
         let mut messages = Vec::new();

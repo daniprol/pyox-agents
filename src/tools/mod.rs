@@ -68,6 +68,20 @@ pub enum ToolImplementation {
     AskParent,
 }
 
+impl ToolImplementation {
+    /// The kind's name, for the tool call's span (`pyox.tool.kind`).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ToolImplementation::Python { .. } => "python",
+            ToolImplementation::Native(_) => "rust",
+            ToolImplementation::Frontend => "frontend",
+            ToolImplementation::Subagent(_) => "subagent",
+            ToolImplementation::AskUser => "ask_user",
+            ToolImplementation::AskParent => "ask_parent",
+        }
+    }
+}
+
 /// A tool result telling the model something went wrong.
 pub fn error_result(message: impl Into<String>) -> ToolResult {
     ToolResult {

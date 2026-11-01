@@ -124,9 +124,11 @@ pub struct AssistantTurn {
     /// `End`, `Length` or `Refusal`: why the model stopped writing.
     pub stop_reason: StopReason,
     /// How many times the request was sent again (see `ClientSettings::post_json`).
-    /// Not shown to users yet: the tracing spans will record it.
-    #[allow(dead_code)]
     pub retries: u32,
+    /// When the first piece of the answer arrived (ns since 1970, see `telemetry`).
+    pub first_chunk_at: Option<u64>,
+    /// OpenAI's id for the request (the `x-request-id` header; HTTP only).
+    pub request_id: Option<String>,
 }
 
 /// Sends one request to the agent's API and streams the answer: each piece of
