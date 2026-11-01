@@ -20,6 +20,8 @@ dependencies = []
 # `pip install "pyox-agents[otel]"`: tracing with OpenTelemetry (see docs/telemetry.md). The API only: the app
 # chooses and configures the SDK and exporters.
 otel = ["opentelemetry-api>=1.30"]
+# `pip install "pyox-agents[mcp]"`: the tools of MCP servers (see docs/mcp.md), with the official `mcp` package.
+mcp = ["mcp>=2.3,<3"]
 
 [project.urls]
 Documentation = "https://daniprol.github.io/pyox-agents/"
@@ -52,6 +54,7 @@ dev = [
     "fast-tools",
     "fastapi>=0.115",  # for examples/web_server.py
     "maturin>=1.9",
+    "mcp>=2.3,<3",  # tests connect to a real MCP server built with it
     "opentelemetry-sdk>=1.30",  # tests trace runs with the real SDK and its in-memory exporter
     "prek>=0.5.7",
     "pytest>=8",

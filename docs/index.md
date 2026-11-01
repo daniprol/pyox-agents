@@ -66,6 +66,7 @@ print(result.text)
 - [Structured output](structured-output.md): answers as dataclasses, TypedDicts or pydantic models.
 - [Images and files](images-and-files.md): send pictures and PDFs in a prompt, and get them from tools.
 - [History](history.md): continue conversations and store them in a database.
+- [MCP servers](mcp.md): give an agent the tools of any MCP server.
 - [Hooks](hooks.md): watch or change a run at fixed points.
 - [Tracing](telemetry.md): OpenTelemetry spans and metrics for runs, model requests and tool calls.
 - [Client and errors](client.md): API keys, other servers, timeouts and retries.

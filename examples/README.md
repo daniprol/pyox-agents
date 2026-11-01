@@ -79,6 +79,15 @@ uv run examples/structured_output.py
 
 Turns a customer message into a `Ticket` dataclass (`Agent(output_type=Ticket)`).
 
+## 10. Tools from an MCP server
+
+```bash
+uv run examples/mcp_tools.py
+```
+
+Starts a small MCP server (in the same file) and gives its tools to an agent: one needs your approval,
+and the server asks you a question while it runs.
+
 ## Using another OpenAI-compatible server
 
 ```bash
