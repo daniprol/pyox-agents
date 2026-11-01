@@ -210,14 +210,21 @@ async def test_a_subagent_approval_stops_and_resumes_the_run(make_agent: MakeAge
         booked.append(city)
         return f"Booked {city}"
 
-    travel_agent = make_agent(api="responses", instructions="Book what you are asked with `book`.", tools=[book])
+    # Firm instructions: without them the model may ask for dates first instead of booking.
+    travel_agent = make_agent(
+        api="responses",
+        instructions="Call `book` right away with the city you are given. Never ask questions.",
+        tools=[book],
+    )
     agent = make_agent(
         api="responses",
-        instructions="Use the `travel` tool to book trips.",
+        instructions="Call the `travel` tool right away with the user's request. Never ask questions.",
         tools=[travel_agent.as_tool("travel", "Books trips.")],
     )
 
     stopped = await agent.run("Book a trip to Vigo.")
+
+    assert stopped.pending, f"Nothing waits for approval. The model said: {stopped.text}"
 
     [request] = stopped.pending
     assert (request.kind, request.tool_name) == ("approval", "book")
