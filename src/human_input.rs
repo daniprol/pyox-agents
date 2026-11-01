@@ -28,13 +28,14 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::usage::Usage;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::events::EventSender;
 use crate::json_convert::{json_to_python, python_to_json};
 pub use crate::messages::waiting_calls;
 use crate::messages::{Message, Reply, Request, RequestKind, ToolCall};
 use crate::python_call::call_python;
+use crate::telemetry::Span;
 
 /// Where a run sends new requests while it is alive.
 pub struct HumanInput {
@@ -70,6 +71,8 @@ pub struct CallLog {
     pub subagent_usage: Usage,
     /// What the tool read from `ctx.state`, to apply its changes when it finishes.
     pub state_view: Option<StateView>,
+    /// The call's span, when the run is traced (see `telemetry`).
+    pub span: Span,
 }
 
 /// The run's state as a tool sees it through `ctx.state`.
@@ -90,7 +93,7 @@ enum Lookup {
 
 impl CallLog {
     /// A log for `call`, continuing what an earlier run of the call stored (if any).
-    pub fn new(call: ToolCall, earlier: Option<&Message>) -> SharedCallLog {
+    pub fn new(call: ToolCall, earlier: Option<&Message>, span: Span) -> SharedCallLog {
         let (requests, steps, subagent) = match earlier {
             Some(Message::Tool {
                 requests,
@@ -111,6 +114,7 @@ impl CallLog {
             subagent_answers: HashMap::new(),
             subagent_usage: Usage::default(),
             state_view: None,
+            span,
         }))
     }
 
@@ -170,19 +174,24 @@ pub async fn reply_to(
     human_input: &HumanInput,
     python_task_locals: &TaskLocals,
 ) -> PyResult<Option<Reply>> {
-    // The lock is held only inside this block (it is released at the `}`),
-    // never while waiting for Python.
+    // Each `log.lock()` is released at the end of its statement (or block),
+    // never held while waiting for Python.
     let kind = request.kind;
-    let (position, event) = {
-        let mut log = log.lock().unwrap();
-        match log.look_up(request) {
-            Lookup::Replied(reply) => {
-                check_reply(kind, &reply)?;
-                return Ok(Some(reply));
-            }
-            Lookup::New(position) => (position, InputRequested::new(&log.call, &log.requests[position])),
+    let span = log.lock().unwrap().span.clone();
+    let looked_up = log.lock().unwrap().look_up(request);
+    let position = match looked_up {
+        Lookup::Replied(reply) => {
+            check_reply(kind, &reply)?;
+            span.add_event("input_replied", reply_details(&reply, "history")).await;
+            return Ok(Some(reply));
         }
+        Lookup::New(position) => position,
     };
+    let event = {
+        let log = log.lock().unwrap();
+        InputRequested::new(&log.call, &log.requests[position])
+    };
+    span.add_event("input_requested", json!({"kind": kind.name()})).await;
     // `on_request` gets it as the app sees it (inside a subagent, with ids like `call_0/call_1`).
     let event = human_input.events.send_request(event).await;
 
@@ -200,8 +209,20 @@ pub async fn reply_to(
     if let Some(reply) = &reply {
         check_reply(kind, reply)?;
         log.lock().unwrap().requests[position].answer = Some(reply.clone());
+        span.add_event("input_replied", reply_details(reply, "on_request"))
+            .await;
     }
     Ok(reply)
+}
+
+/// The reply's type and where it came from (`"history"` or `"on_request"`), for the call's span.
+fn reply_details(reply: &Reply, source: &str) -> Value {
+    let reply_type = match reply {
+        Reply::Answer { .. } => "answer",
+        Reply::Approve { .. } => "approve",
+        Reply::Deny { .. } => "deny",
+    };
+    json!({"type": reply_type, "source": source})
 }
 
 /// Reads an `Answer`, `Approve` or `Deny` (or `None`) given by Python.

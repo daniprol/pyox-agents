@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::PyPermissionError;
 use pyo3::prelude::*;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::events::{AgentEvent, StateChanged};
 use crate::human_input::SharedCallLog;
@@ -122,6 +122,9 @@ pub async fn apply_state_changes(call_log: &SharedCallLog, context: &Context) ->
     let after = Python::attach(|py| python_to_json(view.object.bind(py)))
         .map_err(|error| format!("The tool left a state that is not JSON: {error}"))?;
     if let Some(changed) = context.state.apply_changes(&view.before, &after)? {
+        // The recorder reads the changed paths from the patch (it keeps the patch only with content capture on).
+        let span = call_log.lock().unwrap().span.clone();
+        span.add_event("state_changed", json!({"delta": changed.delta})).await;
         context.events().send(AgentEvent::StateChanged(changed)).await;
     }
     Ok(())

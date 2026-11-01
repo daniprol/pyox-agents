@@ -349,6 +349,7 @@ class Engine:
         *,
         client: Client,
         model: str,
+        name: str | None = None,
         instructions: str = "",
         tools: Sequence[Any] = (),
         model_parameters: Mapping[str, Any] | None = None,
@@ -376,6 +377,7 @@ class Engine:
         on_request: Callable[[InputRequested], Any] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
+        telemetry: object | None = None,
     ) -> Run: ...
 
 class AgentError(Exception):

@@ -3,13 +3,20 @@ import os
 import shutil
 import subprocess
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import Tracer
 
 from fake_openai import FakeOpenAI
-from pyox_agents import Agent, Client
+from pyox_agents import Agent, Client, Instrumentation
 
 MakeAgent = Callable[..., Agent]
 
@@ -50,6 +57,38 @@ def make_agent(client: Client, model: str) -> MakeAgent:
         return Agent(**options)
 
     return make
+
+
+@dataclass
+class Tracing:
+    """A real OpenTelemetry SDK that keeps spans and metrics in memory (see the `tracing` fixture)."""
+
+    instrumentation: Instrumentation  # give it to an agent: `make_agent(instrument=tracing.instrumentation)`
+    tracer: Tracer  # for the test's own spans (in tools, hooks...)
+    exporter: InMemorySpanExporter
+    metrics: InMemoryMetricReader
+
+    @property
+    def spans(self) -> tuple[ReadableSpan, ...]:
+        """The spans that ended, in the order they ended."""
+        return self.exporter.get_finished_spans()
+
+    def span(self, name: str) -> ReadableSpan:
+        """The one ended span named `name`."""
+        [span] = [span for span in self.spans if span.name == name]
+        return span
+
+
+@pytest.fixture
+def tracing() -> Tracing:
+    """Providers made for one test (never the global ones), so tests can run in parallel."""
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    metrics = InMemoryMetricReader()
+    meter_provider = MeterProvider(metric_readers=[metrics])
+    instrumentation = Instrumentation(tracer_provider=tracer_provider, meter_provider=meter_provider)
+    return Tracing(instrumentation, tracer_provider.get_tracer("tests"), exporter, metrics)
 
 
 PROTOCOL_CLIENTS = Path(__file__).parent / "protocol_clients"

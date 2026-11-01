@@ -4,6 +4,8 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
+from opentelemetry.sdk.trace import ReadableSpan
+
 from fake_openai import ErrorResponse, JsonResponse, StreamResponse
 from pyox_agents import AgentEvent, Run, RunFinished
 
@@ -177,3 +179,37 @@ def sse_data(text: str) -> list[Any]:
 def user_ui_message(text: str) -> dict[str, Any]:
     """A user message as AI SDK's `useChat` sends it."""
     return {"id": "u1", "role": "user", "parts": [{"type": "text", "text": text}]}
+
+
+# Tracing ------------------------------------------------------------------------------------------
+
+
+def span_tree(spans: tuple[ReadableSpan, ...]) -> str:
+    """The spans as an indented tree of names, children in the order they started:
+
+    invoke_agent weather
+      chat test-model
+      execute_tool get_weather
+    """
+    in_order = sorted(spans, key=lambda span: span.start_time or 0)
+    children: dict[int | None, list[ReadableSpan]] = {}
+    for span in in_order:
+        children.setdefault(_parent_id(span), []).append(span)
+
+    def lines(span: ReadableSpan, depth: int) -> list[str]:
+        below = children.get(_span_id(span), [])
+        return ["  " * depth + span.name] + [line for child in below for line in lines(child, depth + 1)]
+
+    # Roots: spans whose parent is not among them (none, or a span the test did not end).
+    ids = {_span_id(span) for span in spans}
+    roots = [span for span in in_order if _parent_id(span) not in ids]
+    return "\n".join(line for root in roots for line in lines(root, 0))
+
+
+def _span_id(span: ReadableSpan) -> int:
+    assert span.context is not None
+    return span.context.span_id
+
+
+def _parent_id(span: ReadableSpan) -> int | None:
+    return span.parent.span_id if span.parent else None

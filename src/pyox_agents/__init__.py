@@ -58,6 +58,7 @@ from pyox_agents.messages import (
     UserMessage,
 )
 from pyox_agents.subagents import StateAccess, Subagent, TalkTo
+from pyox_agents.telemetry import Instrumentation, instrument
 from pyox_agents.tools import RequiresApproval, Tool, ToolContent, ToolLike, ToolReturn, tool
 
 DecisionAnswer = PredicateAnswer | ChoiceAnswer | ScoreAnswer | Refusal
@@ -104,6 +105,7 @@ __all__ = [
     "Hooks",
     "ImagePart",
     "InputRequested",
+    "Instrumentation",
     "InvalidResponseError",
     "LoadHistory",
     "MaxTurnsExceededError",
@@ -154,5 +156,6 @@ __all__ = [
     "decide",
     "file",
     "image",
+    "instrument",
     "tool",
 ]

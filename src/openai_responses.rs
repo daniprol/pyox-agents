@@ -33,12 +33,13 @@ use serde_json::{Map, Value, json};
 use crate::client::{ClientSettings, Transport, backoff_delay, is_retryable_status, wait_before_retry};
 use crate::errors::{
     InvalidResponseError, NetworkError, RequestTimeoutError, api_error, error_for_http_failure, error_for_http_status,
-    error_for_response,
+    error_for_response, header_text,
 };
 use crate::messages::{Content, ContentPart, Message, Reasoning, ToolCall, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions, StopReason};
 use crate::openai_chat::add_tools;
 use crate::sse::SseDecoder;
+use crate::telemetry::now_ns;
 use crate::text_chunks::TextOutput;
 use crate::ws::{OpenError, ResponsesSocket};
 use crate::ws_pool::RunSocket;
@@ -504,9 +505,11 @@ async fn stream_over_http(
             .await
             .map_err(error_for_http_failure)?;
         if sent.response.status().is_success() {
+            let request_id = header_text(sent.response.headers(), "x-request-id");
             let turn = read_events(sent.response, text_output).await?;
             return Ok(AssistantTurn {
                 retries: sent.retries,
+                request_id,
                 ..turn
             });
         }
@@ -529,10 +532,13 @@ async fn stream_over_http(
 async fn read_events(response: reqwest::Response, text_output: &mut TextOutput) -> PyResult<AssistantTurn> {
     let mut sse_decoder = SseDecoder::default();
     let mut event_reader = EventReader::default();
+    let mut first_chunk_at = None;
     let mut byte_stream = response.bytes_stream();
 
     while let Some(network_chunk) = byte_stream.next().await {
         let network_chunk = network_chunk.map_err(error_for_http_failure)?;
+        // `get_or_insert_with`: sets it the first time only.
+        first_chunk_at.get_or_insert_with(now_ns);
         for event_data in sse_decoder.push(&network_chunk) {
             // OpenAI does not send `[DONE]` here, but some compatible servers do.
             if event_data == "[DONE]" {
@@ -548,7 +554,10 @@ async fn read_events(response: reqwest::Response, text_output: &mut TextOutput) 
     {
         event_reader.add_event(&event_data)?;
     }
-    event_reader.into_turn()
+    Ok(AssistantTurn {
+        first_chunk_at,
+        ..event_reader.into_turn()?
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +689,7 @@ async fn send_and_read_events(
 
     let mut event_reader = EventReader::default();
     let mut is_first_event = true;
+    let mut first_chunk_at = None;
     loop {
         let event = match socket.next_event().await {
             Some(Ok(event)) => event,
@@ -703,13 +713,15 @@ async fn send_and_read_events(
                 return Err(failure);
             }
             is_first_event = false;
+            first_chunk_at = Some(now_ns());
         }
 
         if let Some(text) = event_reader.add_event(&event).map_err(WebSocketFailure::Failed)? {
             text_output.push(&text).await;
         }
         if event_reader.is_finished() {
-            return event_reader.into_turn().map_err(WebSocketFailure::Failed);
+            let turn = event_reader.into_turn().map_err(WebSocketFailure::Failed)?;
+            return Ok(AssistantTurn { first_chunk_at, ..turn });
         }
     }
 }
@@ -934,7 +946,7 @@ mod tests {
                     requests: 1,
                 },
                 stop_reason: StopReason::End,
-                retries: 0,
+                ..Default::default() // retries, request id and times are set when sending
             }
         );
     }
