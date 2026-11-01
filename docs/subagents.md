@@ -88,7 +88,7 @@ async for event in writer.execute("Write about Vigo"):
 | Event              | Fields                                                                 |
 |--------------------|------------------------------------------------------------------------|
 | `SubagentStarted`  | `call_id` (its id), `name` (the tool's), `task`                        |
-| `SubagentFinished` | `call_id`, `name`, `result`, `is_error`, `waiting`, `usage` (its tokens, also in the run's) |
+| `SubagentFinished` | `call_id`, `name`, `result`, `is_error`, `stop_reason` (`"waiting"` while it waits for answers; `None` if it failed), `usage` (its tokens, also in the run's) |
 
 [Web frontends](web-frontends.md#shared-state-and-subagents) get them as AG-UI `SUBAGENT_*` events, or an AI SDK
 `data-subagent` part.

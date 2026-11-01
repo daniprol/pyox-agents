@@ -15,17 +15,56 @@ Events are small, read-only objects backed by Rust. They work with `isinstance` 
 |----------------|----------------------------|------------------------------------------------------------|
 | `TextDelta`    | the model streams text     | `text`                                                     |
 | `ToolStarted`  | a tool call starts         | `call_id`, `name`, `arguments` (dict)                      |
-| `ToolFinished` | a tool call ends           | `call_id`, `name`, `result`, `is_error`, `metadata`        |
+| `ToolFinished` | a tool call ends           | `call_id`, `name`, `result` (text), `content` (with [images](images-and-files.md#tool-results)), `is_error`, `metadata` |
 | `InputRequested` | a tool call waits for a person ([human in the loop](human-in-the-loop.md)) | `call_id`, `kind`, `data`, ... |
 | `StateChanged` | a tool changed the [state](state.md) | `state`, `delta`                                 |
 | `SubagentStarted`, `SubagentFinished` | a [subagent](subagents.md) starts or stops | `call_id`, `name`, ...      |
-| `RunFinished`  | the run ends (always last) | `text`, `turns`, `usage`, `response_id`, `messages`, `new_messages`, `pending`, `state` |
+| `RunFinished`  | the run ends (always last) | `text`, `stop_reason`, `output`, `turns`, `usage`, `response_id`, `messages`, `new_messages`, `pending`, `state` |
 
 A subagent's events come in the same stream, with `subagent_id` set (it is `None` for the main agent's events).
 
 `await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event.
 
 One `Agent` can serve many runs at the same time: each run has its own history. Create it once and reuse it.
+
+New fields may be added to events in minor versions; existing ones keep their meaning.
+
+## How a run ends
+
+Every run that does not fail ends with `RunFinished`, whose `stop_reason` says why:
+
+| `stop_reason` | Meaning                                                                          |
+|---------------|----------------------------------------------------------------------------------|
+| `"end"`       | the model finished its answer                                                    |
+| `"waiting"`   | tool calls wait for a person: see `pending` ([human in the loop](human-in-the-loop.md)) |
+| `"length"`    | the answer was cut by the output token limit (`max_output_tokens`, `max_completion_tokens`) |
+| `"refusal"`   | the model refused, or a content filter stopped it; `text` has the refusal        |
+| `"stopped"`   | `run.stop()` was called                                                          |
+
+An answer cut by `"length"` may end in a half-written tool call: it is never run.
+
+**Stopping a run.** `run.stop()` ends it at the next safe point and keeps what it did: an answer being streamed
+ends at once (its text so far is kept, as the last assistant message), tools already running finish, and no new
+request is sent. Keep reading the events: the run still ends with `RunFinished`, whose `messages` are a valid
+history to continue from. (Leaving the `async for` loop with `break` instead aborts the run and keeps nothing.)
+
+```python
+run = agent.execute("Write a long story")
+async for event in run:
+    if isinstance(event, TextDelta) and user_pressed_stop():
+        run.stop()
+```
+
+**Errors keep the conversation.** An `AgentError` raised by a run has the history up to the failure in
+`error.messages`, so a retry can continue instead of starting again. `MaxTurnsExceededError` (after `max_turns`
+model requests) is one too:
+
+```python
+try:
+    result = await agent.run("Plan my trip")
+except MaxTurnsExceededError as error:
+    result = await agent.run("Wrap up with what you have", history=error.messages)
+```
 
 ## Token usage
 

@@ -24,8 +24,29 @@ agent = Agent(model="gpt-5-mini", tools=[search])
 ```
 
 - Plain functions passed in `tools=[...]` are wrapped with `@tool` automatically.
-- Results that are not `str` are sent to the model as JSON.
+- Results that are not `str` are sent to the model as JSON. A tool can also return
+  [images and files](images-and-files.md#tool-results).
 - If a tool raises, the model gets the error message (and `ToolFinished.is_error` is `True`). The run continues.
+
+Parameters can be `str`, `int`, `float`, `bool`, lists, dicts, `Literal`s, unions (`X | None`), dataclasses,
+`TypedDict`s and pydantic models (anything with `model_json_schema()` and `model_validate()`; pydantic is not a
+dependency). Dataclass and pydantic arguments arrive built from the model's JSON:
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class Address:
+    city: str
+    street: Annotated[str, "Street and number"] = ""
+
+
+@tool
+def ship(to: Address, express: bool = False) -> str:
+    """Ship the parcel."""
+    return f"Shipping to {to.city}"  # `to` is an `Address`
+```
 
 ## Run context and dependencies
 
