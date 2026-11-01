@@ -375,6 +375,7 @@ class Engine:
         previous_response_id: str | None = None,
         answers: Mapping[str, Any] | None = None,
         on_request: Callable[[InputRequested], Any] | None = None,
+        tools: Sequence[Any] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
         telemetry: object | None = None,

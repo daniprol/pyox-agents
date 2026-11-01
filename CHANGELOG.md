@@ -14,6 +14,13 @@ break comes with a migration note.
   (`requires_approval="unless_read_only"`, ...), and send images and structured results. When the server asks
   the user something, the question becomes an `InputRequested`, answered live or after the run stops. Works with
   servers on MCP 2025-11-25 and 2026-07-28. Install with `pip install "pyox-agents[mcp]"`.
+- `run(tools=...)` and `execute(tools=...)` add tools for one run, on top of the agent's: for tools that depend on
+  the user, such as an MCP server opened with their token.
+
+### Fixed
+
+- A run's stream (`async for event in run`, `run.batches()`) ends with its `RunFinished` or error. Before, it hung
+  while anything still held a tool's `ctx`, such as a cache or a library's background task.
 
 ## [0.2.0] - 2026-11-01
 

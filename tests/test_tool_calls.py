@@ -1,9 +1,13 @@
 """Tool calls inside a run: Python tools, Rust tools and tool errors."""
 
+from typing import Any
+
+import pytest
+
 from conftest import MakeAgent
 from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
-from pyox_agents import Tool, ToolFinished, ToolStarted
+from pyox_agents import Message, Tool, ToolFinished, ToolStarted, tool
 
 
 def add(a: int, b: int) -> int:
@@ -101,3 +105,59 @@ async def test_custom_tool_objects_with_sync_invoke(fake_openai: FakeOpenAI, mak
     events = await collect_events(make_agent(tools=[Greeter()]).execute("Greet Dani"))
 
     assert [event.result for event in events_of_type(events, ToolFinished)] == ["Hello Dani"]
+
+
+# Tools for one run (`tools=`) ------------------------------------------------------------------
+
+
+def tools_for(user: str) -> list[Tool]:
+    """Tools made for one user, as an app would make them for each request."""
+
+    def whoami() -> str:
+        """The user's name."""
+        return user
+
+    return [tool(whoami)]
+
+
+def tool_results(messages: list[Message]) -> list[Any]:
+    return [message["content"] for message in messages if message["role"] == "tool"]
+
+
+async def test_each_run_can_have_its_own_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    fake_openai.queue(
+        tool_calls_response(tool_call("whoami")),
+        text_response("Hi Ana"),
+        tool_calls_response(tool_call("whoami")),
+        text_response("Hi Ben"),
+    )
+    agent = make_agent(tools=[add])
+
+    ana = await agent.run("Who am I?", tools=tools_for("ana"))
+    ben = await agent.run("Who am I?", tools=tools_for("ben"))
+
+    assert (tool_results(ana.new_messages), tool_results(ben.new_messages)) == (["ana"], ["ben"])
+    sent_tools = [schema["function"]["name"] for schema in fake_openai.requests[0].body["tools"]]
+    assert sent_tools == ["add", "whoami"]
+    assert len(agent.tools) == 1  # the agent itself did not change
+
+
+async def test_a_run_without_its_tools_does_not_have_them(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    fake_openai.queue(text_response("Hi"), text_response("Hi"))
+    agent = make_agent(tools=[add])
+
+    await agent.run("Hi", tools=tools_for("ana"))
+    await agent.run("Hi")
+
+    assert [schema["function"]["name"] for schema in fake_openai.requests[1].body["tools"]] == ["add"]
+
+
+def test_tools_for_a_run_need_names_of_their_own(make_agent: MakeAgent) -> None:
+    agent = make_agent(tools=[add])
+
+    with pytest.raises(ValueError, match='"add"'):
+        agent.execute("Hi", tools=[add])
+    with pytest.raises(ValueError, match='"whoami"'):
+        agent.execute("Hi", tools=[*tools_for("ana"), *tools_for("ben")])
+    with pytest.raises(ValueError, match='"whoami"'):
+        agent.execute("Hi", tools=tools_for("ana"), frontend_tools=[{"name": "whoami"}])

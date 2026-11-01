@@ -172,6 +172,7 @@ class Agent(Generic[OutputT]):
         previous_response_id: str | None = None,
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
+        tools: Sequence[ToolLike | Subagent | Callable[..., Any]] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
     ) -> Run:
@@ -193,6 +194,10 @@ class Agent(Generic[OutputT]):
         | Deny(...)}` (no prompt). Or give `on_request`, a function (sync or async) that replies to
         each request while the run waits; returning `None` stops the run as without it.
 
+        `tools` adds tools for this run only, on top of the agent's (the same kinds as
+        `Agent(tools=...)`): tools made for one user, such as an MCP server opened with their
+        token. Their names must differ from the agent's tools.
+
         `frontend_tools` adds tools the app runs, for this run only: dicts with `name`,
         `description` and `parameters` (a JSON schema), as AG-UI clients send them.
 
@@ -212,6 +217,7 @@ class Agent(Generic[OutputT]):
             previous_response_id=previous_response_id,
             answers=dict(answers) if answers else None,
             on_request=on_request,
+            tools=[_as_tool(item) for item in tools] if tools else None,
             frontend_tools=[dict(tool) for tool in frontend_tools] if frontend_tools else None,
             state=state,
             telemetry=recorder_for(self._instrument),
@@ -227,6 +233,7 @@ class Agent(Generic[OutputT]):
         previous_response_id: str | None = None,
         answers: Mapping[str, Reply] | None = None,
         on_request: OnRequest | None = None,
+        tools: Sequence[ToolLike | Subagent | Callable[..., Any]] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
     ) -> RunFinished[OutputT]:
@@ -242,6 +249,7 @@ class Agent(Generic[OutputT]):
             previous_response_id=previous_response_id,
             answers=answers,
             on_request=on_request,
+            tools=tools,
             frontend_tools=frontend_tools,
             state=state,
         ):
