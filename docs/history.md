@@ -52,7 +52,7 @@ new_messages_json)`. Failed runs are not saved. If the store fails or returns so
     function works too. `load` returns message dicts, or JSON text (faster: parsed in Rust).
 
     ```python
-    --8 < --"examples/python_history.py"
+    --8<-- "examples/python_history.py"
     ```
 
 === "Rust"
@@ -76,7 +76,7 @@ new_messages_json)`. Failed runs are not saved. If the store fails or returns so
     Expose it with a `#[pyfunction]` that returns `RustHistoryStore::new(your_store)`, and use it from Python:
 
     ```python
-    --8 < --"examples/rust_history.py"
+    --8<-- "examples/rust_history.py"
     ```
 
     [`examples/rust_history_store`](https://github.com/daniprol/pyox-agents/tree/main/examples/rust_history_store)

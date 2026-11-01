@@ -22,6 +22,7 @@ uv run run_all.py --only langgraph agno     # only some libraries, compared with
 uv run load_test.py --duration 5s           # FastAPI benchmark, quick (~10 min; full run ~1 h)
 uv run websocket_bench.py --runs 100        # Responses API over HTTP and WebSocket (~5 min)
 uv run stream_bench.py                      # streaming as events, batches or AI SDK text (~3 min)
+uv run chart.py                             # redraw the README chart from results.json
 ```
 
 Full runs rewrite the tables below; `--only` just prints them.

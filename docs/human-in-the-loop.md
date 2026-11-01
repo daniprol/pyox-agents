@@ -133,5 +133,5 @@ subagent's call `call_1`, inside the main agent's call `call_0`): answer them wi
 ## Example
 
 ```python
---8 < --"examples/human_in_the_loop.py"
+--8<-- "examples/human_in_the_loop.py"
 ```
