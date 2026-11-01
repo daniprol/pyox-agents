@@ -80,6 +80,34 @@ jobs:
             coverage.xml
             rust-coverage.lcov
 
+  jaeger:
+    name: Traces reach Jaeger (OTLP end to end)
+    # The one test that sends spans over the wire (tests/test_jaeger.py); all the others use the SDK in memory.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      jaeger:
+        image: jaegertracing/jaeger:2.20.0  # all-in-one, keeps traces in memory
+        ports:
+          - 4318:4318    # OTLP over HTTP
+          - 16686:16686  # query API (and UI)
+    env:
+      JAEGER_URL: http://localhost:16686
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Wait for Jaeger
+        run: curl --silent --retry 30 --retry-connrefused --retry-delay 1 --output /dev/null "$JAEGER_URL"
+      - name: Run the end-to-end test
+        run: uv run --frozen --with opentelemetry-exporter-otlp-proto-http pytest tests/test_jaeger.py -v
+
   live:
     name: Live tests (Azure OpenAI)
     # Never on pull requests, so the key is not exposed to code from forks; and only after the
