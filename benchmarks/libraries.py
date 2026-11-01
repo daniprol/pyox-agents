@@ -25,14 +25,21 @@ def get_weather(city: str) -> str:
     return f"Sunny, 21 degrees in {city}"
 
 
-def make_pyox_agent(base_url: str, text_chunks: "TextChunks" = "delta") -> StreamText:
+async def get_weather_async(city: str) -> str:
+    """Get the current weather in a city."""
+    return f"Sunny, 21 degrees in {city}"
+
+
+def make_pyox_agent(
+    base_url: str, text_chunks: "TextChunks" = "delta", tool: Callable[..., object] = get_weather
+) -> StreamText:
     from pyox_agents import Agent, Client, TextDelta
 
     agent = Agent(
         client=Client(api_key="not-needed", base_url=base_url),
         model=MODEL,
         instructions=PROMPT,
-        tools=[get_weather],
+        tools=[tool],
         text_chunks=text_chunks,
     )
 
@@ -44,7 +51,7 @@ def make_pyox_agent(base_url: str, text_chunks: "TextChunks" = "delta") -> Strea
     return stream
 
 
-def make_pydantic_ai_agent(base_url: str) -> StreamText:
+def make_pydantic_ai_agent(base_url: str, tool: Callable[..., object] = get_weather) -> StreamText:
     from pydantic_ai import Agent, PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -52,7 +59,7 @@ def make_pydantic_ai_agent(base_url: str) -> StreamText:
     agent = Agent(
         OpenAIChatModel(MODEL, provider=OpenAIProvider(api_key="not-needed", base_url=base_url)),
         instructions=PROMPT,
-        tools=[get_weather],
+        tools=[tool],
     )
 
     async def stream(prompt: str) -> AsyncIterator[str]:
@@ -168,14 +175,14 @@ def make_llama_index_agent(base_url: str) -> StreamText:
     return stream
 
 
-def make_agno_agent(base_url: str) -> StreamText:
+def make_agno_agent(base_url: str, tool: Callable[..., object] = get_weather) -> StreamText:
     from agno.agent import Agent, RunEvent
     from agno.models.openai import OpenAIChat
 
     agent = Agent(
         model=OpenAIChat(id=MODEL, api_key="not-needed", base_url=base_url),
         instructions=PROMPT,
-        tools=[get_weather],
+        tools=[tool],
         telemetry=False,  # on by default: it would send a request to Agno after every run
     )
 
@@ -208,6 +215,12 @@ PACKAGES = {
     "langchain": "langchain",
     "llama-index": "llama-index-core",
     "agno": "agno",
+}
+# Behind Django (`django_server.py`), with async tools: pyox-agents, the fastest rival (Agno) and pydantic-ai.
+DJANGO_LIBRARIES: dict[str, Callable[[str], StreamText]] = {
+    "pyox-agents": partial(make_pyox_agent, tool=get_weather_async),
+    "agno": partial(make_agno_agent, tool=get_weather_async),
+    "pydantic-ai": partial(make_pydantic_ai_agent, tool=get_weather_async),
 }
 
 # Comparison 2: pyox-agents with each way of grouping streamed text (`text_chunks`).

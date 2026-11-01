@@ -1,10 +1,11 @@
-"""Load-test each agent behind a FastAPI streaming endpoint and put the results in README.md.
+"""Load-test each agent behind a FastAPI (or Django) streaming endpoint and put the results in README.md.
 
     uv run load_test.py                  # needs Node.js (for npx) and k6
     uv run load_test.py --duration 10s   # quicker, less precise
+    uv run load_test.py --server django  # Django instead: pyox-agents, Agno and pydantic-ai, async tools
 
 For each library, scenario and number of concurrent users:
-1. Start `server.py` (uvicorn, one process) with that library, and warm it up.
+1. Start `server.py` (or `django_server.py`; uvicorn, one process) with that library, and warm it up.
 2. k6 runs `load.js`: that many users send requests in a loop, each reading the whole streamed answer.
 3. Ask the server for its peak memory and CPU time (`GET /stats`), then stop it.
 Everything runs against the same fake OpenAI server as `run_all.py`.
@@ -20,7 +21,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from libraries import LIBRARIES
+from libraries import DJANGO_LIBRARIES, LIBRARIES
 from measure import SCENARIOS
 from run_all import (
     BASE_URL,
@@ -37,10 +38,15 @@ SERVER_PORT = 8000
 SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}"
 CONCURRENT_USERS = [1, 10, 50, 100]
 LOAD_SCENARIOS = ["text", "tool"]
+# For each server: its ASGI app, the agents it can serve, where the results go (file, README region).
+SERVERS = {
+    "fastapi": ("server:app", LIBRARIES, "load_test_results.json", "server"),
+    "django": ("django_server:app", DJANGO_LIBRARIES, "django_results.json", "django"),
+}
 
 
-def start_server(library: str) -> subprocess.Popen:
-    command = [sys.executable, "-m", "uvicorn", "server:app", "--port", str(SERVER_PORT), "--log-level", "warning"]
+def start_server(app: str, library: str) -> subprocess.Popen:
+    command = [sys.executable, "-m", "uvicorn", app, "--port", str(SERVER_PORT), "--log-level", "warning"]
     server = subprocess.Popen(command, cwd=HERE, env={**os.environ, "AGENT": library, "MODEL_URL": BASE_URL})
     for _ in range(100):
         try:
@@ -49,7 +55,7 @@ def start_server(library: str) -> subprocess.Popen:
         except OSError:
             time.sleep(0.1)
     server.kill()
-    raise RuntimeError("The FastAPI server did not start")
+    raise RuntimeError(f"The {app} server did not start")
 
 
 def server_stats() -> dict[str, float]:
@@ -65,10 +71,10 @@ def send_chat(prompt: str) -> str:
         return response.read().decode()
 
 
-def load_test(library: str, scenario: str, users: int, duration: str) -> dict:
-    print(f"Load testing {library} / {scenario} / {users} users...", flush=True)
+def load_test(app: str, library: str, scenario: str, users: int, duration: str) -> dict:
+    print(f"Load testing {app} / {library} / {scenario} / {users} users...", flush=True)
     prompt, expected = SCENARIOS[scenario]
-    server = start_server(library)
+    server = start_server(app, library)
     try:
         for _ in range(10):  # warm up connections and lazy imports
             send_chat(prompt)
@@ -182,14 +188,16 @@ def details_table(results: list[dict]) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--duration", default="20s", help="how long each load test runs (k6 format)")
+    parser.add_argument("--server", choices=SERVERS, default="fastapi", help="the web framework serving the agents")
     parser.add_argument("--only", nargs="+", choices=LIBRARIES, help="test only these libraries (README unchanged)")
     args = parser.parse_args()
-    libraries = args.only or list(LIBRARIES)
+    app, server_libraries, results_file, readme_region = SERVERS[args.server]
+    libraries = args.only or list(server_libraries)
 
     mock_server = start_mock_server()
     try:
         results = [
-            load_test(library, scenario, users, args.duration)
+            load_test(app, library, scenario, users, args.duration)
             for scenario in LOAD_SCENARIOS
             for users in CONCURRENT_USERS
             for library in libraries
@@ -200,8 +208,8 @@ def main() -> None:
     markdown = results_markdown(results, args.duration)
     print(markdown)
     if not args.only:
-        (HERE / "load_test_results.json").write_text(json.dumps(results, indent=2) + "\n")
-        write_into_readme("server", markdown)
+        (HERE / results_file).write_text(json.dumps(results, indent=2) + "\n")
+        write_into_readme(readme_region, markdown)
 
 
 if __name__ == "__main__":
