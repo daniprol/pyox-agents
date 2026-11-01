@@ -99,7 +99,9 @@ def main() -> None:
         stop_mock_server(server)
 
     headers = ["Way", "Runs at a time", "Latency p50", "CPU per run", "Throughput"]
-    markdown = "\n".join([f"{cpu_name()}. `tool` scenario, {args.runs} runs per row.", "", *markdown_table(headers, rows)])
+    markdown = "\n".join(
+        [f"{cpu_name()}. `tool` scenario, {args.runs} runs per row.", "", *markdown_table(headers, rows)]
+    )
     print(markdown)
     if args.runs == parser.get_default("runs"):
         write_into_readme("sync", markdown)
