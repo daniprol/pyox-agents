@@ -19,7 +19,6 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::native::NativeTool;
 use serde_json::{Map, Value};
 
@@ -29,7 +28,7 @@ pub use pyox_tools::hooks::ToolResult;
 use crate::human_input::{SharedCallLog, new_request};
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::{Content, Request, RequestKind, ToolCall, content_from_python};
-use crate::python_call::call_python;
+use crate::python_call::{PythonCalls, call_python};
 use crate::run_context::Context;
 use crate::subagents::{Subagent, subagent_tool_from_python};
 
@@ -55,7 +54,12 @@ pub enum Approval {
 pub enum ToolImplementation {
     /// A Python object with an `invoke(arguments: dict) -> str` method (sync or async).
     /// `takes_context`: call it as `invoke(arguments, ctx)` instead.
-    Python { tool: Py<PyAny>, takes_context: bool },
+    /// `run_in_thread`: a sync run calls it on a worker thread, not the thread reading the run.
+    Python {
+        tool: Py<PyAny>,
+        takes_context: bool,
+        run_in_thread: bool,
+    },
     /// A tool written in Rust in a separately compiled package.
     Native(NativeTool),
     /// No code here: the app runs the tool and replies with the result.
@@ -79,6 +83,14 @@ impl ToolImplementation {
             ToolImplementation::AskUser => "ask_user",
             ToolImplementation::AskParent => "ask_parent",
         }
+    }
+}
+
+/// Whether the tool has the attribute `name`, set to something true (`tool.name` in Python).
+fn is_set(tool: &Bound<'_, PyAny>, name: &str) -> PyResult<bool> {
+    match tool.getattr(name) {
+        Ok(value) => value.is_truthy(),
+        Err(_) => Ok(false),
     }
 }
 
@@ -114,19 +126,13 @@ impl ToolDefinition {
             _ => Approval::Never,
         };
 
-        let is_frontend_tool = match tool.getattr("frontend") {
-            Ok(frontend) => frontend.is_truthy()?,
-            Err(_) => false,
-        };
         let implementation = match NativeTool::from_python(tool)? {
             Some(native_tool) => ToolImplementation::Native(native_tool),
-            None if is_frontend_tool => ToolImplementation::Frontend,
+            None if is_set(tool, "frontend")? => ToolImplementation::Frontend,
             None if tool.hasattr("invoke")? => ToolImplementation::Python {
                 tool: tool.clone().unbind(),
-                takes_context: match tool.getattr("takes_ctx") {
-                    Ok(takes_ctx) => takes_ctx.is_truthy()?,
-                    Err(_) => false,
-                },
+                takes_context: is_set(tool, "takes_ctx")?,
+                run_in_thread: is_set(tool, "run_in_thread")?,
             },
             None => {
                 return Err(PyValueError::new_err(format!(
@@ -178,22 +184,25 @@ impl ToolDefinition {
         &self,
         call_log: &SharedCallLog,
         context: &Context,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> Result<Option<Request>, ToolResult> {
         let needs_approval = match &self.approval {
             Approval::Never => false,
             Approval::Always => true,
             Approval::WhenFunctionSays(function) => {
                 let function = Python::attach(|py| function.clone_ref(py));
-                let (context, call_log) = (context.clone(), call_log.clone());
+                let (context, call_log, ctx_calls) = (context.clone(), call_log.clone(), python_calls.clone());
                 let arguments = call_log.lock().unwrap().call.arguments.clone();
                 let answer = call_python(
                     function,
                     move |py| {
-                        let ctx = context.to_python(py, Some(call_log))?.into_bound(py).into_any();
+                        let ctx = context
+                            .to_python(py, Some(call_log), ctx_calls)?
+                            .into_bound(py)
+                            .into_any();
                         Ok(vec![ctx, json_to_python(py, &arguments)?])
                     },
-                    python_task_locals,
+                    python_calls,
                 )
                 .await
                 .and_then(|answer| Python::attach(|py| answer.bind(py).is_truthy()));
@@ -211,7 +220,7 @@ impl ToolDefinition {
         call: &ToolCall,
         call_log: &SharedCallLog,
         context: &Context,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> ToolResult {
         let Value::Object(arguments) = &call.arguments else {
             return error_result(format!("Tool arguments must be a JSON object, got: {}", call.arguments));
@@ -223,9 +232,17 @@ impl ToolDefinition {
                 let arguments = Value::Object(arguments.clone());
                 run_rust_tool(&self.name, move || native_tool.call(&arguments)).await
             }
-            ToolImplementation::Python { tool, takes_context } => {
+            ToolImplementation::Python {
+                tool,
+                takes_context,
+                run_in_thread,
+            } => {
                 let context = takes_context.then(|| (context.clone(), call_log.clone()));
-                match run_python_tool(tool, arguments, context, python_task_locals).await {
+                let python_calls = match run_in_thread {
+                    true => python_calls.on_worker_thread(),
+                    false => python_calls.clone(),
+                };
+                match run_python_tool(tool, arguments, context, &python_calls).await {
                     Ok(result) => result,
                     // `to_string()` gives e.g. "ValueError: city not found".
                     Err(python_error) => error_result(python_error.to_string()),
@@ -258,20 +275,22 @@ async fn run_python_tool(
     python_tool: &Py<PyAny>,
     arguments: &Map<String, Value>,
     context: Option<(Context, SharedCallLog)>,
-    python_task_locals: &TaskLocals,
+    python_calls: &PythonCalls,
 ) -> PyResult<ToolResult> {
     let invoke = Python::attach(|py| python_tool.bind(py).getattr("invoke").map(Bound::unbind))?;
     let arguments = Value::Object(arguments.clone());
+    let ctx_calls = python_calls.clone();
     let tool_result = call_python(
         invoke,
         move |py| {
             let mut python_arguments = vec![json_to_python(py, &arguments)?];
             if let Some((context, call_log)) = context {
-                python_arguments.push(context.to_python(py, Some(call_log))?.into_bound(py).into_any());
+                let ctx = context.to_python(py, Some(call_log), ctx_calls)?;
+                python_arguments.push(ctx.into_bound(py).into_any());
             }
             Ok(python_arguments)
         },
-        python_task_locals,
+        python_calls,
     )
     .await?;
     Python::attach(|py| {

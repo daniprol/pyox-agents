@@ -93,6 +93,10 @@ class RunContext(Generic[DepsT]):
         """Wait for a person's reply (an `Answer`). See `pyox_agents.human_input`."""
     def step(self, name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Awaitable[Any]:
         """Run `function` once and save its (JSON) result, reused when the call runs again."""
+    def ask_sync(self, data: Any = None, *, metadata: Any = None, key: str | None = None) -> Any:
+        """`ask` for sync tools: wait right here for a person's reply."""
+    def step_sync(self, name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        """`step` for sync tools (`function` may be async)."""
     @property
     def state(self) -> Any:
         """The run's state (`execute(state=...)`). Change it in place or assign it, inside a tool."""
@@ -264,6 +268,26 @@ class Run:
         """The run as an AG-UI event stream (server-sent events text)."""
 
 @final
+class SyncRun:
+    """A run for code without an event loop, from `Agent.execute_sync`: `for event in run`."""
+
+    def __iter__(self) -> SyncRun: ...
+    def __next__(self) -> _Event: ...
+    def __enter__(self) -> SyncRun: ...
+    def __exit__(self, *exc_info: object) -> None:
+        """Close the run."""
+    def close(self) -> None:
+        """End the run at once and keep nothing, like `break`."""
+    def stop(self) -> None:
+        """End the run at the next safe point, keeping the partial answer (from any thread)."""
+    def batches(self) -> EventBatches:
+        """Iterate over lists of events: each holds every event already waiting (at least one)."""
+    def ai_sdk(self) -> ProtocolStream:
+        """The run as a Vercel AI SDK UI message stream (server-sent events text)."""
+    def ag_ui(self, thread_id: str, run_id: str) -> ProtocolStream:
+        """The run as an AG-UI event stream (server-sent events text)."""
+
+@final
 class PredicateAnswer:
     @property
     def name(self) -> str: ...
@@ -334,13 +358,23 @@ def send_decision(
 
 @final
 class EventBatches:
+    """`async for` for a `Run`, `for` for a `SyncRun`."""
+
     def __aiter__(self) -> EventBatches: ...
     async def __anext__(self) -> list[_Event]: ...
+    def __iter__(self) -> EventBatches: ...
+    def __next__(self) -> list[_Event]: ...
 
 @final
 class ProtocolStream:
+    """`async for` for a `Run`, `for` for a `SyncRun`."""
+
     def __aiter__(self) -> ProtocolStream: ...
     async def __anext__(self) -> str: ...
+    def __iter__(self) -> ProtocolStream: ...
+    def __next__(self) -> str: ...
+    def close(self) -> None:
+        """End the run at once (a web server calls it when the client went away)."""
 
 @final
 class Engine:
@@ -379,7 +413,8 @@ class Engine:
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
         telemetry: object | None = None,
-    ) -> Run: ...
+        sync: bool = False,
+    ) -> Run | SyncRun: ...
 
 class AgentError(Exception):
     usage: Usage | None

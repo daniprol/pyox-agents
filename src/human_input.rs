@@ -26,7 +26,6 @@ use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::usage::Usage;
 use serde_json::{Map, Value, json};
 
@@ -34,7 +33,7 @@ use crate::events::EventSender;
 use crate::json_convert::{json_to_python, python_to_json};
 pub use crate::messages::waiting_calls;
 use crate::messages::{Message, Reply, Request, RequestKind, ToolCall};
-use crate::python_call::call_python;
+use crate::python_call::{PythonCalls, call_python};
 use crate::telemetry::Span;
 
 /// Where a run sends new requests while it is alive.
@@ -172,7 +171,7 @@ pub async fn reply_to(
     log: &SharedCallLog,
     request: Request,
     human_input: &HumanInput,
-    python_task_locals: &TaskLocals,
+    python_calls: &PythonCalls,
 ) -> PyResult<Option<Reply>> {
     // Each `log.lock()` is released at the end of its statement (or block),
     // never held while waiting for Python.
@@ -202,7 +201,7 @@ pub async fn reply_to(
     let reply = call_python(
         on_request,
         move |py| Ok(vec![Py::new(py, event)?.into_bound(py).into_any()]),
-        python_task_locals,
+        python_calls,
     )
     .await?;
     let reply = Python::attach(|py| reply_from_python(reply.bind(py)))?;

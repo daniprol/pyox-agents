@@ -23,7 +23,9 @@ Events are small, read-only objects backed by Rust. They work with `isinstance` 
 
 A subagent's events come in the same stream, with `subagent_id` set (it is `None` for the main agent's events).
 
-`await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event.
+`await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event. Without an
+event loop (scripts, Django, Celery), use `agent.run_sync(prompt)` and `for event in agent.execute_sync(prompt)`:
+see [Sync code](sync.md).
 
 One `Agent` can serve many runs at the same time: each run has its own history. Create it once and reuse it.
 

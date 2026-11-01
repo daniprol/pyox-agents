@@ -1,6 +1,5 @@
 """Python tools: the `Tool` class and the `@tool` decorator."""
 
-import asyncio
 import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping
@@ -56,8 +55,10 @@ class Tool:
     async, and may return a `str`, a `ToolReturn`, an `image(...)` or `file(...)`
     (or a list of them and text), or anything `json.dumps` accepts.
     With `takes_ctx=True` it also gets the run's `RunContext` first.
-    Set `run_in_thread=True` for slow sync functions (for example a heavy Rust
-    function from a compiled package) so they don't block the event loop.
+    Sync functions never block an event loop: async runs call them on worker
+    threads, sync runs (`agent.run_sync`) on your own thread. Set
+    `run_in_thread=True` to run them on worker threads in sync runs too, so
+    several calls run in parallel.
 
     `requires_approval`: the call waits for a person's `Approve` before it runs
     (see `pyox_agents.human_input`). `frontend=True`: the tool has no Python
@@ -83,24 +84,30 @@ class Tool:
         """
         return Tool(name, description, parameters, function=_runs_in_the_frontend, frontend=True)
 
-    async def invoke(self, arguments: dict[str, Any], ctx: RunContext | None = None) -> ToolContent | ToolReturn:
+    def invoke(self, arguments: dict[str, Any], ctx: RunContext | None = None) -> Any:
         """Called by the Rust agent loop with the arguments chosen by the model
-        (and the context, when `takes_ctx` is set)."""
+        (and the context, when `takes_ctx` is set). A sync function runs right here
+        (the agent loop picks the thread); an async one gives a coroutine to await."""
         positional = (ctx,) if self.takes_ctx else ()
         if self.argument_types:
             arguments = {
                 name: from_json(self.argument_types[name], value) if name in self.argument_types else value
                 for name, value in arguments.items()
             }
-        if self.run_in_thread:
-            result = await asyncio.to_thread(self.function, *positional, **arguments)
-        else:
-            result = self.function(*positional, **arguments)
-            if inspect.isawaitable(result):
-                result = await result
-        if isinstance(result, ToolReturn):
-            return ToolReturn(_as_content(result.content), result.metadata)
-        return _as_content(result)
+        result = self.function(*positional, **arguments)
+        if inspect.isawaitable(result):
+            return _tool_result_when_done(result)
+        return _tool_result(result)
+
+
+async def _tool_result_when_done(result: Awaitable[Any]) -> ToolContent | ToolReturn:
+    return _tool_result(await result)
+
+
+def _tool_result(result: Any) -> ToolContent | ToolReturn:
+    if isinstance(result, ToolReturn):
+        return ToolReturn(_as_content(result.content), result.metadata)
+    return _as_content(result)
 
 
 _MEDIA_TYPES = ("image", "file")

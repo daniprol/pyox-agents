@@ -241,8 +241,8 @@ impl Subagent {
         let mut usage = Usage::default();
         let mut messages = Vec::new();
         // `Box::pin`: the subagent's loop runs inside this one (Rust needs a box for that).
-        let python_task_locals = run.python_task_locals.clone();
-        let outcome = Box::pin(run_agent_loop(inputs, python_task_locals, &mut usage, &mut messages)).await;
+        let python_calls = run.python_calls.clone();
+        let outcome = Box::pin(run_agent_loop(inputs, python_calls, &mut usage, &mut messages)).await;
         call_log.lock().unwrap().subagent_usage = usage;
 
         let finished = match outcome {
