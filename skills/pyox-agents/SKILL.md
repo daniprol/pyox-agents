@@ -15,7 +15,8 @@ Rust. Python code defines agents and tools; everything is `async`. Full docs: ht
 - Read `OPENAI_API_KEY` / `OPENAI_BASE_URL` from the environment, or pass a `Client`. One `Client` per process,
   shared by agents (it holds the connection pool). One `Agent` serves many concurrent runs.
 - `agent.execute(...)` returns a `Run` to iterate with `async for`; `await agent.run(...)` returns the final
-  `RunFinished`. Both take `history=`, `conversation_id=`, `deps=`, `answers=`, `on_request=`, `state=`.
+  `RunFinished`. Both take `history=`, `conversation_id=`, `deps=`, `answers=`, `on_request=`, `state=`, and
+  `tools=` (extra tools for that run only, e.g. a user's own MCP server).
 - Tool errors do not raise: the exception text goes back to the model and `ToolFinished.is_error` is `True`.
   Failed runs raise subclasses of `AgentError`, with `error.messages` (history so far) and `error.usage`.
 - History is plain dicts (`{"role": "user" | "assistant" | "tool", ...}`), the same format in and out.

@@ -47,7 +47,7 @@ impl Run {
         Run {
             queue: Arc::new(EventQueue {
                 not_started: Mutex::new(Some(inputs)),
-                receiver: tokio::sync::Mutex::new(receiver),
+                receiver: tokio::sync::Mutex::new(Some(receiver)),
                 background_task: Mutex::new(None),
             }),
             stop_sender,
@@ -110,7 +110,8 @@ struct EventQueue {
     /// The run's inputs until the first read starts it.
     not_started: Mutex<Option<RunInputs>>,
     /// `tokio::sync::Mutex`: a lock that can be held while waiting (`.await`).
-    receiver: tokio::sync::Mutex<Receiver<PyResult<AgentEvent>>>,
+    /// `None` once the run's last item was read (see `is_last`).
+    receiver: tokio::sync::Mutex<Option<Receiver<PyResult<AgentEvent>>>>,
     background_task: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -128,22 +129,46 @@ impl EventQueue {
 
     /// The next event, or `None` when the run is over.
     async fn next(&self) -> Option<PyResult<AgentEvent>> {
-        self.receiver.lock().await.recv().await
+        let mut slot = self.receiver.lock().await;
+        let item = slot.as_mut()?.recv().await;
+        if item.as_ref().is_none_or(is_last) {
+            *slot = None;
+        }
+        item
     }
 
     /// Waits for one event, then takes every other event already waiting
     /// (without waiting for more). Empty when the run is over.
     async fn next_batch(&self) -> Vec<PyResult<AgentEvent>> {
-        let mut receiver = self.receiver.lock().await;
-        let Some(first) = receiver.recv().await else {
+        let mut slot = self.receiver.lock().await;
+        let Some(receiver) = slot.as_mut() else {
             return Vec::new();
         };
+        let Some(first) = receiver.recv().await else {
+            *slot = None;
+            return Vec::new();
+        };
+        let mut over = is_last(&first);
         let mut batch = vec![first];
-        while let Ok(event) = receiver.try_recv() {
+        while !over && let Ok(event) = receiver.try_recv() {
+            over = is_last(&event);
             batch.push(event);
+        }
+        if over {
+            *slot = None;
         }
         batch
     }
+}
+
+/// The run's last item: its `RunFinished`, or the error that ended it.
+///
+/// The queue ends there, and drops its receiving end: whatever is sent after
+/// is thrown away. Waiting for every sender to be gone instead would hang
+/// the stream while anything still holds one, such as a tool's `ctx` kept in
+/// a cache or in a library's background task.
+fn is_last(item: &PyResult<AgentEvent>) -> bool {
+    matches!(item, Ok(AgentEvent::RunFinished(_)) | Err(_))
 }
 
 impl Drop for EventQueue {

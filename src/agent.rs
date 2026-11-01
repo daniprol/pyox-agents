@@ -243,14 +243,15 @@ impl Engine {
     /// `previous_response_id` continues a conversation OpenAI stored (Responses API with `store`).
     /// `answers` replies to the tool calls the last run left waiting (`{call_id: reply}`);
     /// `on_request` replies live, while the run waits (see `human_input`).
+    /// `tools` adds tools for this run only (the same kinds as `Agent(tools=...)`).
     /// `frontend_tools` adds tools the app runs, for this run only (dicts with
     /// `name`, `description` and `parameters`, as AG-UI clients send them).
     /// `state` is the run's state, shared with the app (see `state`).
     /// `telemetry` is the recorder that traces this run (see `telemetry`), or `None`.
     #[pyo3(signature = (
         prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None,
-        previous_response_id = None, answers = None, on_request = None, frontend_tools = None, state = None,
-        telemetry = None,
+        previous_response_id = None, answers = None, on_request = None, tools = None, frontend_tools = None,
+        state = None, telemetry = None,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
     fn execute(
@@ -264,6 +265,7 @@ impl Engine {
         previous_response_id: Option<String>,
         answers: Option<Bound<'_, PyDict>>,
         on_request: Option<Py<PyAny>>,
+        tools: Option<Vec<Bound<'_, PyAny>>>,
         frontend_tools: Option<Vec<Bound<'_, PyAny>>>,
         state: Option<Bound<'_, PyAny>>,
         telemetry: Option<Py<PyAny>>,
@@ -317,15 +319,19 @@ impl Engine {
                 ));
             }
         }
-        let frontend_tools = frontend_tools
-            .iter()
-            .flatten()
-            .map(|tool| ToolDefinition::frontend_from_python(tool).map(Arc::new))
-            .collect::<PyResult<Vec<_>>>()?;
-        for tool in &frontend_tools {
-            if self.config.tools.iter().any(|agent_tool| agent_tool.name == tool.name) {
+        // Tools for this run only: the app's own, then its frontend tools.
+        let mut run_tools: Vec<Arc<ToolDefinition>> = Vec::new();
+        for tool in tools.iter().flatten() {
+            run_tools.push(Arc::new(ToolDefinition::from_python(tool)?));
+        }
+        for tool in frontend_tools.iter().flatten() {
+            run_tools.push(Arc::new(ToolDefinition::frontend_from_python(tool)?));
+        }
+        for (index, tool) in run_tools.iter().enumerate() {
+            let taken = self.config.tools.iter().chain(&run_tools[..index]);
+            if taken.map(|other| &other.name).any(|name| *name == tool.name) {
                 return Err(PyValueError::new_err(format!(
-                    "The frontend tool {:?} has the name of one of the agent's tools",
+                    "Two tools are named {:?}: tools given for a run need names of their own",
                     tool.name
                 )));
             }
@@ -361,7 +367,7 @@ impl Engine {
                 on_request,
                 events: EventSender::new(event_sender),
             }),
-            extra_tools: frontend_tools,
+            extra_tools: run_tools,
             state: RunState::new(state),
             stop,
             telemetry: match telemetry {
@@ -390,8 +396,8 @@ pub struct RunInputs {
     pub answers: HashMap<String, Reply>,
     /// The live `on_request` handler, and where the run's events go.
     pub human_input: Arc<HumanInput>,
-    /// Tools added for this run only: the app's frontend tools
-    /// (`execute(frontend_tools=...)`), or what a subagent gets from its tool.
+    /// Tools added for this run only (`execute(tools=..., frontend_tools=...)`),
+    /// or what a subagent gets from its tool.
     pub extra_tools: Vec<Arc<ToolDefinition>>,
     pub state: RunState,
     /// Set by `run.stop()`; a subagent shares its caller's.

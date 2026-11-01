@@ -70,6 +70,21 @@ await agent.run("What did I order?", deps=database)
 tool, `tool_call_id`, `tool_name`, `approval` and the `ask` and `step` methods
 (see [Human in the loop](human-in-the-loop.md)). [Hooks](hooks.md) get the same `ctx`.
 
+## Tools for one run
+
+`tools=` on `run(...)` or `execute(...)` adds tools for that run only, on top of the agent's. Use it when the
+tools themselves depend on the request: a user's own [MCP server](mcp.md), or tools made for their plan.
+
+```python
+agent = Agent(model="gpt-5-mini", tools=[search])  # made once, for every user
+
+result = await agent.run(prompt, tools=tools_for(user))
+```
+
+Their names must differ from the agent's tools. A run that stopped to wait for a person needs the same tools
+again when it goes on. Subagents made with `inherit_tools=True` get them too. To hide some of the agent's tools
+instead, use a [`before_model_request` hook](hooks.md).
+
 ## Your own Rust tools
 
 For tools that must be fast, write them in Rust in your own small package. Describe the arguments with a struct

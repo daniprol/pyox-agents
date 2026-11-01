@@ -387,6 +387,25 @@ async def test_inherited_tools_keep_their_approval_rules(fake_openai: FakeOpenAI
     ]
 
 
+async def test_subagents_inherit_the_tools_of_the_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    def whoami() -> str:
+        """The user's name."""
+        return "ana"
+
+    guide = make_agent()
+    assistant = make_agent(tools=[guide.as_tool("guide", "Guide the user", inherit_tools=True)])
+    fake_openai.queue(
+        tool_calls_response(tool_call("guide", task="Who is the user?")),
+        tool_calls_response(tool_call("whoami")),
+        text_response("Ana"),
+        text_response("You are Ana"),
+    )
+
+    await assistant.run("Who am I?", tools=[whoami])
+
+    assert tool_names(fake_openai, 1) == ["whoami"]
+
+
 async def test_subagents_can_use_inherited_frontend_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     location = {"name": "get_location", "description": "The user's location.", "parameters": {"type": "object"}}
     guide = make_agent()

@@ -21,6 +21,18 @@ async with McpTools.http("https://mcp.deepwiki.com/mcp") as deepwiki:
 after that give the model an error. In a web app, open it once when the app starts (for example in a FastAPI
 `lifespan`) and make agents inside it.
 
+When each user signs in to the server with their own token, open it for each request instead, and give its tools
+to that run only with `tools=` (see [Tools for one run](tools.md#tools-for-one-run)):
+
+```python
+agent = Agent(model="gpt-5-mini")  # one agent for the app
+
+
+async def answer(user, prompt):
+    async with McpTools.http(GITHUB_URL, headers={"Authorization": f"Bearer {user.github_token}"}) as github:
+        return await agent.run(prompt, tools=github.tools)
+```
+
 ## Connecting
 
 ```python

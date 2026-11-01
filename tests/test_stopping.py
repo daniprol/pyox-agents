@@ -24,6 +24,7 @@ from pyox_agents import (
     Client,
     MaxTurnsExceededError,
     Message,
+    RunContext,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -239,3 +240,32 @@ async def test_api_errors_keep_the_conversation(fake_openai: FakeOpenAI, make_ag
 
 def test_errors_raised_outside_a_run_have_no_messages() -> None:
     assert ApiError("by hand").messages is None
+
+
+# The stream ends with the run ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("read", ["events", "batches", "ai_sdk"])
+async def test_the_stream_ends_with_the_run_even_if_a_ctx_is_kept(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, read: str
+) -> None:
+    # Something that outlives the tool call (a cache, a library's background task) keeps its `ctx`.
+    kept: list[Any] = []
+
+    def remember(ctx: RunContext) -> str:
+        """Remember the run."""
+        kept.append(ctx)
+        return "ok"
+
+    fake_openai.queue(tool_calls_response(tool_call("remember")), text_response("Done"))
+    run = make_agent(tools=[tool(remember)]).execute("Go")
+    stream = {"events": run, "batches": run.batches(), "ai_sdk": run.ai_sdk()}[read]
+
+    items = await asyncio.wait_for(_read_all(stream), timeout=5)
+
+    assert kept
+    assert items
+
+
+async def _read_all(stream: Any) -> list[Any]:
+    return [item async for item in stream]

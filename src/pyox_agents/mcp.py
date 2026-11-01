@@ -96,8 +96,8 @@ class _ToolCall:
 
 
 # The number of the tool call in progress (a key of `McpTools._calls`). Not the call itself: the
-# `mcp` package may start tasks that keep a copy of this context after the call, and holding the
-# run's context there would keep the run from ending.
+# `mcp` package may start tasks that keep a copy of this context after the call, and those would
+# keep the run's context (and what it holds) alive for as long as the connection is open.
 _current_call: ContextVar[int | None] = ContextVar("pyox_mcp_tool_call", default=None)
 _call_numbers = itertools.count()
 

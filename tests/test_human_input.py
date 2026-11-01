@@ -618,7 +618,7 @@ async def test_frontend_tools_can_come_with_each_run(fake_openai: FakeOpenAI, ma
 def test_frontend_tools_need_a_name_of_their_own(make_agent: MakeAgent) -> None:
     agent = make_agent(tools=[delete_file])
 
-    with pytest.raises(ValueError, match="agent's tools"):
+    with pytest.raises(ValueError, match="names of their own"):
         agent.execute("Hi", frontend_tools=[{"name": "delete_file"}])
     with pytest.raises(ValueError, match="needs a"):
         agent.execute("Hi", frontend_tools=[{"description": "No name"}])

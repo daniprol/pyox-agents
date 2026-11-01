@@ -346,6 +346,20 @@ async def test_http_servers(
     assert booking["content"] == "Booked friday on floor 6"
 
 
+async def test_each_user_gets_their_own_server(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, http_server_url: str
+) -> None:
+    # One agent for the app; each request opens the server with its user's token.
+    agent = make_agent(instructions="Help the user.")
+    results = []
+    for token in ["ana", "ben"]:
+        fake_openai.queue(tool_calls_response(tool_call("whoami")), text_response("Done"))
+        async with McpTools.http(http_server_url, headers={"Authorization": f"Bearer {token}"}) as server:
+            results.append(await agent.run("Who am I?", tools=server.tools))
+
+    assert [tool_messages(result.new_messages)[0]["content"] for result in results] == ["Bearer ana", "Bearer ben"]
+
+
 # Prompts, resources and tracing -------------------------------------------------------------------
 
 
