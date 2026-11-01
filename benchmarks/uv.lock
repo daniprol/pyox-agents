@@ -2961,24 +2961,35 @@ crypto = [
 
 [[package]]
 name = "pyox-agents"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../" }
 
 [package.metadata]
+requires-dist = [
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3,<3" },
+    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.30" },
+]
+provides-extras = ["otel", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "ag-ui-protocol", specifier = ">=1.0,<2" },
     { name = "aiosqlite", specifier = ">=0.21" },
     { name = "fast-history", editable = "../examples/rust_history_store" },
     { name = "fast-tools", editable = "../examples/rust_tool_package" },
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "maturin", specifier = ">=1.9" },
+    { name = "mcp", specifier = ">=2.3,<3" },
+    { name = "opentelemetry-sdk", specifier = ">=1.30" },
     { name = "prek", specifier = ">=0.5.7" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "ruff", specifier = ">=0.14" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "ty", specifier = ">=0.0.1" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 docs = [{ name = "zensical", specifier = ">=0.0.72" }]
 
