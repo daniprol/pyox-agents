@@ -20,6 +20,7 @@ uv sync                                     # installs every library and builds 
 uv run run_all.py --runs 100                # library benchmark, quick (~10 min; full run ~1 h)
 uv run run_all.py --only langgraph agno     # only some libraries, compared with pyox-agents
 uv run load_test.py --duration 5s           # FastAPI benchmark, quick (~10 min; full run ~1 h)
+uv run load_test.py --server django         # Django benchmark, 3 libraries (~12 min)
 uv run websocket_bench.py --runs 100        # Responses API over HTTP and WebSocket (~5 min)
 uv run stream_bench.py                      # streaming as events, batches or AI SDK text (~3 min)
 uv run sync_bench.py                        # the sync API against the async one (~1 min)
@@ -310,6 +311,70 @@ Python 3.13.17, one uvicorn process, Intel(R) Xeon(R) Processor @ 2.80GHz. Each 
   but it runs a started answer to the end while the others wait, so its p90 and p99 are about 4 times worse.
   The average is the fairest single number.
 
+## Behind a Django streaming endpoint
+
+The same load test with Django instead of FastAPI: an async view returning a `StreamingHttpResponse`, served by one
+uvicorn process (ASGI), with async tools
+([`django_server.py`](https://github.com/daniprol/pyox-agents/blob/main/benchmarks/django_server.py)). Only
+pyox-agents, Agno (the fastest other library above) and pydantic-ai. Run it with `uv run load_test.py --server django`.
+
+<!-- django:start -->
+Python 3.13.18, one uvicorn process, Intel(R) Xeon(R) Processor @ 2.10GHz. Each measurement: 20s of load.
+
+### `text`: one long streamed answer
+
+| Library | Req/s, 1 user | Req/s, 10 users | Req/s, 50 users | Req/s, 100 users | First byte p50, 100 users | Latency avg / p50 / p90 / p99, 100 users | CPU per request | Peak memory | Failed |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents | 14 | 20 | 19 | 19 | 41 ms | 5.1 / 4.9 / 7.1 / 9.2 s | 79.4 ms | 88 MB | 0 |
+| agno | 11 | 11 | 11 | 11 | 3676 ms | 7.6 / 4.3 / 25.6 / 28.0 s | 87.1 ms | 115 MB | 0 |
+| pydantic-ai | 6 | 6 | 5 | 4 | 584 ms | 22.1 / 22.2 / 22.4 / 22.4 s | 221.6 ms | 142 MB | 0 |
+
+### `tool`: one tool call, then the answer
+
+| Library | Req/s, 1 user | Req/s, 10 users | Req/s, 50 users | Req/s, 100 users | First byte p50, 100 users | Latency avg / p50 / p90 / p99, 100 users | CPU per request | Peak memory | Failed |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| pyox-agents | 163 | 220 | 265 | 232 | 89 ms | 0.4 / 0.4 / 0.5 / 0.6 s | 5.4 ms | 68 MB | 0 |
+| agno | 67 | 69 | 70 | 67 | 1445 ms | 1.5 / 1.4 / 1.6 / 5.7 s | 14.8 ms | 123 MB | 0 |
+| pydantic-ai | 34 | 41 | 32 | 30 | 1798 ms | 3.2 / 3.4 / 3.6 / 3.8 s | 33.4 ms | 145 MB | 0 |
+
+<details><summary>All the numbers</summary>
+
+| Scenario | Library | Users | Requests/s | First byte p50 | p99 | Latency avg | p50 | p90 | p99 | Failed | Server CPU per request | Server peak memory |
+|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| text | pyox-agents | 1 | 14 | 4.4 ms | 7.8 ms | 68.8 ms | 67.5 ms | 81.2 ms | 93.9 ms | 0 | 76.4 ms | 55 MB |
+| text | agno | 1 | 11 | 7.7 ms | 13.0 ms | 91.4 ms | 86.4 ms | 107.0 ms | 141.8 ms | 0 | 88.6 ms | 102 MB |
+| text | pydantic-ai | 1 | 6 | 10.8 ms | 17.9 ms | 162.0 ms | 157.6 ms | 185.5 ms | 233.3 ms | 0 | 157.2 ms | 112 MB |
+| text | pyox-agents | 10 | 20 | 6.0 ms | 21.1 ms | 508.9 ms | 503.7 ms | 557.8 ms | 594.3 ms | 0 | 79.0 ms | 59 MB |
+| text | agno | 10 | 11 | 737.0 ms | 986.5 ms | 878.6 ms | 871.4 ms | 966.4 ms | 1102.5 ms | 0 | 87.3 ms | 104 MB |
+| text | pydantic-ai | 10 | 6 | 68.9 ms | 96.6 ms | 1630.1 ms | 1595.7 ms | 1857.9 ms | 1969.4 ms | 0 | 161.5 ms | 116 MB |
+| text | pyox-agents | 50 | 19 | 22.4 ms | 123.6 ms | 2514.5 ms | 2547.3 ms | 2806.0 ms | 3144.5 ms | 0 | 76.3 ms | 73 MB |
+| text | agno | 50 | 11 | 3037.4 ms | 4470.3 ms | 4197.0 ms | 4258.1 ms | 4924.7 ms | 4960.0 ms | 0 | 87.2 ms | 115 MB |
+| text | pydantic-ai | 50 | 5 | 376.5 ms | 481.6 ms | 9541.2 ms | 9846.8 ms | 9968.0 ms | 10118.9 ms | 0 | 198.7 ms | 129 MB |
+| text | pyox-agents | 100 | 19 | 40.7 ms | 316.1 ms | 5098.0 ms | 4860.6 ms | 7080.8 ms | 9206.9 ms | 0 | 79.4 ms | 88 MB |
+| text | agno | 100 | 11 | 3675.8 ms | 27865.6 ms | 7577.6 ms | 4344.8 ms | 25603.7 ms | 27962.0 ms | 0 | 87.1 ms | 115 MB |
+| text | pydantic-ai | 100 | 4 | 584.1 ms | 1202.4 ms | 22126.2 ms | 22168.9 ms | 22376.9 ms | 22390.5 ms | 0 | 221.6 ms | 142 MB |
+| tool | pyox-agents | 1 | 163 | 3.0 ms | 6.2 ms | 5.9 ms | 5.6 ms | 7.1 ms | 10.9 ms | 0 | 5.9 ms | 55 MB |
+| tool | agno | 1 | 67 | 9.9 ms | 16.9 ms | 14.7 ms | 13.8 ms | 17.4 ms | 24.0 ms | 0 | 14.0 ms | 103 MB |
+| tool | pydantic-ai | 1 | 34 | 18.8 ms | 28.3 ms | 28.8 ms | 27.7 ms | 34.1 ms | 42.9 ms | 0 | 26.9 ms | 113 MB |
+| tool | pyox-agents | 10 | 220 | 9.7 ms | 20.8 ms | 45.2 ms | 44.1 ms | 54.1 ms | 74.5 ms | 0 | 5.8 ms | 57 MB |
+| tool | agno | 10 | 69 | 135.9 ms | 224.6 ms | 144.7 ms | 140.4 ms | 164.3 ms | 229.7 ms | 0 | 14.5 ms | 105 MB |
+| tool | pydantic-ai | 10 | 41 | 137.5 ms | 304.4 ms | 245.8 ms | 236.6 ms | 289.1 ms | 415.7 ms | 0 | 24.6 ms | 119 MB |
+| tool | pyox-agents | 50 | 265 | 35.5 ms | 73.6 ms | 188.2 ms | 185.7 ms | 213.3 ms | 252.7 ms | 0 | 4.8 ms | 62 MB |
+| tool | agno | 50 | 70 | 698.0 ms | 1459.3 ms | 706.6 ms | 702.3 ms | 776.6 ms | 1463.5 ms | 0 | 14.4 ms | 114 MB |
+| tool | pydantic-ai | 50 | 32 | 853.7 ms | 1163.9 ms | 1556.1 ms | 1553.3 ms | 1656.4 ms | 1889.9 ms | 0 | 31.1 ms | 134 MB |
+| tool | pyox-agents | 100 | 232 | 89.2 ms | 169.8 ms | 427.2 ms | 422.9 ms | 500.2 ms | 589.4 ms | 0 | 5.4 ms | 68 MB |
+| tool | agno | 100 | 67 | 1445.1 ms | 5647.2 ms | 1451.3 ms | 1449.1 ms | 1625.5 ms | 5650.4 ms | 0 | 14.8 ms | 123 MB |
+| tool | pydantic-ai | 100 | 30 | 1798.0 ms | 2136.1 ms | 3248.9 ms | 3383.5 ms | 3619.7 ms | 3751.3 ms | 0 | 33.4 ms | 145 MB |
+
+</details>
+<!-- django:end -->
+
+- Same picture as FastAPI: pyox-agents serves 3.5 times more requests per second than Agno with a tool call
+  (232 vs 67 with 100 users) and 8 times more than pydantic-ai, and about 2 times more than Agno on streamed text.
+- With 100 users it starts answers within 40 to 90 ms; Agno and pydantic-ai take 0.6 to 3.7 s.
+- Async tools run on the event loop. A sync tool (`@tool def ...`) also runs on the loop and blocks it while it
+  runs; mark slow ones `@tool(run_in_thread=True)` to run them with `asyncio.to_thread`.
+
 ## Responses API over WebSocket
 
 pyox-agents (`Client(transport="websocket")`) and the OpenAI Agents SDK (`use_responses_websocket=True`), each also
@@ -446,8 +511,9 @@ was rejected (~40 ms delay on reused connections).
 | [`measure.py`](measure.py)     | Measures one agent on one scenario: `uv run measure.py agno tool` (fake server running) |
 | [`run_all.py`](run_all.py)     | Runs the library benchmarks and writes the results                 |
 | [`server.py`](server.py)       | FastAPI app streaming an agent's answer                            |
+| [`django_server.py`](django_server.py) | Django app (ASGI, async tools) streaming an agent's answer |
 | [`load.js`](load.js)           | k6 script: users sending requests in a loop                        |
-| [`load_test.py`](load_test.py) | Runs the FastAPI benchmark and writes the results                  |
+| [`load_test.py`](load_test.py) | Runs the FastAPI (or `--server django`) benchmark and writes the results |
 | [`responses_server.py`](responses_server.py) | Fake Responses API over HTTP and WebSocket, for the tool loops |
 | [`websocket_bench.py`](websocket_bench.py) | Runs the Responses API HTTP / WebSocket comparison and writes the results |
 | [`stream_bench.py`](stream_bench.py) | Compares streaming as events, batches and AI SDK text, and writes the results |
