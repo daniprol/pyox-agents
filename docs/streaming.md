@@ -4,7 +4,7 @@
 happen:
 
 ```python
---8 < --"examples/basic.py"
+--8<-- "examples/basic.py"
 ```
 
 ## Events

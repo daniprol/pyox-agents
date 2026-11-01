@@ -1,6 +1,7 @@
 # pyox-agents
 
-Minimal and fast AI agents for Python, with a Rust core. Inspired by [pi](https://github.com/earendil-works/pi).
+The fastest, lightest way to build AI agents in Python: a small Python API on top of a Rust core. Inspired by
+[pi](https://github.com/earendil-works/pi).
 
 You define the agent (model, instructions, tools) in Python and iterate over its events.
 Rust does the heavy lifting: HTTP, streaming decoding, JSON parsing and the agent loop.
@@ -11,12 +12,12 @@ Rust does the heavy lifting: HTTP, streaming decoding, JSON parsing and the agen
 
 ## Install
 
-pyox-agents is not on PyPI yet. Install it from GitHub; it compiles the Rust core, so you need a
-Rust toolchain ([rustup](https://rustup.rs/)):
-
 ```bash
-uv add "pyox-agents @ git+https://github.com/daniprol/pyox-agents"
+uv add pyox-agents  # or: pip install pyox-agents
 ```
+
+Prebuilt wheels cover Linux, macOS and Windows on Python 3.11 and newer, and pyox-agents has no Python
+dependencies.
 
 ## Your first agent
 
@@ -68,4 +69,6 @@ print(result.text)
 - [Hooks](hooks.md): watch or change a run at fixed points.
 - [Tracing](telemetry.md): OpenTelemetry spans and metrics for runs, model requests and tool calls.
 - [Client and errors](client.md): API keys, other servers, timeouts and retries.
+- Using a coding agent? Install the [pyox-agents skill](https://github.com/daniprol/pyox-agents/tree/main/skills/pyox-agents)
+  with `npx skills add daniprol/pyox-agents`.
 - Complete, runnable scripts are in [`examples/`](https://github.com/daniprol/pyox-agents/tree/main/examples).
