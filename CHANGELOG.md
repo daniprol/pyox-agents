@@ -6,8 +6,6 @@ All notable changes to pyox-agents (and the `pyox-tools` crate) are listed here.
 
 ## [Unreleased]
 
-<!-- OpenTelemetry tracing goes here, under "### Added", when it lands. -->
-
 ## [0.2.0] - 2026-11-01
 
 ### Breaking changes
@@ -37,6 +35,13 @@ All notable changes to pyox-agents (and the `pyox-tools` crate) are listed here.
 
 ### Added
 
+- Tracing with OpenTelemetry: `pyox_agents.instrument()` or `Agent(instrument=...)`, with the optional extra
+  `pyox-agents[otel]` (the OpenTelemetry API only; your app sets up the SDK and exporters). Runs, model requests
+  and tool calls become `invoke_agent`, `chat` and `execute_tool` spans (GenAI semantic conventions, experimental
+  names), subagents nest under their tool call, and your own spans in tools and hooks nest where they ran. Also
+  the `gen_ai.client.*` token, duration and time-to-first-chunk metrics. Off by default; prompts and results only
+  with `capture_content=True` (or `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`). See docs/telemetry.md.
+- `Agent(name=...)`: names the agent in traces.
 - `RunFinished.stop_reason`: why the run ended (`"end"`, `"waiting"`, `"length"`, `"refusal"` or `"stopped"`).
 - `run.stop()`: ends a run at the next safe point, keeping the text streamed so far and a valid history.
 - `error.messages` on errors raised by a run: the history up to the failure, to continue from.

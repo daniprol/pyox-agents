@@ -416,6 +416,17 @@ add_hooks(module, "guard", guard)?; // Python: Agent(hooks=[your_package.guard])
 
 See `guard` in [`examples/rust_tool_package`](https://github.com/daniprol/pyox-agents/blob/main/examples/rust_tool_package/src/lib.rs) for a complete example.
 
+## Tracing (OpenTelemetry)
+
+```python
+pyox_agents.instrument()  # pip install "pyox-agents[otel]"; after your app set up OpenTelemetry (Logfire, OTLP...)
+```
+
+Each run becomes an `invoke_agent` span, with `chat` spans for model requests (tokens, time to first chunk) and
+`execute_tool` spans for tool calls; subagents nest under their tool call, and your own spans in tools and hooks
+nest where they ran. Off by default, and free when off. Prompts and results are only recorded with
+`capture_content=True`. See [Tracing](https://daniprol.github.io/pyox-agents/telemetry/).
+
 ## Client
 
 ```python

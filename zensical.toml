@@ -23,6 +23,7 @@ nav = [
   { "State" = "state.md" },
   { "Web frontends" = "web-frontends.md" },
   { "Hooks" = "hooks.md" },
+  { "Tracing (OpenTelemetry)" = "telemetry.md" },
   { "Client and errors" = "client.md" },
   { "Benchmarks" = "benchmarks.md" },
 ]
