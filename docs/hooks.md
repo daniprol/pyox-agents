@@ -6,7 +6,7 @@ Return `None` to leave things as they are, or a new value to replace them:
 | Hook                                   | When                               | Return a new...                         |
 |----------------------------------------|------------------------------------|-----------------------------------------|
 | `before_run(ctx)`                      | a run starts                       | -                                       |
-| `before_model_request(ctx, messages)`  | before each model request          | list of messages, for this request only |
+| `before_model_request(ctx, request)`   | before each model request          | `ModelRequest`, for this request only   |
 | `after_model_response(ctx, message)`   | after each model response          | assistant message                       |
 | `before_tool_call(ctx, call)`          | before each tool call              | call (e.g. other `arguments`)           |
 | `after_tool_call(ctx, call, result)`   | after each tool call               | result (`{"content", "is_error"}`)      |
@@ -36,8 +36,25 @@ agent = Agent(model="gpt-5-mini", tools=[...], hooks=[Hooks(before_tool_call=no_
 - Hooks can be sync or async, and run in the order given: each one sees the changes of the previous ones.
 - Raising in `before_tool_call` or `after_tool_call` blocks the call: the model gets the error as the tool result.
   Raising in any other hook stops the run.
-- Changes made in `before_model_request` don't touch the history, so it is a safe place to trim long
-  conversations or add reminders.
+
+## Changing a request
+
+A `ModelRequest` is a dict with what the next request sends: `instructions`, `messages`, `tools` (the names of
+the tools offered, in order) and `model_parameters` (merged into the request body: `tool_choice`, `reasoning`,
+`max_output_tokens`...). Change any of them for that request only; the history and the agent stay as they are,
+so it is a safe place to trim long conversations, add reminders, or force a tool:
+
+```python
+from pyox_agents import ModelRequest
+
+
+def search_first(ctx: RunContext, request: ModelRequest) -> ModelRequest | None:
+    if ctx.turn == 1:  # the first request must call the search tool
+        return {**request, "model_parameters": {**request["model_parameters"], "tool_choice": "required"}}
+    return None
+```
+
+`tools` can only name the run's own tools (a `HookError` otherwise): drop some, or reorder them.
 
 ## Rust hooks
 
@@ -46,12 +63,18 @@ Register closures with `Hooks` from
 them directly in Rust, without Python:
 
 ```rust
-let guard = Hooks::new().before_tool_call(|_context, call| {
-    if call.name == "delete_file" {
-        return Err("Deleting files is not allowed".into()); // the model sees this
-    }
-    Ok(())
-});
+let guard = Hooks::new()
+    .before_tool_call(|_context, call| {
+        if call.name == "delete_file" {
+            return Err("Deleting files is not allowed".into()); // the model sees this
+        }
+        Ok(())
+    })
+    .before_model_request(|_context, request| {
+        // `request` is a `&mut ModelRequest`: change it in place, for this request only.
+        request.model_parameters.insert("tool_choice".into(), "auto".into());
+        Ok(())
+    });
 add_hooks(module, "guard", guard)?; // Python: Agent(hooks=[your_package.guard])
 ```
 

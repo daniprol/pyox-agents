@@ -49,6 +49,29 @@ They are kept in the history like any other message, so the model can see them o
 and files are stored as base64 text, so they make stored conversations bigger: send a web address for images
 when you can.
 
+## Tool results
+
+A tool can return images and files too: one alone, or a list with text (also inside a `ToolReturn`).
+
+```python
+from pyox_agents import ToolReturn, image, tool
+
+
+@tool
+async def screenshot(url: str) -> ToolReturn:
+    """Take a screenshot of a web page."""
+    png = await browser.screenshot(url)
+    return ToolReturn([f"The page at {url}:", image(png, media_type="image/png")], metadata={"url": url})
+```
+
+The history keeps the tool message's `content` as that list, `ToolFinished.content` has it too, and
+`ToolFinished.result` has only the text. What the model gets depends on the API:
+
+| API                | How a tool's images and files are sent                                         |
+|--------------------|--------------------------------------------------------------------------------|
+| `api="responses"`  | in the tool's output itself (`input_image` and `input_file` items)              |
+| `api="chat"`       | Chat Completions tool messages only take text: the tool message has the text and says the images and files follow, and they come in a user message right after the tool messages |
+
 ## Example
 
 ```python

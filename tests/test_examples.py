@@ -99,3 +99,21 @@ def test_subagents_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
     ).stdout
 
     assert output == "[research] Places in Vigo\n[research] done\ntodos: ['Old town']\nYour day is planned\n"
+
+
+def test_structured_output_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
+    answer = '{"team": "support", "summary": "Order 1234 arrived broken.", "urgent": true, "order_id": "1234"}'
+    fake_openai.queue(text_response(answer))
+    environment = {**os.environ, "OPENAI_BASE_URL": fake_openai.base_url, "OPENAI_API_KEY": "test-key"}
+
+    output = subprocess.run(
+        [sys.executable, EXAMPLES / "structured_output.py"],
+        cwd=tmp_path,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert output == "Ticket(team='support', summary='Order 1234 arrived broken.', urgent=True, order_id='1234')\n"
+    assert fake_openai.requests[0].body["response_format"]["json_schema"]["name"] == "Ticket"
