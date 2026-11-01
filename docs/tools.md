@@ -27,6 +27,8 @@ agent = Agent(model="gpt-5-mini", tools=[search])
 - Results that are not `str` are sent to the model as JSON. A tool can also return
   [images and files](images-and-files.md#tool-results).
 - If a tool raises, the model gets the error message (and `ToolFinished.is_error` is `True`). The run continues.
+- Sync tools never block your event loop: they run on worker threads (in [sync runs](sync.md), on your own thread,
+  unless `@tool(run_in_thread=True)`).
 
 Parameters can be `str`, `int`, `float`, `bool`, lists, dicts, `Literal`s, unions (`X | None`), dataclasses,
 `TypedDict`s and pydantic models (anything with `model_json_schema()` and `model_validate()`; pydantic is not a

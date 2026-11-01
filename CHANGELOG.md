@@ -14,11 +14,24 @@ break comes with a migration note.
   (`requires_approval="unless_read_only"`, ...), and send images and structured results. When the server asks
   the user something, the question becomes an `InputRequested`, answered live or after the run stops. Works with
   servers on MCP 2025-11-25 and 2026-07-28. Install with `pip install "pyox-agents[mcp]"`.
+- A sync API, for code without an event loop (scripts, Django and Flask views, Celery tasks, notebooks):
+  `agent.run_sync(...)`, and `agent.execute_sync(...)` read with `for` (also `run.batches()`, `run.ai_sdk()` and
+  `run.ag_ui(...)`, for Django's `StreamingHttpResponse`). Rust runs the agent with no Python event loop: sync
+  tools, hooks and handlers run on your thread, async ones on pyox's own event loop thread. Ctrl+C works. Sync tools
+  ask and save steps with `ctx.ask_sync(...)` and `ctx.step_sync(...)`. MCP servers open with `with` for sync runs.
 - `run(tools=...)` and `execute(tools=...)` add tools for one run, on top of the agent's: for tools that depend on
   the user, such as an MCP server opened with their token.
 
+### Changed
+
+- Sync tools no longer block the event loop: async runs call them on worker threads, so several run in parallel.
+  `Tool.invoke` is now a plain `def` that returns a coroutine for async functions. Migrate: tests that
+  `await tool.invoke(...)` on a sync tool call it without `await`.
+
 ### Fixed
 
+- A process forked after pyox-agents ran in its parent (Gunicorn `--preload`, Celery prefork) raises a clear
+  `RuntimeError` instead of hanging.
 - A run's stream (`async for event in run`, `run.batches()`) ends with its `RunFinished` or error. Before, it hung
   while anything still held a tool's `ctx`, such as a cache or a library's background task.
 

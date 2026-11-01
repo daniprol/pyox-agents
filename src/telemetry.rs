@@ -20,9 +20,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::python_call::PythonCalls;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::usage::Usage;
 use serde_json::{Value, json};
 
@@ -52,8 +52,8 @@ pub enum Telemetry {
 }
 
 impl Telemetry {
-    /// Opens the run's `invoke_agent` span. Returns it, and the TaskLocals
-    /// the run's Python calls use: `python_task_locals` with the run's span
+    /// Opens the run's `invoke_agent` span. Returns it, and the `PythonCalls`
+    /// the run's Python calls use: `python_calls` with the run's span
     /// as the current span.
     pub async fn start_run(
         &self,
@@ -61,8 +61,8 @@ impl Telemetry {
         model: &str,
         base_url: &str,
         conversation_id: Option<&str>,
-        python_task_locals: &TaskLocals,
-    ) -> (Span, TaskLocals) {
+        python_calls: &PythonCalls,
+    ) -> (Span, PythonCalls) {
         // Both the recorder and a tool call's span have a `start_run` method.
         let opener = match self {
             Telemetry::Off => None,
@@ -70,7 +70,7 @@ impl Telemetry {
             Telemetry::InTool(tool_span) => tool_span.0.as_ref().map(|span| span.handle.clone()),
         };
         let Some(opener) = opener else {
-            return (Span::default(), python_task_locals.clone());
+            return (Span::default(), python_calls.clone());
         };
         let fields = json!({
             "start_ns": now_ns(),
@@ -79,7 +79,7 @@ impl Telemetry {
             "base_url": base_url,
             "conversation_id": conversation_id,
         });
-        open_span(opener, "start_run", fields, python_task_locals).await
+        open_span(opener, "start_run", fields, python_calls).await
     }
 }
 
@@ -175,17 +175,17 @@ impl Span {
     }
 
     /// Opens the `execute_tool` span of one call, under this run's span.
-    /// Returns it, and the TaskLocals the call's Python code (hooks, the
+    /// Returns it, and the `PythonCalls` the call's Python code (hooks, the
     /// approval function, the tool itself) runs with.
     pub async fn start_tool(
         &self,
         call: &ToolCall,
         description: &str,
         kind: &str,
-        python_task_locals: &TaskLocals,
-    ) -> (Span, TaskLocals) {
+        python_calls: &PythonCalls,
+    ) -> (Span, PythonCalls) {
         let Some(span) = &self.0 else {
-            return (Span::default(), python_task_locals.clone());
+            return (Span::default(), python_calls.clone());
         };
         let mut fields = json!({
             "start_ns": now_ns(),
@@ -197,7 +197,7 @@ impl Span {
         if span.capture_content {
             fields["arguments"] = call.arguments.clone();
         }
-        open_span(span.handle.clone(), "start_tool", fields, python_task_locals).await
+        open_span(span.handle.clone(), "start_tool", fields, python_calls).await
     }
 
     /// Ends a tool call's span with what the call gave: its tool message, or the
@@ -264,17 +264,17 @@ impl Span {
 
 /// Calls `opener.method(**fields, run_context=...)`, which opens a span and
 /// returns `(span, context)`: the Python span object, and a copy of the
-/// contextvars of `python_task_locals` where that span is current.
+/// contextvars of `python_calls` where that span is current.
 async fn open_span(
     opener: Arc<Py<PyAny>>,
     method: &'static str,
     fields: Value,
-    python_task_locals: &TaskLocals,
-) -> (Span, TaskLocals) {
-    let locals = python_task_locals.clone();
+    python_calls: &PythonCalls,
+) -> (Span, PythonCalls) {
+    let calls = python_calls.clone();
     let opened = in_python(move |py| {
         let arguments = keyword_arguments(py, &fields)?;
-        arguments.set_item("run_context", locals.context(py))?;
+        arguments.set_item("run_context", calls.context(py))?;
         let opened = opener.call_method(py, method, (), Some(&arguments))?;
         let (handle, context): (Py<PyAny>, Bound<'_, PyAny>) = opened.bind(py).extract()?;
         let capture_content = handle.getattr(py, "capture_content")?.extract(py)?;
@@ -283,11 +283,11 @@ async fn open_span(
             capture_content,
             ended: AtomicBool::new(false),
         };
-        Ok((Span(Some(Arc::new(span))), locals.with_context(context)))
+        Ok((Span(Some(Arc::new(span))), calls.with_context(context)))
     })
     .await;
     // The recorder failed: the run goes on without this span.
-    opened.unwrap_or_else(|| (Span::default(), python_task_locals.clone()))
+    opened.unwrap_or_else(|| (Span::default(), python_calls.clone()))
 }
 
 /// Runs `work` with Python, on a thread meant for blocking work (like Python
@@ -323,6 +323,7 @@ fn exception_of(error: &PyErr) -> Py<PyAny> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::python_call::CallerThread;
     use pyo3::types::PyModule;
 
     /// A recorder that only lists what it was asked (a real Python object, not a mock).
@@ -349,25 +350,25 @@ class Recorder:
     #[tokio::test]
     async fn a_span_dropped_before_it_finished_ends_as_cancelled() {
         Python::initialize();
-        let (telemetry, python_task_locals, calls) = Python::attach(|py| {
+        let (telemetry, python_calls, calls) = Python::attach(|py| {
             let module = PyModule::from_code(py, RECORDER, c"recorder.py", c"recorder").unwrap();
             let recorder = module.getattr("Recorder").unwrap().call0().unwrap().unbind();
-            let context = py.import("contextvars").unwrap().call_method0("copy_context").unwrap();
-            let locals = TaskLocals::new(py.None().into_bound(py)).with_context(context);
+            // The recorder runs on its own worker threads, so any run will do.
+            let python_calls = PythonCalls::for_sync_run(py, CallerThread::new()).unwrap();
             (
                 Telemetry::Recorder(Arc::new(recorder)),
-                locals,
+                python_calls,
                 module.getattr("calls").unwrap().unbind(),
             )
         });
         let calls = || Python::attach(|py| calls.extract::<Vec<String>>(py).unwrap());
 
-        let (finished, _) = telemetry.start_run(None, "m", "", None, &python_task_locals).await;
+        let (finished, _) = telemetry.start_run(None, "m", "", None, &python_calls).await;
         finished.finish(json!({}), None).await;
         drop(finished);
         assert_eq!(calls(), ["start_run", "finish"]);
 
-        let (dropped, _) = telemetry.start_run(None, "m", "", None, &python_task_locals).await;
+        let (dropped, _) = telemetry.start_run(None, "m", "", None, &python_calls).await;
         drop(dropped); // like a run aborted in the middle
         assert_eq!(calls(), ["start_run", "finish", "start_run", "cancel"]);
     }

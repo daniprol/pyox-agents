@@ -70,6 +70,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<client::Client>()?;
     module.add_class::<agent::Engine>()?;
     module.add_class::<run::Run>()?;
+    module.add_class::<run::SyncRun>()?;
     module.add_class::<run::EventBatches>()?;
     module.add_class::<run::ProtocolStream>()?;
     module.add_class::<run_context::PythonRunContext>()?;

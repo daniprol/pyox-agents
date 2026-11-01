@@ -7,7 +7,7 @@ license: MIT
 # pyox-agents
 
 pyox-agents is a Python library for AI agents whose agent loop (HTTP, streaming, JSON, tool dispatch) runs in
-Rust. Python code defines agents and tools; everything is `async`. Full docs: https://daniprol.github.io/pyox-agents/
+Rust. Python code defines agents and tools; the API is `async`, with sync twins for code without an event loop. Full docs: https://daniprol.github.io/pyox-agents/
 
 ## Rules that prevent most mistakes
 
@@ -17,6 +17,9 @@ Rust. Python code defines agents and tools; everything is `async`. Full docs: ht
 - `agent.execute(...)` returns a `Run` to iterate with `async for`; `await agent.run(...)` returns the final
   `RunFinished`. Both take `history=`, `conversation_id=`, `deps=`, `answers=`, `on_request=`, `state=`, and
   `tools=` (extra tools for that run only, e.g. a user's own MCP server).
+- In sync code (scripts, Django/Flask views, Celery), use `agent.run_sync(...)` and `for event in
+  agent.execute_sync(...)` instead; sync tools then use `ctx.ask_sync` / `ctx.step_sync`. Never wrap the async
+  API in `asyncio.run` for this.
 - Tool errors do not raise: the exception text goes back to the model and `ToolFinished.is_error` is `True`.
   Failed runs raise subclasses of `AgentError`, with `error.messages` (history so far) and `error.usage`.
 - History is plain dicts (`{"role": "user" | "assistant" | "tool", ...}`), the same format in and out.

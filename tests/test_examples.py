@@ -140,3 +140,21 @@ def test_structured_output_example(fake_openai: FakeOpenAI, tmp_path: Path) -> N
 
     assert output == "Ticket(team='support', summary='Order 1234 arrived broken.', urgent=True, order_id='1234')\n"
     assert fake_openai.requests[0].body["response_format"]["json_schema"]["name"] == "Ticket"
+
+
+def test_sync_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
+    fake_openai.queue(tool_calls_response(tool_call("get_weather", city="Vigo")), text_response("Sunny"))
+    fake_openai.queue(text_response("Also sunny"))
+    environment = {**os.environ, "OPENAI_BASE_URL": fake_openai.base_url, "OPENAI_API_KEY": "test-key"}
+
+    output = subprocess.run(
+        [sys.executable, EXAMPLES / "sync.py"],
+        cwd=tmp_path,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert output == "Sunny\nAlso sunny\n"
+    assert fake_openai.requests[1].body["messages"][-1]["content"] == "Sunny, 21 °C in Vigo"

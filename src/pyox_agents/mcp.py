@@ -7,6 +7,9 @@
         agent = Agent(model="gpt-5-mini", tools=deepwiki.tools)
         print((await agent.run("How does pydantic-ai run MCP servers?")).text)
 
+In sync code (`agent.run_sync`), use a plain `with McpTools.http(...) as deepwiki:` instead: the
+connection then lives on pyox's own event loop thread, where sync runs call async tools.
+
 `McpTools` connects to one server (a URL, or a command it starts and talks to over
 stdin/stdout), lists its tools once, and gives them as `server.tools`: ordinary agent tools,
 so approvals, hooks, subagents and web streams work on them as on any other tool.
@@ -28,6 +31,7 @@ go to it. To change how tools, results or questions are converted, subclass `Mcp
 override `make_tool`, `convert_result` or `elicit`.
 """
 
+import asyncio
 import itertools
 import json
 import re
@@ -47,6 +51,7 @@ try:
 except ImportError as error:  # pragma: no cover (the tests run with the extra)
     raise ImportError('MCP support needs the mcp extra: pip install "pyox-agents[mcp]"') from error
 
+from pyox_agents import _background_loop
 from pyox_agents._core import RunContext, StopToolCall
 from pyox_agents.messages import ContentPart, Message
 from pyox_agents.schema import JsonSchema
@@ -149,6 +154,8 @@ class McpTools:
         self._client_options = client_options
         self._client: mcp.Client | None = None
         self._exit_stack: AsyncExitStack | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None  # the loop the connection lives on
+        self._opened: _background_loop.OpenContext[Self] | None = None  # by `with`
         self._tools: tuple[McpTool, ...] | None = None
         self._calls: dict[int, _ToolCall] = {}  # tool calls in progress, by number
 
@@ -189,6 +196,7 @@ class McpTools:
         return cls(parameters, **options)
 
     async def __aenter__(self) -> Self:
+        self._loop = asyncio.get_running_loop()
         async with AsyncExitStack() as exit_stack:
             server = self._server
             if isinstance(server, _Http):
@@ -209,6 +217,16 @@ class McpTools:
         exit_stack, self._exit_stack, self._client = self._exit_stack, None, None
         if exit_stack is not None:
             await exit_stack.__aexit__(error_type, error, traceback)
+
+    def __enter__(self) -> Self:
+        """`with McpTools(...)`, for sync runs: connects on pyox's own event loop thread."""
+        self._opened = _background_loop.OpenContext(self)
+        return self._opened.value
+
+    def __exit__(self, *exc_info: object) -> None:
+        opened, self._opened = self._opened, None
+        if opened is not None:
+            opened.close()
 
     @property
     def client(self) -> mcp.Client:
@@ -274,6 +292,10 @@ class McpTools:
         With `ctx`, questions the server asks during the call go to the person (see `elicit`).
         """
         client = self.client
+        if asyncio.get_running_loop() is not self._loop:
+            raise McpError(
+                "This server was opened on another event loop: use `async with` in async code, `with` for sync runs"
+            )
         if ctx is None:
             return self.convert_result(await client.call_tool(name, arguments))
         number = next(_call_numbers)

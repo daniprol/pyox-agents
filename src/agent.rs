@@ -42,13 +42,13 @@ use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use crate::python_call::PythonCalls;
 use futures::FutureExt;
 use futures::future::join_all;
 use pyo3::exceptions::PyValueError;
 use pyo3::panic::PanicException;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_async_runtimes::TaskLocals;
 // `as`: the hooks' request has the same name as the adapters' `ModelRequest`.
 use pyox_tools::hooks::ModelRequest as HookRequest;
 use pyox_tools::usage::Usage;
@@ -70,7 +70,7 @@ use crate::human_input::{
 use crate::json_convert::python_to_json;
 use crate::messages::{Content, Message, Reply, RequestKind, ToolCall, content_from_python};
 use crate::model_api::{Api, ModelRequest, StopReason, last_response_id, stream_model_turn};
-use crate::run::Run;
+use crate::run::new_run;
 use crate::run_context::Context;
 use crate::state::{RunState, apply_state_changes};
 use crate::subagents::{asked_parent, question_of, take_subagent_answers};
@@ -251,7 +251,7 @@ impl Engine {
     #[pyo3(signature = (
         prompt = None, *, history = None, conversation_id = None, text_chunks = None, deps = None,
         previous_response_id = None, answers = None, on_request = None, tools = None, frontend_tools = None,
-        state = None, telemetry = None,
+        state = None, telemetry = None, sync = false,
     ))]
     #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
     fn execute(
@@ -269,7 +269,8 @@ impl Engine {
         frontend_tools: Option<Vec<Bound<'_, PyAny>>>,
         state: Option<Bound<'_, PyAny>>,
         telemetry: Option<Py<PyAny>>,
-    ) -> PyResult<Run> {
+        sync: bool,
+    ) -> PyResult<Py<PyAny>> {
         let text_chunks = match text_chunks {
             Some(value) => TextChunking::from_python(&value)?,
             None => self.config.text_chunks,
@@ -375,7 +376,7 @@ impl Engine {
                 None => Telemetry::Off,
             },
         };
-        Ok(Run::new(inputs, event_receiver, stop_sender))
+        new_run(py, inputs, event_receiver, stop_sender, sync)
     }
 }
 
@@ -422,11 +423,11 @@ async fn stop_called(stop: &StopSignal) {
 }
 
 /// Runs the agent loop and makes sure any failure reaches Python as an exception.
-pub async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals) {
+pub async fn run_in_background(inputs: RunInputs, python_calls: PythonCalls) {
     let events = inputs.human_input.events.clone();
     let mut usage = Usage::default();
     let mut messages = Vec::new();
-    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_task_locals, &mut usage, &mut messages))
+    let loop_result = AssertUnwindSafe(run_agent_loop(inputs, python_calls, &mut usage, &mut messages))
         .catch_unwind()
         .await;
 
@@ -451,22 +452,22 @@ pub async fn run_in_background(inputs: RunInputs, python_task_locals: TaskLocals
 /// span, and its Python calls see that span as the current one.
 pub async fn run_agent_loop(
     inputs: RunInputs,
-    python_task_locals: TaskLocals,
+    python_calls: PythonCalls,
     usage: &mut Usage,
     messages: &mut Vec<Message>,
 ) -> PyResult<RunFinished> {
     let config = inputs.config.clone();
-    let (run_span, python_task_locals) = inputs
+    let (run_span, python_calls) = inputs
         .telemetry
         .start_run(
             config.name.as_deref(),
             &config.model,
             &config.client.base_url,
             inputs.conversation_id.as_deref(),
-            &python_task_locals,
+            &python_calls,
         )
         .await;
-    let outcome = agent_loop(inputs, python_task_locals, &run_span, usage, messages).await;
+    let outcome = agent_loop(inputs, python_calls, &run_span, usage, messages).await;
     run_span.finish_run(&outcome, *usage).await;
     outcome
 }
@@ -474,7 +475,7 @@ pub async fn run_agent_loop(
 /// The body of `run_agent_loop`.
 async fn agent_loop(
     inputs: RunInputs,
-    python_task_locals: TaskLocals,
+    python_calls: PythonCalls,
     run_span: &Span,
     usage: &mut Usage,
     messages: &mut Vec<Message>,
@@ -504,7 +505,7 @@ async fn agent_loop(
     };
 
     *messages = match stored_conversation {
-        Some((store, conversation_id)) => store.load(conversation_id, &python_task_locals).await?,
+        Some((store, conversation_id)) => store.load(conversation_id, &python_calls).await?,
         None => history,
     };
     // Everything from here on is new in this run (and is what gets saved).
@@ -543,7 +544,7 @@ async fn agent_loop(
         state,
         text_chunks,
     };
-    hooks.before_run(&context, &python_task_locals).await?;
+    hooks.before_run(&context, &python_calls).await?;
     // The WebSocket connection of this run (`Client(transport="websocket")`).
     // It is closed when this function returns, unless given back to the pool.
     let mut run_socket = RunSocket::default();
@@ -584,10 +585,10 @@ async fn agent_loop(
             pending,
             state: context.state.current(),
         };
-        hooks.after_run(context, &finished, &python_task_locals).await?;
+        hooks.after_run(context, &finished, &python_calls).await?;
         if let Some((store, conversation_id)) = stored_conversation {
             store
-                .save(conversation_id, finished.added_messages(), &python_task_locals)
+                .save(conversation_id, finished.added_messages(), &python_calls)
                 .await?;
         }
         Ok(finished)
@@ -600,7 +601,7 @@ async fn agent_loop(
                 tools: &tools,
                 history: messages,
                 context: &context,
-                python_task_locals: &python_task_locals,
+                python_calls: &python_calls,
                 stop: &stop,
                 span: run_span,
             };
@@ -622,11 +623,7 @@ async fn agent_loop(
         // Hooks may change this one request (instructions, messages, tools,
         // model parameters); the history stays as it is.
         let hooked = hooks
-            .before_model_request(
-                &context,
-                || hook_request(&config, &tools, messages),
-                &python_task_locals,
-            )
+            .before_model_request(&context, || hook_request(&config, &tools, messages), &python_calls)
             .await?;
         let request_tools = match &hooked {
             Some(hooked) => tools_named(&tools, &hooked.tools)?,
@@ -715,7 +712,7 @@ async fn agent_loop(
             model: Some(config.model.clone()),
         };
         let assistant_message = hooks
-            .after_model_response(&context, assistant_message, &python_task_locals)
+            .after_model_response(&context, assistant_message, &python_calls)
             .await?;
         let Message::Assistant {
             content,
@@ -747,7 +744,7 @@ async fn agent_loop(
                     tools: &tools,
                     history: messages,
                     context: &context,
-                    python_task_locals: &python_task_locals,
+                    python_calls: &python_calls,
                     stop: &stop,
                     span: run_span,
                 };
@@ -921,7 +918,7 @@ pub struct ToolRun<'a> {
     /// The conversation so far: a subagent tool finds earlier conversations in it.
     pub history: &'a [Message],
     pub context: &'a Context,
-    pub python_task_locals: &'a TaskLocals,
+    pub python_calls: &'a PythonCalls,
     /// Set by `run.stop()`: a subagent this call runs stops too.
     pub stop: &'a StopSignal,
     /// The run's span: each call's span goes under it.
@@ -945,13 +942,10 @@ async fn run_tool_call(
     let tool = run.tools.iter().find(|tool| tool.name == call.name);
     let description = tool.map_or("", |tool| tool.description.as_str());
     let kind = tool.map_or("unknown", |tool| tool.implementation.kind());
-    let (span, python_task_locals) = run
-        .span
-        .start_tool(call, description, kind, run.python_task_locals)
-        .await;
-    // The same run, with this call's TaskLocals (`..*run` copies the other fields).
+    let (span, python_calls) = run.span.start_tool(call, description, kind, run.python_calls).await;
+    // The same run, with this call's PythonCalls (`..*run` copies the other fields).
     let run = ToolRun {
-        python_task_locals: &python_task_locals,
+        python_calls: &python_calls,
         ..*run
     };
     let outcome = tool_message(&run, call, earlier, subagent_answers, span.clone()).await;
@@ -998,16 +992,13 @@ async fn tool_call_result(run: &ToolRun<'_>, call_log: &SharedCallLog) -> PyResu
         config,
         tools,
         context,
-        python_task_locals,
+        python_calls,
         ..
     } = *run;
     let hooks = &config.hooks;
     let model_call = call_log.lock().unwrap().call.clone();
     let mut approval_request = None;
-    let mut call = match hooks
-        .before_tool_call(context, model_call.clone(), python_task_locals)
-        .await
-    {
+    let mut call = match hooks.before_tool_call(context, model_call.clone(), python_calls).await {
         Ok(call) => call,
         // A hook raising `ApprovalRequired` does not block the call: it asks first.
         Err(error) => match approval_required(&error)? {
@@ -1024,13 +1015,13 @@ async fn tool_call_result(run: &ToolRun<'_>, call_log: &SharedCallLog) -> PyResu
     call_log.lock().unwrap().call = call.clone();
 
     if approval_request.is_none() {
-        approval_request = match tool.approval_request(call_log, context, python_task_locals).await {
+        approval_request = match tool.approval_request(call_log, context, python_calls).await {
             Ok(request) => request,
             Err(error) => return Ok(Some(error)),
         };
     }
     if let Some(request) = approval_request {
-        match reply_to(call_log, request, &context.human_input, python_task_locals).await? {
+        match reply_to(call_log, request, &context.human_input, python_calls).await? {
             None => return Ok(None),
             Some(Reply::Deny { message, .. }) => return Ok(Some(error_result(message))),
             Some(Reply::Approve {
@@ -1051,7 +1042,7 @@ async fn tool_call_result(run: &ToolRun<'_>, call_log: &SharedCallLog) -> PyResu
                 ToolImplementation::Frontend => new_request(RequestKind::Frontend, call.arguments.clone(), Value::Null),
                 _ => new_request(RequestKind::Input, question_of(&call), Value::Null),
             };
-            match reply_to(call_log, request, &context.human_input, python_task_locals).await? {
+            match reply_to(call_log, request, &context.human_input, python_calls).await? {
                 None => return Ok(None),
                 Some(Reply::Answer { value, metadata }) => success_result(text_for_model(value), metadata),
                 Some(Reply::Deny { message, .. }) => error_result(message),
@@ -1068,7 +1059,7 @@ async fn tool_call_result(run: &ToolRun<'_>, call_log: &SharedCallLog) -> PyResu
             None => return Ok(None),
         },
         _ => {
-            let result = tool.run(&call, call_log, context, python_task_locals).await;
+            let result = tool.run(&call, call_log, context, python_calls).await;
             // A `ctx.ask` inside the tool may have stopped it.
             let stopped = {
                 let call_log = call_log.lock().unwrap();
@@ -1089,7 +1080,7 @@ async fn tool_call_result(run: &ToolRun<'_>, call_log: &SharedCallLog) -> PyResu
         }
     };
 
-    match hooks.after_tool_call(context, &call, result, python_task_locals).await {
+    match hooks.after_tool_call(context, &call, result, python_calls).await {
         Ok(result) => Ok(Some(result)),
         Err(error) => Ok(Some(error_result(message_for_model(error)))),
     }

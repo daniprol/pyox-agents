@@ -142,8 +142,8 @@ Python                                Rust
 Agent(model, instructions, tools) ──► Engine      config shared by all runs
 agent.execute(prompt)             ──► Run         history + bounded event queue
 async for event in run            ◄── agent loop  request → stream → tools → repeat
-                                        ├── one adapter file per API (Chat Completions, Responses)
-                                        ├── Python tools awaited on your event loop
+(or `for`, with agent.execute_sync)     ├── one adapter file per API (Chat Completions, Responses)
+                                        ├── sync Python tools on threads, async ones on your loop
                                         └── Rust tools called directly, no Python involved
 ```
 

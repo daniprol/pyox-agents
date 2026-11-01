@@ -201,6 +201,28 @@ async def test_tools_not_marked_read_only_wait_for_approval(fake_openai: FakeOpe
     assert tool_messages(result.new_messages)[0]["content"] == "Cancelled b1"
 
 
+def test_sync_runs_use_servers_opened_with_with(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, rooms: McpTools
+) -> None:
+    fake_openai.queue(tool_calls_response(tool_call("add", a=2, b=3)), text_response("5"))
+
+    with rooms:
+        result = make_agent(tools=rooms.tools).run_sync("Add 2 and 3")
+
+    assert tool_messages(result.messages)[0]["content"] == "5"
+
+
+async def test_a_server_works_only_on_the_loop_it_was_opened_on(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, current_rooms: McpTools
+) -> None:
+    fake_openai.queue(tool_calls_response(tool_call("add", a=2, b=3)), text_response("Sorry"))
+
+    with current_rooms:  # on pyox's own loop, for sync runs
+        result = await make_agent(tools=current_rooms.tools).run("Add 2 and 3")
+
+    assert "opened on another event loop" in tool_messages(result.messages)[0]["content"]
+
+
 # Questions from the server (elicitation) ----------------------------------------------------------
 
 

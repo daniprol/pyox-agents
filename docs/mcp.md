@@ -21,6 +21,9 @@ async with McpTools.http("https://mcp.deepwiki.com/mcp") as deepwiki:
 after that give the model an error. In a web app, open it once when the app starts (for example in a FastAPI
 `lifespan`) and make agents inside it.
 
+For [sync runs](sync.md) (`agent.run_sync`), open it with a plain `with McpTools.http(...) as deepwiki:` instead.
+The connection then lives on pyox's own event loop thread, where sync runs call async tools.
+
 When each user signs in to the server with their own token, open it for each request instead, and give its tools
 to that run only with `tools=` (see [Tools for one run](tools.md#tools-for-one-run)):
 

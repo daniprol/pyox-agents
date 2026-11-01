@@ -53,7 +53,7 @@ class Contact(TypedDict):
     email: str
 
 
-async def test_dataclass_arguments_get_a_schema_and_are_built() -> None:
+def test_dataclass_arguments_get_a_schema_and_are_built() -> None:
     @tool
     def ship(to: Address, stops: list[Address], contact: Contact | None = None) -> str:
         """Ship a parcel."""
@@ -77,10 +77,10 @@ async def test_dataclass_arguments_get_a_schema_and_are_built() -> None:
         },
     }
     arguments = {"to": {"city": "Vigo"}, "stops": [{"city": "Lugo"}], "contact": {"email": "a@b.c"}}
-    assert await ship.invoke(arguments) == "Vigo via ['Lugo'], {'email': 'a@b.c'}"
+    assert ship.invoke(arguments) == "Vigo via ['Lugo'], {'email': 'a@b.c'}"
 
 
-async def test_pydantic_arguments_by_duck_typing() -> None:
+def test_pydantic_arguments_by_duck_typing() -> None:
     pydantic = pytest.importorskip("pydantic")
 
     class Item(pydantic.BaseModel):
@@ -96,7 +96,7 @@ async def test_pydantic_arguments_by_duck_typing() -> None:
 
     assert place.parameters["properties"]["order"]["properties"]["items"]["items"] == {"$ref": "#/$defs/Item"}
     assert set(place.parameters["$defs"]) == {"Item"}  # moved to the top, where `$ref` finds it
-    assert await place.invoke({"order": {"items": [{"name": "tea"}]}}) == "tea"
+    assert place.invoke({"order": {"items": [{"name": "tea"}]}}) == "tea"
 
 
 def test_decorator_options() -> None:
@@ -117,16 +117,12 @@ def test_decorator_options() -> None:
         (lambda: [1, 2], "[1, 2]"),
     ],
 )
-async def test_results_are_text_or_json(function: Any, expected: str) -> None:
-    assert await tool(function).invoke({}) == expected
+def test_results_are_text_or_json(function: Any, expected: str) -> None:
+    assert tool(function).invoke({}) == expected
 
 
-async def test_invoke_awaits_async_functions_and_runs_threads() -> None:
+async def test_invoke_returns_a_coroutine_for_async_functions() -> None:
     async def double(text: str) -> str:
         return text * 2
 
-    def blocking_upper(text: str) -> str:
-        return text.upper()
-
     assert await tool(double).invoke({"text": "ab"}) == "abab"
-    assert await tool(run_in_thread=True)(blocking_upper).invoke({"text": "hi"}) == "HI"

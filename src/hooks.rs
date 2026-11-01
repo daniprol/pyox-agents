@@ -16,7 +16,6 @@
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::hooks::ModelRequest;
 use pyox_tools::native_hooks::NativeHooks;
 use serde_json::Value;
@@ -30,7 +29,7 @@ use crate::errors::HookError;
 use crate::events::RunFinished;
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::{Message, ToolCall};
-use crate::python_call::call_python;
+use crate::python_call::{PythonCalls, call_python};
 use crate::run_context::Context;
 use crate::tools::ToolResult;
 
@@ -95,10 +94,9 @@ impl AgentHooks {
     // One method per hook, for the agent loop. Each one returns at once when
     // no hook set has that hook, so agents without hooks pay nothing.
 
-    pub async fn before_run(&self, context: &Context, python_task_locals: &TaskLocals) -> PyResult<()> {
+    pub async fn before_run(&self, context: &Context, python_calls: &PythonCalls) -> PyResult<()> {
         if self.has(Hook::BeforeRun) {
-            self.run(Hook::BeforeRun, context, Vec::new(), python_task_locals)
-                .await?;
+            self.run(Hook::BeforeRun, context, Vec::new(), python_calls).await?;
         }
         Ok(())
     }
@@ -110,13 +108,13 @@ impl AgentHooks {
         &self,
         context: &Context,
         make_request: impl FnOnce() -> ModelRequest,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> PyResult<Option<ModelRequest>> {
         if !self.has(Hook::BeforeModelRequest) {
             return Ok(None);
         }
         let arguments = vec![to_json(&make_request())];
-        let changed = self.run(Hook::BeforeModelRequest, context, arguments, python_task_locals);
+        let changed = self.run(Hook::BeforeModelRequest, context, arguments, python_calls);
         from_json(Hook::BeforeModelRequest, changed.await?).map(Some)
     }
 
@@ -124,13 +122,13 @@ impl AgentHooks {
         &self,
         context: &Context,
         message: Message,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> PyResult<Message> {
         if !self.has(Hook::AfterModelResponse) {
             return Ok(message);
         }
         let arguments = vec![to_json(&message)];
-        let changed = self.run(Hook::AfterModelResponse, context, arguments, python_task_locals);
+        let changed = self.run(Hook::AfterModelResponse, context, arguments, python_calls);
         match from_json(Hook::AfterModelResponse, changed.await?)? {
             message @ Message::Assistant { .. } => Ok(message),
             _ => Err(HookError::new_err(
@@ -143,13 +141,13 @@ impl AgentHooks {
         &self,
         context: &Context,
         call: ToolCall,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> PyResult<ToolCall> {
         if !self.has(Hook::BeforeToolCall) {
             return Ok(call);
         }
         let arguments = vec![to_json(&call)];
-        let changed = self.run(Hook::BeforeToolCall, context, arguments, python_task_locals);
+        let changed = self.run(Hook::BeforeToolCall, context, arguments, python_calls);
         from_json(Hook::BeforeToolCall, changed.await?)
     }
 
@@ -158,13 +156,13 @@ impl AgentHooks {
         context: &Context,
         call: &ToolCall,
         result: ToolResult,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> PyResult<ToolResult> {
         if !self.has(Hook::AfterToolCall) {
             return Ok(result);
         }
         let arguments = vec![to_json(call), to_json(&result)];
-        let changed = self.run(Hook::AfterToolCall, context, arguments, python_task_locals);
+        let changed = self.run(Hook::AfterToolCall, context, arguments, python_calls);
         from_json(Hook::AfterToolCall, changed.await?)
     }
 
@@ -173,14 +171,14 @@ impl AgentHooks {
         &self,
         context: &Context,
         finished: &RunFinished,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> PyResult<()> {
         for hook_set in self.hook_sets.iter().filter(|hook_set| hook_set.has(Hook::AfterRun)) {
             match hook_set {
                 HookSet::Python(functions) => {
                     let function = python_function(functions, Hook::AfterRun);
                     let finished = finished.clone();
-                    call_python_hook(function, context, python_task_locals, move |py| {
+                    call_python_hook(function, context, python_calls, move |py| {
                         Ok(vec![Py::new(py, finished)?.into_bound(py).into_any()])
                     })
                     .await?;
@@ -207,14 +205,14 @@ impl AgentHooks {
         hook: Hook,
         context: &Context,
         mut arguments: Vec<Value>,
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> PyResult<Option<Value>> {
         for hook_set in self.hook_sets.iter().filter(|hook_set| hook_set.has(hook)) {
             let replacement = match hook_set {
                 HookSet::Python(functions) => {
                     let function = python_function(functions, hook);
                     let python_arguments = arguments.clone();
-                    let result = call_python_hook(function, context, python_task_locals, move |py| {
+                    let result = call_python_hook(function, context, python_calls, move |py| {
                         python_arguments
                             .iter()
                             .map(|argument| json_to_python(py, argument))
@@ -264,18 +262,18 @@ fn python_function(functions: &[(Hook, Py<PyAny>)], hook: Hook) -> Py<PyAny> {
 async fn call_python_hook(
     function: Py<PyAny>,
     context: &Context,
-    python_task_locals: &TaskLocals,
+    python_calls: &PythonCalls,
     make_arguments: impl for<'py> FnOnce(Python<'py>) -> PyResult<Vec<Bound<'py, PyAny>>> + Send + 'static,
 ) -> PyResult<Py<PyAny>> {
-    let context = context.clone();
+    let (context, ctx_calls) = (context.clone(), python_calls.clone());
     call_python(
         function,
         move |py| {
-            let mut arguments = vec![context.to_python(py, None)?.into_bound(py).into_any()];
+            let mut arguments = vec![context.to_python(py, None, ctx_calls)?.into_bound(py).into_any()];
             arguments.extend(make_arguments(py)?);
             Ok(arguments)
         },
-        python_task_locals,
+        python_calls,
     )
     .await
 }

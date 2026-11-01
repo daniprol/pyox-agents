@@ -3,7 +3,8 @@
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Generic, Literal, TypeVar
 
-from pyox_agents._core import Client, Engine, Run, RunFinished
+from pyox_agents import _background_loop
+from pyox_agents._core import Client, Engine, Run, RunFinished, SyncRun
 from pyox_agents.hooks import Hooks
 from pyox_agents.human_input import OnRequest, Reply
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
@@ -208,19 +209,83 @@ class Agent(Generic[OutputT]):
         Read the run event by event (`async for event in run`), in batches of every event
         already waiting (`run.batches()`), or as a web stream (`run.ai_sdk()`, `run.ag_ui(...)`).
         """
-        return self._engine.execute(
+        return self._start(
             prompt,
             history=history,
             conversation_id=conversation_id,
             text_chunks=text_chunks,
             deps=deps,
             previous_response_id=previous_response_id,
-            answers=dict(answers) if answers else None,
+            answers=answers,
             on_request=on_request,
+            tools=tools,
+            frontend_tools=frontend_tools,
+            state=state,
+        )
+
+    def execute_sync(
+        self,
+        prompt: Prompt | None = None,
+        *,
+        history: History | None = None,
+        conversation_id: str | None = None,
+        text_chunks: TextChunks | None = None,
+        deps: Any = None,
+        previous_response_id: str | None = None,
+        answers: Mapping[str, Reply] | None = None,
+        on_request: OnRequest | None = None,
+        tools: Sequence[ToolLike | Subagent | Callable[..., Any]] | None = None,
+        frontend_tools: Sequence[Mapping[str, Any]] | None = None,
+        state: Any = None,
+    ) -> SyncRun:
+        """`execute`, for code without an event loop: `for event in agent.execute_sync(...)`.
+
+        Read it event by event, in batches (`run.batches()`) or as a web stream: in Django,
+        `StreamingHttpResponse(run.ai_sdk(), headers=ai_sdk.HEADERS)`. The arguments are the
+        same as `execute`'s.
+
+        The run starts at the first read. Rust does the HTTP and the streaming meanwhile, with
+        the GIL released, so other threads keep running. The run's sync tools, hooks, history
+        stores and `on_request` run on the thread reading it, like any function you call
+        (Django's ORM sees the view's transaction); async ones on pyox's own event loop thread;
+        tools with `run_in_thread=True` on worker threads, in parallel.
+
+        Stopping early (`break`, `run.close()`, leaving `with`, a client that went away) ends
+        the run at once. `run.stop()` ends it at the next safe point and keeps what it did.
+        """
+        if _background_loop.is_current():
+            raise RuntimeError("Inside an async tool, use `await agent.run(...)` or `agent.execute(...)`")
+        return self._start(
+            prompt,
+            history=history,
+            conversation_id=conversation_id,
+            text_chunks=text_chunks,
+            deps=deps,
+            previous_response_id=previous_response_id,
+            answers=answers,
+            on_request=on_request,
+            tools=tools,
+            frontend_tools=frontend_tools,
+            state=state,
+            sync=True,
+        )
+
+    def _start(
+        self,
+        prompt: Prompt | None,
+        *,
+        answers: Mapping[str, Reply] | None,
+        tools: Sequence[ToolLike | Subagent | Callable[..., Any]] | None,
+        frontend_tools: Sequence[Mapping[str, Any]] | None,
+        **options: Any,
+    ) -> Any:
+        return self._engine.execute(
+            prompt,
+            answers=dict(answers) if answers else None,
             tools=[_as_tool(item) for item in tools] if tools else None,
             frontend_tools=[dict(tool) for tool in frontend_tools] if frontend_tools else None,
-            state=state,
             telemetry=recorder_for(self._instrument),
+            **options,
         )
 
     async def run(
@@ -255,6 +320,41 @@ class Agent(Generic[OutputT]):
         ):
             if isinstance(event, RunFinished):
                 return event
+        raise RuntimeError("The run ended without a RunFinished event")
+
+    def run_sync(
+        self,
+        prompt: Prompt | None = None,
+        *,
+        history: History | None = None,
+        conversation_id: str | None = None,
+        deps: Any = None,
+        previous_response_id: str | None = None,
+        answers: Mapping[str, Reply] | None = None,
+        on_request: OnRequest | None = None,
+        tools: Sequence[ToolLike | Subagent | Callable[..., Any]] | None = None,
+        frontend_tools: Sequence[Mapping[str, Any]] | None = None,
+        state: Any = None,
+    ) -> RunFinished[OutputT]:
+        """`run`, for code without an event loop: scripts, Django and Flask views, Celery tasks,
+        notebooks. Blocks this thread until the run ends (see `execute_sync` for where the
+        run's Python code runs). Ctrl+C raises `KeyboardInterrupt` and ends the run."""
+        with self.execute_sync(
+            prompt,
+            history=history,
+            conversation_id=conversation_id,
+            text_chunks="message",
+            deps=deps,
+            previous_response_id=previous_response_id,
+            answers=answers,
+            on_request=on_request,
+            tools=tools,
+            frontend_tools=frontend_tools,
+            state=state,
+        ) as run:
+            for event in run:
+                if isinstance(event, RunFinished):
+                    return event
         raise RuntimeError("The run ended without a RunFinished event")
 
     def as_tool(

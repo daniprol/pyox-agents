@@ -15,13 +15,12 @@
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyString};
-use pyo3_async_runtimes::TaskLocals;
 use pyox_tools::native_history::NativeHistoryStore;
 
 use crate::errors::HistoryError;
 use crate::json_convert::python_to_json;
 use crate::messages::Message;
-use crate::python_call::call_python;
+use crate::python_call::{PythonCalls, call_python};
 
 /// Reads history given from Python: a list of message dicts, or JSON text
 /// (`str` or `bytes`) holding such a list.
@@ -79,7 +78,7 @@ impl HistoryStore {
     }
 
     /// Returns the messages of a conversation, oldest first.
-    pub async fn load(&self, conversation_id: &str, python_task_locals: &TaskLocals) -> PyResult<Vec<Message>> {
+    pub async fn load(&self, conversation_id: &str, python_calls: &PythonCalls) -> PyResult<Vec<Message>> {
         let loaded = match self {
             HistoryStore::Native { store, .. } => {
                 // A blocking call, on a thread meant for blocking work.
@@ -99,7 +98,7 @@ impl HistoryStore {
                 let result = call_python(
                     load,
                     move |py| Ok(vec![conversation_id.into_pyobject(py)?.into_any()]),
-                    python_task_locals,
+                    python_calls,
                 )
                 .await?;
                 Python::attach(|py| messages_from_python(result.bind(py)).map_err(|error| error.value(py).to_string()))
@@ -115,7 +114,7 @@ impl HistoryStore {
         &self,
         conversation_id: &str,
         new_messages: &[Message],
-        python_task_locals: &TaskLocals,
+        python_calls: &PythonCalls,
     ) -> PyResult<()> {
         let new_messages_json = serde_json::to_string(new_messages).expect("messages always serialize");
         let conversation_id = conversation_id.to_string();
@@ -137,7 +136,7 @@ impl HistoryStore {
                             new_messages_json.into_pyobject(py)?.into_any(),
                         ])
                     },
-                    python_task_locals,
+                    python_calls,
                 )
                 .await?;
                 Ok(())
