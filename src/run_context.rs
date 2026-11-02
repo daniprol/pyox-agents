@@ -11,7 +11,6 @@ use std::sync::Arc;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
-use pyo3_async_runtimes::tokio::future_into_py_with_locals;
 use pyox_tools::hooks::RunContext;
 use pyox_tools::usage::Usage;
 use serde_json::Value;
@@ -22,6 +21,7 @@ use crate::human_input::{HumanInput, SharedCallLog, StateView, new_request, repl
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::{Reply, RequestKind};
 use crate::python_call::{PythonCalls, call_python, wait};
+use crate::python_exit::future_into_py_with_locals;
 use crate::state::RunState;
 use crate::text_chunks::TextChunking;
 

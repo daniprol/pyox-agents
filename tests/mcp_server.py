@@ -1,13 +1,15 @@
 """A real MCP server for the tests, built with the official `mcp` package: a small room-booking service.
 
 Tests connect to it in the same process (`McpTools(server)`), or run this file as a subprocess:
-`python tests/mcp_server.py stdio` or `python tests/mcp_server.py http PORT`. Each tool exists for
+`python tests/mcp_server.py stdio` or `python tests/mcp_server.py http` (it prints its port). Each tool exists for
 one thing the tests check (structured results, approvals, questions to the user, images, errors...).
 """
 
+import socket
 import sys
 from typing import Annotated
 
+import uvicorn
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
@@ -97,4 +99,8 @@ if __name__ == "__main__":
     if sys.argv[1] == "stdio":
         server.run("stdio")
     else:
-        server.run("streamable-http", port=int(sys.argv[2]))
+        # Bind a free port ourselves and print it: picking a port and binding it later is a race.
+        listener = socket.create_server(("127.0.0.1", 0))
+        print(listener.getsockname()[1], flush=True)
+        app = server.streamable_http_app(host="127.0.0.1")
+        uvicorn.Server(uvicorn.Config(app, log_level="warning")).run(sockets=[listener])

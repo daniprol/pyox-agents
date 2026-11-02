@@ -6,10 +6,8 @@ of MCP's stateless rewrite: 2026-07-28 (questions come back as `input_required` 
 2025-11-25 (the server sends its question while the call waits).
 """
 
-import socket
 import subprocess
 import sys
-import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -329,22 +327,13 @@ async def test_stdio_servers(fake_openai: FakeOpenAI, make_agent: MakeAgent, pro
 @pytest.fixture(scope="module")
 def http_server_url() -> Iterator[str]:
     """The test server as a real Streamable HTTP server, in a subprocess."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
     process = subprocess.Popen(
-        [sys.executable, str(SERVER_SCRIPT), "http", str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        [sys.executable, str(SERVER_SCRIPT), "http"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
     )
-    deadline = time.monotonic() + 20
-    while True:
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=1).close()
-            break
-        except OSError:
-            if time.monotonic() > deadline or process.poll() is not None:
-                process.kill()
-                raise RuntimeError("The MCP test server did not start") from None
-            time.sleep(0.05)
+    assert process.stdout is not None
+    port = process.stdout.readline().strip()  # printed once the server listens
+    if not port:
+        raise RuntimeError("The MCP test server did not start")
     yield f"http://127.0.0.1:{port}/mcp"
     process.terminate()
     process.wait()

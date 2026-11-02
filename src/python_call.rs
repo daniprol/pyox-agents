@@ -24,6 +24,8 @@ use pyo3_async_runtimes::TaskLocals;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 
+use crate::python_exit::HandOver;
+
 /// How a run calls Python: in which contextvars, and on which thread or event loop.
 /// Cheap to clone (`Arc` is a shared pointer, like a Python reference).
 #[derive(Clone)]
@@ -157,9 +159,13 @@ where
     // thread (one meant for blocking work, so the network tasks never stall).
     let call_result = match caller_thread {
         Some(caller_thread) => caller_thread.run(call).await?,
-        None => tokio::task::spawn_blocking(call)
-            .await
-            .map_err(|_| PyRuntimeError::new_err("The Python call crashed"))?,
+        // A worker thread must not call Python while it exits (see `python_exit`).
+        None => tokio::task::spawn_blocking(move || match HandOver::start() {
+            Some(_running) => call(),
+            None => Err(PyRuntimeError::new_err("Python is exiting")),
+        })
+        .await
+        .map_err(|_| PyRuntimeError::new_err("The Python call crashed"))?,
     }?;
 
     match call_result {

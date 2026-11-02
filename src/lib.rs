@@ -52,6 +52,7 @@ mod openai_chat;
 mod openai_decisions;
 mod openai_responses;
 mod python_call;
+mod python_exit;
 mod run;
 mod run_context;
 mod sse;
@@ -93,5 +94,6 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<openai_decisions::Refusal>()?;
 
     errors::add_exceptions_to_module(module)?;
+    python_exit::register(module.py())?;
     Ok(())
 }
