@@ -55,6 +55,10 @@ break comes with a migration note.
 
 - A script that ended right after its last run could crash at exit (`Segmentation fault`) on Python 3.11 to
   3.13, about once in 20 exits. Python now waits for pyox to finish handing it results before it shuts down.
+- `ToolFinished` comes as soon as its call ends. Before, the results of parallel tool calls all came when the
+  slowest call ended.
+- `StopRun` in a call resumed with `answers=` keeps the results of the other answered calls in `error.messages`,
+  like it does in a new turn.
 - Cancelling the task that reads a run (or a timeout) cancels the async tools still running, instead of leaving
   them running.
 - A run that fails in `after_run` or while saving its history keeps its messages in `error.messages`.

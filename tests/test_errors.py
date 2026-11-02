@@ -33,17 +33,18 @@ from pyox_agents import (
 
 
 @pytest.mark.parametrize(
-    ("status", "exception"),
-    [(401, AuthenticationError), (403, AuthenticationError), (429, RateLimitError), (500, ApiError)],
+    ("status", "exception", "requests"),
+    [(401, AuthenticationError, 1), (403, AuthenticationError, 1), (429, RateLimitError, 3), (500, ApiError, 3)],
 )
 async def test_http_errors_raise_typed_exceptions(
-    fake_openai: FakeOpenAI, make_agent: MakeAgent, status: int, exception: type[Exception]
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, status: int, exception: type[Exception], requests: int
 ) -> None:
-    # 429 and 5xx are retried (twice by default) before they raise.
     fake_openai.queue(*[error_response(status, "nope", headers={"retry-after-ms": "1"})] * 3)
 
     with pytest.raises(exception, match="nope"):
         await make_agent().run("Hi")
+
+    assert len(fake_openai.requests) == requests  # 429 and 5xx are retried, twice by default
 
 
 async def test_all_errors_share_a_base_class(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:

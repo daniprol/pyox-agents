@@ -5,9 +5,8 @@ from pathlib import Path
 import fast_tools
 
 from conftest import MakeAgent
-from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
+from factories import collect_events, finished_calls, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
-from pyox_agents import ToolFinished
 
 
 def test_schema_and_description_come_from_rust() -> None:
@@ -34,7 +33,7 @@ async def test_agent_runs_rust_tools(fake_openai: FakeOpenAI, make_agent: MakeAg
 
     events = await collect_events(agent.execute("Analyze"))
 
-    finished = events_of_type(events, ToolFinished)
+    finished = finished_calls(events)
     assert [(event.result, event.is_error) for event in finished[:2]] == [("6", False), ("be: 2\nto: 2", False)]
     # The engine calls the Rust function directly: a Python call would have
     # wrapped the message in an exception name ("RuntimeError: ...").
@@ -54,7 +53,7 @@ async def test_file_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent, tmp_pa
 
     events = await collect_events(agent.execute("Save a note"))
 
-    finished = events_of_type(events, ToolFinished)
+    finished = finished_calls(events)
     assert [event.result for event in finished[:2]] == [f"Wrote 8 bytes to {path}", "buy milk"]
     assert finished[2].is_error
     assert finished[2].result.startswith("Could not read")

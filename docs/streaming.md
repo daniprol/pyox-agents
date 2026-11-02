@@ -21,6 +21,10 @@ Events are small, read-only objects backed by Rust. They work with `isinstance` 
 | `SubagentStarted`, `SubagentFinished` | a [subagent](subagents.md) starts or stops | `call_id`, `name`, ...      |
 | `RunFinished`  | the run ends (always last) | `text`, `stop_reason`, `output`, `turns`, `usage`, `response_id`, `messages`, `new_messages`, `pending`, `state` |
 
+When the model asks for several tool calls at once, they run at the same time, and each `ToolFinished` comes as
+soon as its call ends: a fast call's result does not wait for a slow one. The model still reads the results in the
+order it asked for the calls.
+
 A subagent's events come in the same stream, with `subagent_id` set (it is `None` for the main agent's events).
 
 `await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event. Without an

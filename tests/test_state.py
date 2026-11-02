@@ -3,7 +3,15 @@
 from typing import Any
 
 from conftest import MakeAgent
-from factories import collect_events, events_of_type, run_finished, text_response, tool_call, tool_calls_response
+from factories import (
+    collect_events,
+    events_of_type,
+    finished_calls,
+    run_finished,
+    text_response,
+    tool_call,
+    tool_calls_response,
+)
 from fake_openai import FakeOpenAI
 from pyox_agents import Answer, Approve, RunContext, StateChanged, ToolFinished, tool
 
@@ -36,7 +44,7 @@ def add_then_fail(ctx: RunContext) -> str:
 
 
 def tool_results(events: list[Any]) -> list[tuple[str, bool]]:
-    return [(event.result, event.is_error) for event in events_of_type(events, ToolFinished)]
+    return [(event.result, event.is_error) for event in finished_calls(events)]
 
 
 async def test_tools_change_the_state_and_the_app_sees_each_change(
@@ -205,5 +213,6 @@ async def test_a_read_only_subagent_cannot_replace_the_state(fake_openai: FakeOp
 
     events = await collect_events(agent.execute("Rename", state={"title": "List"}))
 
-    assert tool_results(events)[0] == ("This subagent can only read the state, not change it", True)
+    [renamed] = [event for event in finished_calls(events) if event.subagent_id]
+    assert (renamed.result, renamed.is_error) == ("This subagent can only read the state, not change it", True)
     assert run_finished(events).state == {"title": "List"}

@@ -9,9 +9,10 @@ import pytest
 from pydantic import BaseModel, Field
 
 from conftest import MakeAgent
-from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
+from factories import collect_events, finished_calls, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
 from pyox_agents import (
+    Answer,
     HookError,
     Hooks,
     InvalidArguments,
@@ -19,7 +20,6 @@ from pyox_agents import (
     StopRun,
     ToolCall,
     ToolFailed,
-    ToolFinished,
     tool,
 )
 
@@ -28,7 +28,7 @@ async def tool_results(fake_openai: FakeOpenAI, make_agent: MakeAgent, *calls: A
     """Runs one turn of tool calls, and returns what the model read from each."""
     fake_openai.queue(tool_calls_response(*calls), text_response("Done"))
     events = await collect_events(make_agent(**agent).execute("Go"))
-    finished = events_of_type(events, ToolFinished)
+    finished = finished_calls(events)
     assert all(event.is_error for event in finished)
     return [event.result for event in finished]
 
@@ -161,6 +161,36 @@ async def test_stop_run_ends_the_run_with_a_history_that_can_continue(
         ("check_stock", "3 left"),
     ]
     assert len(fake_openai.requests) == 1
+
+
+async def test_stop_run_in_a_resumed_call_keeps_the_other_answered_calls(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    @tool
+    async def pay(ctx: RunContext) -> str:
+        """Pay, once confirmed."""
+        await ctx.ask("Pay 10 EUR?")
+        raise StopRun("Payments are down")
+
+    @tool
+    async def ship(ctx: RunContext) -> str:
+        """Ship, once confirmed."""
+        answer = await ctx.ask("Ship to Vigo?")
+        return f"shipped: {answer.value}"
+
+    fake_openai.queue(tool_calls_response(tool_call("pay"), tool_call("ship")))
+    agent = make_agent(tools=[pay, ship])
+    stopped = await agent.run("Buy")
+
+    with pytest.raises(StopRun) as raised:
+        await agent.run(history=stopped.messages, answers={"call_0": Answer("yes"), "call_1": Answer("yes")})
+
+    assert raised.value.messages is not None
+    answered = [message for message in raised.value.messages if message["role"] == "tool"][2:]
+    assert [(message["name"], message["content"]) for message in answered] == [
+        ("pay", "The run was stopped: Payments are down"),
+        ("ship", "shipped: yes"),
+    ]
 
 
 async def test_hooks_can_stop_the_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
@@ -314,7 +344,7 @@ async def test_valid_arguments_still_arrive_built(fake_openai: FakeOpenAI, make_
 
     events = await collect_events(make_agent(tools=[distance, forecast]).execute("Go"))
 
-    assert [event.result for event in events_of_type(events, ToolFinished)] == [
+    assert [event.result for event in finished_calls(events)] == [
         "5.0",
         "Vigo: sunny for 2 days (metric)",
     ]

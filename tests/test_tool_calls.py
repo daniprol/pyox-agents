@@ -1,11 +1,12 @@
 """Tool calls inside a run: Python tools, Rust tools and tool errors."""
 
+import asyncio
 from typing import Any
 
 import pytest
 
 from conftest import MakeAgent
-from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
+from factories import collect_events, events_of_type, finished_calls, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
 from pyox_agents import Message, Tool, ToolFinished, ToolStarted, tool
 
@@ -33,7 +34,7 @@ async def test_runs_sync_and_async_python_tools(fake_openai: FakeOpenAI, make_ag
         ("call_0", "add", {"a": 2, "b": 3}),
         ("call_1", "shout", {"text": "hi"}),
     ]
-    finished = events_of_type(events, ToolFinished)
+    finished = finished_calls(events)
     assert [(event.call_id, event.result, event.is_error) for event in finished] == [
         ("call_0", "5", False),
         ("call_1", "HI", False),
@@ -54,6 +55,38 @@ async def test_tool_schemas_and_results_are_sent_to_the_model(fake_openai: FakeO
     assert follow_up_messages[2] == {"role": "tool", "tool_call_id": "call_0", "content": "5"}
 
 
+async def test_each_result_streams_as_its_call_ends_and_the_model_reads_them_in_order(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    app_saw_fast = asyncio.Event()
+
+    @tool
+    async def slow() -> str:
+        """Ends only once the app has the other call's result."""
+        await asyncio.wait_for(app_saw_fast.wait(), timeout=5)
+        return "slow"
+
+    @tool
+    async def fast() -> str:
+        """Ends at once."""
+        return "fast"
+
+    fake_openai.queue(tool_calls_response(tool_call("slow"), tool_call("fast")), text_response("Done"))
+
+    finished = []
+    async for event in make_agent(tools=[slow, fast]).execute("Go"):
+        if isinstance(event, ToolFinished):
+            finished.append(event.result)
+            app_saw_fast.set()
+
+    assert finished == ["fast", "slow"]
+    sent = [message for message in fake_openai.requests[1].body["messages"] if message["role"] == "tool"]
+    assert [(message["tool_call_id"], message["content"]) for message in sent] == [
+        ("call_0", "slow"),
+        ("call_1", "fast"),
+    ]  # the model reads the results in the order it asked for the calls
+
+
 async def test_failing_and_unknown_tools_are_reported_to_the_model(
     fake_openai: FakeOpenAI, make_agent: MakeAgent
 ) -> None:
@@ -64,7 +97,7 @@ async def test_failing_and_unknown_tools_are_reported_to_the_model(
 
     events = await collect_events(make_agent(tools=[explode]).execute("Go"))
 
-    assert [(event.result, event.is_error) for event in events_of_type(events, ToolFinished)] == [
+    assert [(event.result, event.is_error) for event in finished_calls(events)] == [
         ("ValueError: boom", True),
         ('Unknown tool "missing"', True),
     ]
