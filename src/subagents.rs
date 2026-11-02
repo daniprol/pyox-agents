@@ -34,7 +34,8 @@ use pyo3::prelude::*;
 use pyox_tools::usage::Usage;
 use serde_json::{Value, json};
 
-use crate::agent::{AgentConfig, Engine, RunInputs, ToolRun, run_agent_loop};
+use crate::agent_loop::{RunInputs, run_agent_loop};
+use crate::engine::{AgentConfig, Engine};
 use crate::errors::{AgentError, StopRun};
 use crate::events::{AgentEvent, SubagentFinished, SubagentStarted};
 use crate::human_input::{HumanInput, SharedCallLog};
@@ -42,6 +43,7 @@ use crate::messages::{Message, Reply, ToolCall};
 use crate::model_api::StopReason;
 use crate::state::StateAccess;
 use crate::telemetry::Telemetry;
+use crate::tool_call::ToolRun;
 use crate::tools::{
     Approval, ToolDefinition, ToolImplementation, ToolResult, invalid_arguments, success_result, tool_failed,
 };

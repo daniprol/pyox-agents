@@ -28,8 +28,8 @@
 //! `ValueError` / `TypeError`.
 //!
 //! Tool errors are not raised: the model gets them as the tool's result (see
-//! `tools::failure_result`). `ToolFailed` (Python, `pyox_agents.tools`) is the
-//! exception a tool raises to choose that text.
+//! `tool_call::failure_result`). `ToolFailed` is the exception a tool raises
+//! to choose that text.
 //!
 //! `StopToolCall` is not an error: `ctx.ask` raises it to stop a tool that
 //! must wait (or was denied). It derives from `BaseException`, like
@@ -49,6 +49,12 @@ use serde_json::Value;
 use crate::events::messages_to_python;
 use crate::json_convert::json_to_python;
 use crate::messages::Message;
+
+// Defined in Python, where they take extra arguments and have docstrings
+// users read; Rust uses them through these types.
+pyo3::import_exception!(pyox_agents.tools, ToolFailed);
+pyo3::import_exception!(pyox_agents.tools, InvalidArguments);
+pyo3::import_exception!(pyox_agents.human_input, ApprovalRequired);
 
 create_exception!(
     pyox_agents,

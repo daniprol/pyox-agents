@@ -11,7 +11,9 @@
 //! | `client`        | `Client`: API key, base URL, headers, timeouts, HTTP pool     |
 //! | `ws`            | One WebSocket connection to the Responses API                 |
 //! | `ws_pool`       | Idle WebSocket connections shared by a client's runs          |
-//! | `agent`         | `Engine`: the agent loop                                      |
+//! | `engine`        | `Engine`: an agent's configuration; starts runs               |
+//! | `agent_loop`    | One run: model turns, tool calls, hooks, history              |
+//! | `tool_call`     | One tool call: hooks, approval, the tool, failures            |
 //! | `run`           | `Run`: reading a run's events (one by one, batches, protocols) |
 //! | `ai_sdk`        | A run as a Vercel AI SDK UI message stream (`useChat`)        |
 //! | `ag_ui`         | A run as an AG-UI event stream                                |
@@ -33,13 +35,15 @@
 //! | `errors`        | The Python exception classes                                  |
 //! | `json_convert`  | Converts JSON values to Python objects and back               |
 //! | `python_call`   | Calls Python functions (sync or async) from the agent loop    |
+//! | `python_exit`   | Lets Python exit while Rust threads still hand it results     |
 
 use pyo3::prelude::*;
 
 mod ag_ui;
-mod agent;
+mod agent_loop;
 mod ai_sdk;
 mod client;
+mod engine;
 mod errors;
 mod events;
 mod history_store;
@@ -60,6 +64,7 @@ mod state;
 mod subagents;
 mod telemetry;
 mod text_chunks;
+mod tool_call;
 mod tools;
 mod ws;
 mod ws_pool;
@@ -69,7 +74,7 @@ mod ws_pool;
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<client::Client>()?;
-    module.add_class::<agent::Engine>()?;
+    module.add_class::<engine::Engine>()?;
     module.add_class::<run::Run>()?;
     module.add_class::<run::SyncRun>()?;
     module.add_class::<run::EventBatches>()?;

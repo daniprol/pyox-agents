@@ -38,7 +38,7 @@ use crate::tools::ToolResult;
 pub struct AgentHooks {
     hook_sets: Vec<HookSet>,
     /// The `on_tool_error(ctx, call, error)` functions, in order. Python only:
-    /// they get the exception object itself (see `agent::failure_result`).
+    /// they get the exception object itself (see `tool_call::failure_result`).
     pub tool_error_handlers: Vec<Py<PyAny>>,
 }
 

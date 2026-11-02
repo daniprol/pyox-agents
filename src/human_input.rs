@@ -29,7 +29,7 @@ use pyo3::prelude::*;
 use pyox_tools::usage::Usage;
 use serde_json::{Map, Value, json};
 
-use crate::errors::{HookError, wrap_user_error};
+use crate::errors::{ApprovalRequired, HookError, wrap_user_error};
 use crate::events::EventSender;
 use crate::json_convert::{json_to_python, python_to_json};
 pub use crate::messages::waiting_calls;
@@ -287,11 +287,10 @@ pub fn reply_to_python<'py>(py: Python<'py>, reply: &Reply) -> PyResult<Bound<'p
 /// If `error` is an `ApprovalRequired` raised by a hook, the approval request it asks for.
 pub fn approval_required(error: &PyErr) -> PyResult<Option<Request>> {
     Python::attach(|py| {
-        let approval_required = py.import("pyox_agents.human_input")?.getattr("ApprovalRequired")?;
-        let error = error.value(py);
-        if !error.is_instance(&approval_required)? {
+        if !error.is_instance_of::<ApprovalRequired>(py) {
             return Ok(None);
         }
+        let error = error.value(py);
         Ok(Some(new_request(
             RequestKind::Approval,
             python_to_json(&error.getattr("data")?)?,

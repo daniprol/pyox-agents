@@ -70,18 +70,18 @@ When you add or change a feature, update its page in [`docs/`](docs) too, and th
 ```text
 Python                               Rust (src/)
 ------                               -----------
-Agent(...)  ───────────────────────► Engine         config shared by all runs (agent.rs)
-agent.execute("...")  ─────────────► Run            one run: history + event queue
-async for event in run  ◄─ events ── agent loop     request → stream → tools → repeat
+Agent(...)  ───────────────────────► Engine         config shared by all runs (engine.rs)
+agent.execute("...")  ─────────────► Run            one run: history + event queue (run.rs)
+async for event in run  ◄─ events ── agent loop     request → stream → tools → repeat (agent_loop.rs)
                                        ├── model_api.rs     picks the API adapter
                                        ├── openai_chat.rs   Chat Completions: request body + chunk parsing
                                        ├── openai_responses.rs  Responses: request body + event parsing
                                        ├── sse.rs           server-sent events decoding
                                        ├── ws.rs, ws_pool.rs  Responses over WebSocket: one connection, the pool
-                                       └── tools/           Python tools are awaited on
-                                                            Python's event loop; Rust tools
-                                                            (from your own package) run
-                                                            on a Rust thread
+                                       └── tool_call.rs     one tool call: hooks, approval, the tool, failures
+                                             └── tools/     Python tools are awaited on Python's event
+                                                            loop; Rust tools (from your own package)
+                                                            run on a Rust thread
 run.ai_sdk(), run.ag_ui(...)  ◄─ text ── run.rs   events in batches → ai_sdk.rs, ag_ui.rs
 ```
 
