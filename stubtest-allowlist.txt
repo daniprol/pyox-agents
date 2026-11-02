@@ -14,5 +14,3 @@ pyox_agents._core.__all__
 # Internals: pickling, and the reflected `+` PyO3 adds for `__add__`.
 pyox_agents._core.Usage.__getnewargs_ex__
 pyox_agents._core.Usage.__radd__
-# Only there to point `result.ai_sdk()` to `agent.stream(...)`; in the stub it would hide typos.
-pyox_agents._core.RunFinished.__getattr__
