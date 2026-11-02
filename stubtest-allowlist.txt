@@ -1,0 +1,16 @@
+# Differences `stubtest` reports between `_core.pyi` and the compiled module that are fine.
+
+# Names only the type checker sees.
+pyox_agents._core.DepsT
+pyox_agents._core.OutputT
+pyox_agents._core.DecisionAnswer
+# PyO3 adds these; the stub writes the classes as `Generic` instead.
+pyox_agents._core.RunContext.__class_getitem__
+pyox_agents._core.RunFinished.__class_getitem__
+pyox_agents._core.Run.__class_getitem__
+pyox_agents._core.SyncRun.__class_getitem__
+pyox_agents._core.EventBatches.__class_getitem__
+pyox_agents._core.__all__
+# Internals: pickling, and the reflected `+` PyO3 adds for `__add__`.
+pyox_agents._core.Usage.__getnewargs_ex__
+pyox_agents._core.Usage.__radd__

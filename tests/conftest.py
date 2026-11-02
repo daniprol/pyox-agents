@@ -18,7 +18,7 @@ from opentelemetry.trace import Tracer
 from fake_openai import FakeOpenAI
 from pyox_agents import Agent, Client, Instrumentation
 
-MakeAgent = Callable[..., Agent]
+MakeAgent = Callable[..., Agent[Any]]
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def make_agent(client: Client, model: str) -> MakeAgent:
     The live tests (tests/test_live.py) override `client` and `model` to reuse it against a real model.
     """
 
-    def make(**options: Any) -> Agent:
+    def make(**options: Any) -> Agent[Any]:
         options.setdefault("client", client)
         options.setdefault("model", model)
         return Agent(**options)

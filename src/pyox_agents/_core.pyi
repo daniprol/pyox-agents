@@ -1,8 +1,11 @@
 """Type stubs for the compiled Rust module (`src/*.rs`)."""
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, Literal, TypeVar, final
+from typing import Any, Generic, Literal, Self, TypeAlias, final
 
+from typing_extensions import TypeVar
+
+from pyox_agents.human_input import Answer, Approve
 from pyox_agents.messages import ContentPart, History, HistoryStore, LoadHistory, Message, Prompt, StopReason
 
 @final
@@ -13,8 +16,8 @@ class Client:
     turns, so each turn after the first sends only the new tool results. Chat Completions requests always use HTTP.
     """
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         api_key: str | None = None,
         *,
         base_url: str | None = None,
@@ -23,7 +26,7 @@ class Client:
         request_timeout_seconds: float | None = 600.0,
         max_retries: int = 2,
         transport: Literal["http", "websocket"] = "http",
-    ) -> None: ...
+    ) -> Self: ...
     @staticmethod
     def azure(
         endpoint: str | None = None,
@@ -43,15 +46,15 @@ class Client:
 class Usage:
     """Token counts reported by the API; counts it did not report are 0."""
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         *,
         input_tokens: int = 0,
         cached_input_tokens: int = 0,
         output_tokens: int = 0,
         reasoning_tokens: int = 0,
         requests: int = 0,
-    ) -> None: ...
+    ) -> Self: ...
     @property
     def input_tokens(self) -> int: ...
     @property
@@ -65,9 +68,9 @@ class Usage:
     @property
     def requests(self) -> int:
         """Model requests that reported usage."""
-    def __add__(self, other: Usage) -> Usage: ...
+    def __add__(self, other: Usage, /) -> Usage: ...
 
-DepsT = TypeVar("DepsT")
+DepsT = TypeVar("DepsT", default=Any)
 
 @final
 class RunContext(Generic[DepsT]):
@@ -87,13 +90,13 @@ class RunContext(Generic[DepsT]):
     @property
     def tool_name(self) -> str | None: ...
     @property
-    def approval(self) -> Any:
+    def approval(self) -> Approve | None:
         """Inside a tool that needed approval: the `Approve` reply. `None` otherwise."""
-    def ask(self, data: Any = None, *, metadata: Any = None, key: str | None = None) -> Awaitable[Any]:
-        """Wait for a person's reply (an `Answer`). See `pyox_agents.human_input`."""
+    def ask(self, data: Any = None, *, metadata: Any = None, key: str | None = None) -> Awaitable[Answer]:
+        """Wait for a person's reply. See `pyox_agents.human_input`."""
     def step(self, name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Awaitable[Any]:
         """Run `function` once and save its (JSON) result, reused when the call runs again."""
-    def ask_sync(self, data: Any = None, *, metadata: Any = None, key: str | None = None) -> Any:
+    def ask_sync(self, data: Any = None, *, metadata: Any = None, key: str | None = None) -> Answer:
         """`ask` for sync tools: wait right here for a person's reply."""
     def step_sync(self, name: str, function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
         """`step` for sync tools (`function` may be async)."""
@@ -211,7 +214,7 @@ class InputRequested:
     def subagent_id(self) -> str | None:
         """The subagent whose tool asks; `None` for the main agent."""
 
-OutputT = TypeVar("OutputT")
+OutputT = TypeVar("OutputT", default=Any)
 
 @final
 class RunFinished(Generic[OutputT]):
@@ -242,7 +245,7 @@ class RunFinished(Generic[OutputT]):
     def messages_json(self) -> str: ...
     def new_messages_json(self) -> str: ...
 
-_Event = (
+_Event: TypeAlias = (
     TextDelta
     | ToolStarted
     | ToolFinished
@@ -250,17 +253,17 @@ _Event = (
     | StateChanged
     | SubagentStarted
     | SubagentFinished
-    | RunFinished
+    | RunFinished[OutputT]
 )
 
 @final
-class Run:
-    def __aiter__(self) -> Run: ...
-    async def __anext__(self) -> _Event: ...
+class Run(Generic[OutputT]):
+    def __aiter__(self) -> Run[OutputT]: ...
+    async def __anext__(self) -> _Event[OutputT]: ...
     def stop(self) -> None:
         """End the run at the next safe point, keeping the partial answer; it ends with
         `RunFinished(stop_reason="stopped")`."""
-    def batches(self) -> EventBatches:
+    def batches(self) -> EventBatches[OutputT]:
         """Iterate over lists of events: each holds every event already waiting (at least one)."""
     def ai_sdk(self) -> ProtocolStream:
         """The run as a Vercel AI SDK UI message stream (server-sent events text)."""
@@ -268,19 +271,19 @@ class Run:
         """The run as an AG-UI event stream (server-sent events text)."""
 
 @final
-class SyncRun:
+class SyncRun(Generic[OutputT]):
     """A run for code without an event loop, from `Agent.execute_sync`: `for event in run`."""
 
-    def __iter__(self) -> SyncRun: ...
-    def __next__(self) -> _Event: ...
-    def __enter__(self) -> SyncRun: ...
-    def __exit__(self, *exc_info: object) -> None:
+    def __iter__(self) -> SyncRun[OutputT]: ...
+    def __next__(self) -> _Event[OutputT]: ...
+    def __enter__(self) -> SyncRun[OutputT]: ...
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
         """Close the run."""
     def close(self) -> None:
         """End the run at once and keep nothing, like `break`."""
     def stop(self) -> None:
         """End the run at the next safe point, keeping the partial answer (from any thread)."""
-    def batches(self) -> EventBatches:
+    def batches(self) -> EventBatches[OutputT]:
         """Iterate over lists of events: each holds every event already waiting (at least one)."""
     def ai_sdk(self) -> ProtocolStream:
         """The run as a Vercel AI SDK UI message stream (server-sent events text)."""
@@ -343,7 +346,7 @@ class Decision:
         """OpenAI's id for this request, for support."""
     @property
     def answers(self) -> dict[str, DecisionAnswer]: ...
-    def __getitem__(self, name: str) -> DecisionAnswer: ...
+    def __getitem__(self, name: str, /) -> DecisionAnswer: ...
     def __len__(self) -> int: ...
 
 def send_decision(
@@ -357,13 +360,13 @@ def send_decision(
 ) -> Awaitable[Decision]: ...
 
 @final
-class EventBatches:
+class EventBatches(Generic[OutputT]):
     """`async for` for a `Run`, `for` for a `SyncRun`."""
 
-    def __aiter__(self) -> EventBatches: ...
-    async def __anext__(self) -> list[_Event]: ...
-    def __iter__(self) -> EventBatches: ...
-    def __next__(self) -> list[_Event]: ...
+    def __aiter__(self) -> EventBatches[OutputT]: ...
+    async def __anext__(self) -> list[_Event[OutputT]]: ...
+    def __iter__(self) -> EventBatches[OutputT]: ...
+    def __next__(self) -> list[_Event[OutputT]]: ...
 
 @final
 class ProtocolStream:
@@ -378,26 +381,26 @@ class ProtocolStream:
 
 @final
 class Engine:
-    def __init__(
-        self,
+    def __new__(
+        cls,
         *,
         client: Client,
         model: str,
         name: str | None = None,
-        instructions: str = "",
-        tools: Sequence[Any] = (),
+        instructions: str = ...,
+        tools: Sequence[Any] = ...,
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
         text_chunks: str | int | None = None,
         history_store: HistoryStore | LoadHistory | None = None,
-        hooks: Sequence[object] = (),
+        hooks: Sequence[object] = ...,
         api: str = "chat",
         store: bool = False,
         encrypted_reasoning: bool = True,
         unanswered: str = "close",
         output_schema: Mapping[str, Any] | None = None,
         output_parser: Callable[[str], Any] | None = None,
-    ) -> None: ...
+    ) -> Self: ...
     def execute(
         self,
         prompt: Prompt | None = None,

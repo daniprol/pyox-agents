@@ -19,7 +19,7 @@ A subagent cannot have subagents of its own.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from pyox_agents.agent import Agent
@@ -45,7 +45,7 @@ StateAccess = Literal["read", "write"]
 class Subagent:
     """A tool that runs `agent`. Make it with `agent.as_tool(...)`."""
 
-    agent: "Agent"
+    agent: "Agent[Any]"
     name: str
     description: str
     inherit_tools: bool = False  # also give it the calling agent's tools (not its subagents)

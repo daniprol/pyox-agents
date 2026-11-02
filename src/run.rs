@@ -42,7 +42,9 @@ use crate::events::AgentEvent;
 use crate::python_call::{CallerThread, PythonCalls, check_not_forked, wait};
 
 /// Python: `async for event in run: ...` (or `run.batches()`, `run.ai_sdk()`, `run.ag_ui(...)`).
-#[pyclass(frozen, module = "pyox_agents")]
+///
+/// `generic`, like the classes below: Python can write `Run[Ticket]`, the type of the final `output`.
+#[pyclass(frozen, generic, module = "pyox_agents")]
 pub struct Run {
     queue: Arc<EventQueue>,
     /// Sets the run's `StopSignal` (see `stop`).
@@ -51,7 +53,7 @@ pub struct Run {
 
 /// Python: `for event in run: ...` (or `run.batches()`, `run.ai_sdk()`, `run.ag_ui(...)`),
 /// from `agent.execute_sync(...)`.
-#[pyclass(frozen, module = "pyox_agents")]
+#[pyclass(frozen, generic, module = "pyox_agents")]
 pub struct SyncRun {
     queue: Arc<EventQueue>,
     stop_sender: watch::Sender<bool>,
@@ -292,7 +294,7 @@ impl Drop for EventQueue {
 }
 
 /// Python: `async for events in run.batches()`.
-#[pyclass(frozen, module = "pyox_agents")]
+#[pyclass(frozen, generic, module = "pyox_agents")]
 pub struct EventBatches {
     queue: Arc<EventQueue>,
     /// A run error that came after some events: raised once those are read.

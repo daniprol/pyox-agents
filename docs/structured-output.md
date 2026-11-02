@@ -4,7 +4,7 @@ Give the agent an `output_type` and its answer is JSON matching that type, read 
 `RunFinished.output`:
 
 ```python
---8<-- "examples/structured_output.py"
+--8 < --"examples/structured_output.py"
 ```
 
 `output_type` can be:

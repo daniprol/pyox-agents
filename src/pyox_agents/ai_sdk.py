@@ -68,7 +68,7 @@ class ChatRequest:
     body: dict[str, Any] = field(default_factory=dict)  # the whole request, for your own fields
 
 
-def stream(agent: Agent, body: bytes | str | Mapping[str, Any], **execute_options: Any) -> ProtocolStream:
+def stream(agent: Agent[Any], body: bytes | str | Mapping[str, Any], **execute_options: Any) -> ProtocolStream:
     """Runs the agent for a `useChat` request and returns its AI SDK stream.
 
     `execute_options` go to `agent.execute` (`deps=...`). With `conversation_id=`, the
