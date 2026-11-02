@@ -34,7 +34,8 @@ class ToolLike(Protocol):
 RequiresApproval = bool | Callable[[RunContext, dict[str, Any]], bool | Awaitable[bool]]
 """`True` to approve every call, or a function deciding per call from `ctx` and the arguments."""
 
-OnToolError = Callable[[RunContext, ToolCall, Exception], str | ToolResult | None | Awaitable[str | ToolResult | None]]
+_ErrorText = str | ToolResult | None
+OnToolError = Callable[[RunContext, ToolCall, Exception], _ErrorText | Awaitable[_ErrorText]]
 """`on_error(ctx, call, error)`: what the model reads when a tool fails. Return `None` for the
 default text or a `str`; raise (e.g. `StopRun`) to end the run. The function may be async.
 Works like `Hooks.on_tool_error`, and is asked first."""
