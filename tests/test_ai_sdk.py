@@ -105,6 +105,16 @@ async def test_errors_end_the_stream_with_an_error_chunk(
     assert protocol_client("ai-sdk", sse)["errors"] == [chunks[1]["errorText"]]
 
 
+async def test_a_finished_result_points_to_the_streamed_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    fake_openai.queue(text_response("Hi"))
+    result = await make_agent().run("Hi")
+
+    with pytest.raises(AttributeError, match=r"agent\.stream\(\.\.\.\)\.ai_sdk"):
+        result.ai_sdk()  # ty: ignore[unresolved-attribute]
+    with pytest.raises(AttributeError, match=r"no attribute 'txt'$"):
+        result.txt  # ty: ignore[unresolved-attribute]  # noqa: B018
+
+
 async def test_stopping_early_stops_the_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(text_response("Hello there"))
     stream = make_agent().stream("Hi").ai_sdk()

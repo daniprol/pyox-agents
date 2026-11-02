@@ -20,6 +20,11 @@ server. The modules read the requests in Python, where they are easy to change.
 `stream(agent, body, **options)` reads the request, runs the agent and returns the stream. `options` go to
 `agent.stream` (`deps=...`, `text_chunks=...`).
 
+Both streams come from a streamed run (`agent.stream(...)` or `agent.stream_sync(...)`), because the browser reads
+the run's events as they happen. `await agent.run(...)` returns only the finished `RunFinished`, so it has no
+`ai_sdk()` or `ag_ui()`. To send the whole answer at once instead, join the stream:
+`"".join(agent.stream_sync(prompt).ai_sdk())`.
+
 ## The pieces, for more control
 
 `stream` is three steps. Do them yourself to check who is asking, read your own fields from the request, or keep
