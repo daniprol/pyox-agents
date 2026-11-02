@@ -78,7 +78,7 @@ async def test_answers_with_text(make_agent: MakeAgent, api: str) -> None:
 
 @pytest.mark.parametrize("api", ["chat", "responses"])
 async def test_streams_text(make_agent: MakeAgent, api: str) -> None:
-    events = await collect_events(make_agent(api=api).execute("Count from 1 to 5, separated by spaces."))
+    events = await collect_events(make_agent(api=api).stream("Count from 1 to 5, separated by spaces."))
 
     deltas = events_of_type(events, TextDelta)
     [finished] = events_of_type(events, RunFinished)
@@ -98,7 +98,7 @@ async def test_calls_a_python_tool(make_agent: MakeAgent, api: str, model_parame
         return secret
 
     events = await collect_events(
-        make_agent(api=api, model_parameters=model_parameters, tools=[get_secret]).execute("What is the secret code?")
+        make_agent(api=api, model_parameters=model_parameters, tools=[get_secret]).stream("What is the secret code?")
     )
 
     [finished_tool] = events_of_type(events, ToolFinished)
@@ -115,7 +115,7 @@ async def test_calls_a_rust_tool(make_agent: MakeAgent, tmp_path: Path) -> None:
     path.write_text(secret)
     agent = make_agent(api="responses", tools=[fast_tools.read_file])
 
-    events = await collect_events(agent.execute(f"Read the file {path} and tell me what it says."))
+    events = await collect_events(agent.stream(f"Read the file {path} and tell me what it says."))
 
     [finished_tool] = events_of_type(events, ToolFinished)
     [finished] = events_of_type(events, RunFinished)
@@ -189,7 +189,7 @@ async def test_delegates_to_a_subagent(
         tools=[researcher.as_tool("research", "Finds the secret code.")],
     )
 
-    events = await collect_events(agent.execute("What is the secret code?"))
+    events = await collect_events(agent.stream("What is the secret code?"))
 
     [started] = events_of_type(events, SubagentStarted)
     [finished_subagent] = events_of_type(events, SubagentFinished)
@@ -282,7 +282,7 @@ async def test_a_subagent_asks_the_calling_agent(make_agent: MakeAgent) -> None:
         tools=[planner.as_tool("plan", "Plans a trip.", talk_to="parent")],
     )
 
-    events = await collect_events(agent.execute("Plan my trip."))
+    events = await collect_events(agent.stream("Plan my trip."))
 
     asks = [event for event in events_of_type(events, ToolFinished) if event.name == "ask_parent"]
     assert len(asks) == 1
@@ -304,7 +304,7 @@ async def test_tools_change_the_state(make_agent: MakeAgent) -> None:
         tools=[helper.as_tool("todos", "Changes the todo list.", state="write")],
     )
 
-    events = await collect_events(agent.execute("Add 'pack' to my todo list.", state={"todos": []}))
+    events = await collect_events(agent.stream("Add 'pack' to my todo list.", state={"todos": []}))
 
     [change] = events_of_type(events, StateChanged)
     assert change.subagent_id
@@ -323,7 +323,7 @@ async def test_calls_an_mcp_tool(make_agent: MakeAgent, api: str, model_paramete
     # The model must accept the schemas MCP servers make (with `title`s, no `additionalProperties`).
     async with McpTools(mcp_server.server, include={"add"}) as rooms:
         agent = make_agent(api=api, model_parameters=model_parameters, tools=rooms.tools)
-        events = await collect_events(agent.execute("Use the add tool to add 1234 and 4321."))
+        events = await collect_events(agent.stream("Use the add tool to add 1234 and 4321."))
 
     [finished_tool] = events_of_type(events, ToolFinished)
     assert (finished_tool.name, finished_tool.result) == ("add", "5555")

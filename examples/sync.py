@@ -21,7 +21,7 @@ result = agent.run_sync("What's the weather in Vigo?")
 print(result.text)
 
 # Or streamed, event by event.
-for event in agent.execute_sync("And in Lugo?", history=result.messages):
+for event in agent.stream_sync("And in Lugo?", history=result.messages):
     if isinstance(event, TextDelta):
         print(event.text, end="", flush=True)
 print()

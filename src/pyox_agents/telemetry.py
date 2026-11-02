@@ -171,7 +171,7 @@ def require_opentelemetry() -> None:
 
 
 def recorder_for(setting: Instrumentation | bool | None) -> "_Recorder | None":
-    """The recorder for one run, or `None` when the run is not traced. Called at `execute()`.
+    """The recorder for one run, or `None` when the run is not traced. Called at `stream()`.
 
     `setting` is the agent's `instrument=`: `None` follows `instrument()`, `True` traces with the
     defaults, `False` never traces.
@@ -199,7 +199,7 @@ class _Recorder:
         self.tracer = provider.get_tracer("pyox_agents", _VERSION)
         self.instruments = _instruments(settings.meter_provider or metrics.get_meter_provider())
         self.capture_content = _capture_content(settings.capture_content)
-        # The run's parent: what is current when `execute()` is called, even if the run is read
+        # The run's parent: what is current when `stream()` is called, even if the run is read
         # later or in another task (a web stream).
         self.parent = otel_context.get_current()
 

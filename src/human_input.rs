@@ -7,7 +7,7 @@
 //! 1. **The history**, when a run resumes. The last run stopped at the
 //!    request, the app sent `answers={call_id: reply}`, and the call runs
 //!    again from its start. Its earlier requests find their stored replies.
-//! 2. **The live handler**, `execute(on_request=...)`: Python answers while
+//! 2. **The live handler**, `stream(on_request=...)`: Python answers while
 //!    the run waits, and the tool goes on from where it asked.
 //!
 //! With neither, the call is *waiting*: the run ends and lists it in
@@ -39,7 +39,7 @@ use crate::telemetry::Span;
 
 /// Where a run sends new requests while it is alive.
 pub struct HumanInput {
-    /// `execute(on_request=...)`: called with each new request; returns a reply or `None`.
+    /// `stream(on_request=...)`: called with each new request; returns a reply or `None`.
     pub on_request: Option<Py<PyAny>>,
     /// Where the run sends its events: new requests are sent as `InputRequested`.
     pub events: EventSender,

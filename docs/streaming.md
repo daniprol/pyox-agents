@@ -1,6 +1,6 @@
 # Streaming
 
-`agent.execute(prompt)` starts a run and returns it. Iterate over it with `async for` to get its events as they
+`agent.stream(prompt)` starts a run and returns it. Iterate over it with `async for` to get its events as they
 happen:
 
 ```python
@@ -28,7 +28,7 @@ order it asked for the calls.
 A subagent's events come in the same stream, with `subagent_id` set (it is `None` for the main agent's events).
 
 `await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event. Without an
-event loop (scripts, Django, Celery), use `agent.run_sync(prompt)` and `for event in agent.execute_sync(prompt)`:
+event loop (scripts, Django, Celery), use `agent.run_sync(prompt)` and `for event in agent.stream_sync(prompt)`:
 see [Sync code](sync.md).
 
 One `Agent` can serve many runs at the same time: each run has its own history. Create it once and reuse it.
@@ -55,7 +55,7 @@ request is sent. Keep reading the events: the run still ends with `RunFinished`,
 history to continue from. (Leaving the `async for` loop with `break` instead aborts the run and keeps nothing.)
 
 ```python
-run = agent.execute("Write a long story")
+run = agent.stream("Write a long story")
 async for event in run:
     if isinstance(event, TextDelta) and user_pressed_stop():
         run.stop()
@@ -123,7 +123,7 @@ Set it on the agent, or override it for one run:
 ```python
 agent = Agent(model="gpt-5-mini", text_chunks="paragraph")
 
-async for event in agent.execute("Explain asyncio", text_chunks=20):
+async for event in agent.stream("Explain asyncio", text_chunks=20):
     ...
 ```
 

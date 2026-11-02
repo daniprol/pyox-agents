@@ -128,7 +128,7 @@ class Store:
 async def test_stop_keeps_the_partial_answer_and_saves_it(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(slow_text("Once ", "upon ", "a ", "time ", "there ", "was ", "a ", "cat."))
     store = Store()
-    run = make_agent(history_store=store).execute("Tell me a story", conversation_id="c1")
+    run = make_agent(history_store=store).stream("Tell me a story", conversation_id="c1")
 
     events = []
     async for event in run:
@@ -157,7 +157,7 @@ async def test_stop_lets_running_tools_finish_and_sends_nothing_more(
         return "pong"
 
     fake_openai.queue(tool_calls_response(tool_call("ping")), text_response("Never sent"))
-    run = make_agent(tools=[ping]).execute("Ping")
+    run = make_agent(tools=[ping]).stream("Ping")
 
     events = []
     async for event in run:
@@ -174,7 +174,7 @@ async def test_stop_lets_running_tools_finish_and_sends_nothing_more(
 
 
 async def test_a_run_stopped_before_it_starts_sends_nothing(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
-    run = make_agent().execute("Hi")
+    run = make_agent().stream("Hi")
     run.stop()
 
     result = run_finished(await collect_events(run))
@@ -191,7 +191,7 @@ async def test_stop_works_over_websocket(
     fake_openai.queue(
         dataclasses.replace(answer, chunks=[answer.chunks[0], *pieces, answer.chunks[-1]], chunk_delay_seconds=0.1)
     )
-    run = make_agent(api="responses", client=websocket_client).execute("Story")
+    run = make_agent(api="responses", client=websocket_client).stream("Story")
 
     events = []
     async for event in run:
@@ -258,7 +258,7 @@ async def test_the_stream_ends_with_the_run_even_if_a_ctx_is_kept(
         return "ok"
 
     fake_openai.queue(tool_calls_response(tool_call("remember")), text_response("Done"))
-    run = make_agent(tools=[tool(remember)]).execute("Go")
+    run = make_agent(tools=[tool(remember)]).stream("Go")
     stream = {"events": run, "batches": run.batches(), "ai_sdk": run.ai_sdk()}[read]
 
     items = await asyncio.wait_for(_read_all(stream), timeout=5)

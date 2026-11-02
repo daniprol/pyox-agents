@@ -155,7 +155,7 @@ Native Rust tools and Rust hooks get their `execute_tool` span too, but cannot o
   a `pyox.input_replied` event (`pyox.reply.source="on_request"`).
 - **Stop and resume** (`answers=`): the waiting `execute_tool` ends with `pyox.tool.waiting=true` (not an error),
   and `invoke_agent` with `pyox.run.pending` (how many requests wait). The resumed run is a **new trace**, under
-  whatever is current when you call `execute()` again (usually the new HTTP request). Its call has the same
+  whatever is current when you call `stream()` again (usually the new HTTP request). Its call has the same
   `gen_ai.tool.call.id` and a `pyox.input_replied` event (`pyox.reply.source="history"`); with a
   `conversation_id`, both runs have the same `gen_ai.conversation.id`. (A span link from the resumed call to the
   waiting one is planned.)
@@ -164,7 +164,7 @@ Native Rust tools and Rust hooks get their `execute_tool` span too, but cannot o
 
 Spans come from the agent loop, not from whoever reads the events: `async for`, `run.batches()`, `run.ai_sdk()`
 and `run.ag_ui(...)` give the same spans with the same times. The run's parent is the span current when
-`execute()` is called, so `StreamingResponse(run.ai_sdk())` still goes under the request's span, even though the
+`stream()` is called, so `StreamingResponse(run.ai_sdk())` still goes under the request's span, even though the
 stream is read after your handler returned.
 
 `run.stop()` ends the answer being streamed with finish reason `stopped`. If you stop reading instead (`break`,

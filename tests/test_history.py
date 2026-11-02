@@ -62,7 +62,7 @@ async def test_history_can_be_json_text(fake_openai: FakeOpenAI, make_agent: Mak
 
 async def test_invalid_json_history_is_rejected(make_agent: MakeAgent) -> None:
     with pytest.raises(ValueError, match="Invalid history"):
-        make_agent().execute("Hi", history="not json")
+        make_agent().stream("Hi", history="not json")
 
 
 async def test_store_loads_and_saves_a_conversation(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
@@ -135,6 +135,6 @@ async def test_wrong_arguments_are_rejected(make_agent: MakeAgent) -> None:
     with pytest.raises(TypeError, match="is not a history store"):
         make_agent(history_store=42)
     with pytest.raises(ValueError, match="needs an agent with a `history_store`"):
-        make_agent().execute("Hi", conversation_id="x")
+        make_agent().stream("Hi", conversation_id="x")
     with pytest.raises(ValueError, match="not both"):
-        make_agent(history_store=MemoryHistory()).execute("Hi", history=[], conversation_id="x")
+        make_agent(history_store=MemoryHistory()).stream("Hi", history=[], conversation_id="x")

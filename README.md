@@ -71,7 +71,7 @@ agent = Agent(model="gpt-5-mini", instructions="Be concise.", tools=[get_weather
 
 
 async def main() -> None:
-    async for event in agent.execute("Weather in Vigo?"):
+    async for event in agent.stream("Weather in Vigo?"):
         if isinstance(event, TextDelta):
             print(event.text, end="", flush=True)
 
@@ -141,9 +141,9 @@ Small surface, the features production agents need:
 ```text
 Python                                Rust
 Agent(model, instructions, tools) ──► Engine      config shared by all runs
-agent.execute(prompt)             ──► Run         history + bounded event queue
+agent.stream(prompt)             ──► Run         history + bounded event queue
 async for event in run            ◄── agent loop  request → stream → tools → repeat
-(or `for`, with agent.execute_sync)     ├── one adapter file per API (Chat Completions, Responses)
+(or `for`, with agent.stream_sync)     ├── one adapter file per API (Chat Completions, Responses)
                                         ├── sync Python tools on threads, async ones on your loop
                                         └── Rust tools called directly, no Python involved
 ```

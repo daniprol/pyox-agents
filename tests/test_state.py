@@ -1,4 +1,4 @@
-"""The run's state: `execute(state=...)`, `ctx.state`, `StateChanged` and `RunFinished.state`."""
+"""The run's state: `stream(state=...)`, `ctx.state`, `StateChanged` and `RunFinished.state`."""
 
 from typing import Any
 
@@ -57,7 +57,7 @@ async def test_tools_change_the_state_and_the_app_sees_each_change(
     )
     state = {"todos": [], "title": "List"}
 
-    events = await collect_events(make_agent(tools=[add_todo, rename]).execute("Plan", state=state))
+    events = await collect_events(make_agent(tools=[add_todo, rename]).stream("Plan", state=state))
 
     changes = events_of_type(events, StateChanged)
     assert [change.delta for change in changes] == [
@@ -85,7 +85,7 @@ async def test_tools_running_together_keep_each_other_changes(fake_openai: FakeO
 async def test_failed_tools_change_nothing(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(tool_calls_response(tool_call("add_then_fail")), text_response("Oops"))
 
-    events = await collect_events(make_agent(tools=[add_then_fail]).execute("Go", state={"todos": []}))
+    events = await collect_events(make_agent(tools=[add_then_fail]).stream("Go", state={"todos": []}))
 
     assert events_of_type(events, StateChanged) == []
     assert run_finished(events).state == {"todos": []}
@@ -99,7 +99,7 @@ async def test_without_state_it_is_none(fake_openai: FakeOpenAI, make_agent: Mak
 
     fake_openai.queue(tool_calls_response(tool_call("look")), text_response("ok"))
 
-    events = await collect_events(make_agent(tools=[look]).execute("Go"))
+    events = await collect_events(make_agent(tools=[look]).stream("Go"))
 
     assert tool_results(events) == [("None", False)]
     assert run_finished(events).state is None
@@ -127,7 +127,7 @@ async def test_subagents_see_the_state_only_when_allowed(fake_openai: FakeOpenAI
         )
     fake_openai.queue(text_response("Done"))
 
-    events = await collect_events(agent.execute("Go", state={"todos": ["buy"]}))
+    events = await collect_events(agent.stream("Go", state={"todos": ["buy"]}))
 
     subagent_results = [
         (event.result, event.is_error) for event in events_of_type(events, ToolFinished) if event.subagent_id
@@ -155,7 +155,7 @@ async def test_waiting_tools_change_the_state_once_answered(fake_openai: FakeOpe
     agent = make_agent(tools=[add_asked_todo])
     fake_openai.queue(tool_calls_response(tool_call("add_asked_todo")))
 
-    stopped_events = await collect_events(agent.execute("Add one", state={"todos": []}))
+    stopped_events = await collect_events(agent.stream("Add one", state={"todos": []}))
 
     assert events_of_type(stopped_events, StateChanged) == []
     stopped = run_finished(stopped_events)
@@ -163,7 +163,7 @@ async def test_waiting_tools_change_the_state_once_answered(fake_openai: FakeOpe
 
     fake_openai.queue(text_response("Done"))
     events = await collect_events(
-        agent.execute(history=stopped.messages, answers={"call_0": Answer("pack")}, state=stopped.state)
+        agent.stream(history=stopped.messages, answers={"call_0": Answer("pack")}, state=stopped.state)
     )
 
     [change] = events_of_type(events, StateChanged)
@@ -193,7 +193,7 @@ async def test_a_waiting_subagent_changes_the_state_once_resumed(
 
     fake_openai.queue(text_response("Added"), text_response("Done"))
     events = await collect_events(
-        agent.execute(history=stopped.messages, answers={"call_0/call_0": Approve()}, state=stopped.state)
+        agent.stream(history=stopped.messages, answers={"call_0/call_0": Approve()}, state=stopped.state)
     )
 
     [change] = events_of_type(events, StateChanged)
@@ -211,7 +211,7 @@ async def test_a_read_only_subagent_cannot_replace_the_state(fake_openai: FakeOp
         text_response("Done"),
     )
 
-    events = await collect_events(agent.execute("Rename", state={"title": "List"}))
+    events = await collect_events(agent.stream("Rename", state={"title": "List"}))
 
     [renamed] = [event for event in finished_calls(events) if event.subagent_id]
     assert (renamed.result, renamed.is_error) == ("This subagent can only read the state, not change it", True)

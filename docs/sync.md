@@ -6,7 +6,7 @@ tasks, notebooks.
 | Async                             | Sync                            |
 |-----------------------------------|---------------------------------|
 | `await agent.run(...)`            | `agent.run_sync(...)`           |
-| `async for event in agent.execute(...)` | `for event in agent.execute_sync(...)` |
+| `async for event in agent.stream(...)` | `for event in agent.stream_sync(...)` |
 | `async for events in run.batches()` | `for events in run.batches()` |
 | `async for text in run.ai_sdk()`, `run.ag_ui(...)` | `for text in run.ai_sdk()`, `run.ag_ui(...)` |
 | `await ctx.ask(...)`, `await ctx.step(...)` | `ctx.ask_sync(...)`, `ctx.step_sync(...)` |
@@ -50,7 +50,7 @@ def chat(request):
 
 def chat_stream(request):  # for `useChat`, see Web frontends
     chat = ai_sdk.parse(request.body)
-    run = agent.execute_sync(
+    run = agent.stream_sync(
         chat.prompt, history=chat.history, answers=chat.answers, frontend_tools=chat.frontend_tools, state=chat.state
     )
     return StreamingHttpResponse(run.ai_sdk(), headers=ai_sdk.HEADERS)
@@ -63,7 +63,7 @@ A sync run holds its thread until the model answers (seconds), like any sync vie
 
 ## Stopping
 
-- `break`, `run.close()` or leaving `with agent.execute_sync(...) as run:` ends the run at once.
+- `break`, `run.close()` or leaving `with agent.stream_sync(...) as run:` ends the run at once.
 - `run.stop()` ends it at the next safe point and keeps what it did, from any thread:
   `threading.Timer(60, run.stop).start()` gives a run at most a minute.
 - Ctrl+C raises `KeyboardInterrupt` within 0.1 s and ends the run, also inside a tool.

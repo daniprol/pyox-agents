@@ -70,12 +70,12 @@ use crate::ws_pool::RunSocket;
 pub struct RunInputs {
     pub config: Arc<AgentConfig>,
     pub text_chunks: TextChunking,
-    /// History given directly with `execute(history=...)`.
+    /// History given directly with `stream(history=...)`.
     pub history: Vec<Message>,
     pub prompt: Option<Content>,
     /// Set when the history is loaded from (and saved to) the history store.
     pub conversation_id: Option<String>,
-    /// The stored response this run continues, from `execute(previous_response_id=...)`.
+    /// The stored response this run continues, from `stream(previous_response_id=...)`.
     pub previous_response_id: Option<String>,
     /// Given to tools and hooks as `ctx.deps`.
     pub deps: Arc<Py<PyAny>>,
@@ -83,7 +83,7 @@ pub struct RunInputs {
     pub answers: HashMap<String, Reply>,
     /// The live `on_request` handler, and where the run's events go.
     pub human_input: Arc<HumanInput>,
-    /// Tools added for this run only (`execute(tools=..., frontend_tools=...)`),
+    /// Tools added for this run only (`stream(tools=..., frontend_tools=...)`),
     /// or what a subagent gets from its tool.
     pub extra_tools: Vec<Arc<ToolDefinition>>,
     pub state: RunState,

@@ -171,7 +171,7 @@ async def test_the_output_type_reaches_every_event_of_the_run(fake_openai: FakeO
     agent = Agent(model="test-model", client=client, output_type=Ticket)
 
     # `ty` checks these types; at run time `assert_type` does nothing.
-    run = agent.execute("The printer is on fire")
+    run = agent.stream("The printer is on fire")
     assert_type(run, Run[Ticket])
     async for events in run.batches():
         for event in events:

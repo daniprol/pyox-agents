@@ -75,7 +75,7 @@ tool, `tool_call_id`, `tool_name`, `approval` and the `ask` and `step` methods
 
 ## Tools for one run
 
-`tools=` on `run(...)` or `execute(...)` adds tools for that run only, on top of the agent's. Use it when the
+`tools=` on `run(...)` or `stream(...)` adds tools for that run only, on top of the agent's. Use it when the
 tools themselves depend on the request: a user's own [MCP server](mcp.md), or tools made for their plan.
 
 ```python

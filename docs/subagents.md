@@ -75,7 +75,7 @@ call running it (`None` for the main agent's events). Its tool call ids start wi
 stay unique:
 
 ```python
-async for event in writer.execute("Write about Vigo"):
+async for event in writer.stream("Write about Vigo"):
     match event:
         case SubagentStarted(name=name, task=task):
             print(f"[{name}] {task}")

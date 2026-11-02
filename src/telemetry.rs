@@ -44,7 +44,7 @@ pub enum Telemetry {
     /// Tracing is off (the default): no spans, no Python.
     #[default]
     Off,
-    /// A run started with `execute()`: the recorder Python made for it.
+    /// A run started with `stream()`: the recorder Python made for it.
     /// (`Arc`, a shared pointer, so clones need no Python.)
     Recorder(Arc<Py<PyAny>>),
     /// A subagent's run: its span goes under the tool call that runs it.

@@ -56,7 +56,7 @@ def sent_tool_messages(fake_openai: FakeOpenAI, request_index: int) -> list[dict
 async def test_a_tool_needing_approval_stops_the_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(tool_calls_response(tool_call("delete_file", path="a.txt")))
 
-    events = await collect_events(make_agent(tools=[delete_file]).execute("Delete a.txt"))
+    events = await collect_events(make_agent(tools=[delete_file]).stream("Delete a.txt"))
 
     [request] = events_of_type(events, InputRequested)
     assert (request.call_id, request.tool_name, request.kind) == ("call_0", "delete_file", "approval")
@@ -273,7 +273,7 @@ async def test_tool_results_can_carry_hidden_metadata(fake_openai: FakeOpenAI, m
 
     fake_openai.queue(tool_calls_response(tool_call("find_user", name="Ana")), text_response("Done"))
 
-    events = await collect_events(make_agent(tools=[find_user]).execute("Find Ana"))
+    events = await collect_events(make_agent(tools=[find_user]).stream("Find Ana"))
 
     [finished] = events_of_type(events, ToolFinished)
     assert (finished.result, finished.metadata) == ("Found Ana", {"user_id": 42})
@@ -297,7 +297,7 @@ async def test_on_request_replies_while_the_tool_waits(fake_openai: FakeOpenAI, 
     bookings = Bookings()
 
     events = await collect_events(
-        make_agent(tools=[book_flight]).execute("Fly me to Rome", deps=bookings, on_request=pick_the_last)
+        make_agent(tools=[book_flight]).stream("Fly me to Rome", deps=bookings, on_request=pick_the_last)
     )
 
     assert [request.call_id for request in seen] == ["call_0"]
@@ -619,6 +619,6 @@ def test_frontend_tools_need_a_name_of_their_own(make_agent: MakeAgent) -> None:
     agent = make_agent(tools=[delete_file])
 
     with pytest.raises(ValueError, match="names of their own"):
-        agent.execute("Hi", frontend_tools=[{"name": "delete_file"}])
+        agent.stream("Hi", frontend_tools=[{"name": "delete_file"}])
     with pytest.raises(ValueError, match="needs a"):
-        agent.execute("Hi", frontend_tools=[{"description": "No name"}])
+        agent.stream("Hi", frontend_tools=[{"description": "No name"}])

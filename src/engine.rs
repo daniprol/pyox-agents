@@ -1,6 +1,6 @@
 //! `Engine`: an agent's configuration, checked once when the `Agent` is
 //! created. It never changes after that, so one engine serves many runs at
-//! the same time. `execute(...)` checks a run's arguments and gives Python a
+//! the same time. `stream(...)` checks a run's arguments and gives Python a
 //! `Run`; the run itself is `agent_loop::run_agent_loop`.
 
 use std::collections::HashMap;
@@ -203,8 +203,8 @@ impl Engine {
         previous_response_id = None, answers = None, on_request = None, tools = None, frontend_tools = None,
         state = None, telemetry = None, sync = false,
     ))]
-    #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.execute(...)`
-    fn execute(
+    #[allow(clippy::too_many_arguments)] // mirrors the keyword arguments of `Agent.stream(...)`
+    fn start(
         &self,
         py: Python<'_>,
         prompt: Option<Bound<'_, PyAny>>,

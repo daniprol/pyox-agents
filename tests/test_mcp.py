@@ -149,7 +149,7 @@ async def test_the_model_calls_a_tool(fake_openai: FakeOpenAI, make_agent: MakeA
     fake_openai.queue(tool_calls_response(tool_call("add", a=2, b=3)), text_response("5"))
 
     async with rooms:
-        events = await collect_events(make_agent(tools=rooms.tools).execute("Add 2 and 3"))
+        events = await collect_events(make_agent(tools=rooms.tools).stream("Add 2 and 3"))
 
     [finished] = events_of_type(events, ToolFinished)
     assert (finished.result, finished.is_error) == ("5", False)

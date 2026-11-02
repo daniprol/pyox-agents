@@ -14,11 +14,11 @@ Rust. Python code defines agents and tools; the API is `async`, with sync twins 
 - `pip install pyox-agents` (or `uv add pyox-agents`); Python 3.11+. No Python dependencies.
 - Read `OPENAI_API_KEY` / `OPENAI_BASE_URL` from the environment, or pass a `Client`. One `Client` per process,
   shared by agents (it holds the connection pool). One `Agent` serves many concurrent runs.
-- `agent.execute(...)` returns a `Run` to iterate with `async for`; `await agent.run(...)` returns the final
+- `agent.stream(...)` returns a `Run` to iterate with `async for`; `await agent.run(...)` returns the final
   `RunFinished`. Both take `history=`, `conversation_id=`, `deps=`, `answers=`, `on_request=`, `state=`, and
   `tools=` (extra tools for that run only, e.g. a user's own MCP server).
 - In sync code (scripts, Django/Flask views, Celery), use `agent.run_sync(...)` and `for event in
-  agent.execute_sync(...)` instead; sync tools then use `ctx.ask_sync` / `ctx.step_sync`. Never wrap the async
+  agent.stream_sync(...)` instead; sync tools then use `ctx.ask_sync` / `ctx.step_sync`. Never wrap the async
   API in `asyncio.run` for this.
 - Tool errors do not raise: the model reads them and decides what to do. In tools, raise `ToolFailed("message for
   the model")` for expected failures and `StopRun("why")` to end the run. Failed runs raise subclasses of
@@ -45,7 +45,7 @@ agent = Agent(model="gpt-5-mini", instructions="Be concise.", tools=[get_weather
 
 
 async def main() -> None:
-    async for event in agent.execute("Weather in Vigo?"):
+    async for event in agent.stream("Weather in Vigo?"):
         match event:
             case TextDelta(text=text):
                 print(text, end="", flush=True)
@@ -86,7 +86,7 @@ asyncio.run(main())
 | Typed answer | `Agent(output_type=MyDataclass)`; `result.output` is an instance (strict mode: optional fields must allow `None`) | [structured output](https://daniprol.github.io/pyox-agents/structured-output/) |
 | Approvals and questions | run stops with `stop_reason == "waiting"` and `result.pending`; resume with `agent.run(history=result.messages, answers={call_id: Approve() / Deny(...) / Answer(value)})`, or answer live with `on_request=` | [human in the loop](https://daniprol.github.io/pyox-agents/human-in-the-loop/) |
 | Subagents | `writer = Agent(..., tools=[researcher.as_tool("research", "Research a topic", state="read")])` | [subagents](https://daniprol.github.io/pyox-agents/subagents/) |
-| Shared state | `execute(state={...})`; tools change `ctx.state`; `StateChanged` events | [state](https://daniprol.github.io/pyox-agents/state/) |
+| Shared state | `stream(state={...})`; tools change `ctx.state`; `StateChanged` events | [state](https://daniprol.github.io/pyox-agents/state/) |
 | Handle tool failures | `Hooks(on_tool_error=fn)` or `@tool(on_error=fn)`: `fn(ctx, call, error)` returns the text the model reads, or `None` for the default; `@tool(timeout_seconds=30)` | [errors](https://daniprol.github.io/pyox-agents/errors/) |
 | Watch or change a run | `hooks=[Hooks(before_tool_call=fn)]` or any object with hook methods; raise in a tool hook to block the call | [hooks](https://daniprol.github.io/pyox-agents/hooks/) |
 | Serve a chat UI | `StreamingResponse(ai_sdk.stream(agent, await request.body()), headers=ai_sdk.HEADERS)`; same with `ag_ui` | [web frontends](https://daniprol.github.io/pyox-agents/web-frontends/) |

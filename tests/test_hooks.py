@@ -47,7 +47,7 @@ def add(a: int, b: int) -> int:
 async def test_tools_asking_for_ctx_get_it(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(tool_calls_response(tool_call("list_orders")), text_response("Done"))
 
-    events = await collect_events(make_agent(tools=[list_orders, add]).execute("Orders?", deps=Shop()))
+    events = await collect_events(make_agent(tools=[list_orders, add]).stream("Orders?", deps=Shop()))
 
     assert list_orders.parameters["properties"] == {"status": {"type": "string"}}  # ctx is hidden from the model
     finished = finished_calls(events)
@@ -67,7 +67,7 @@ async def test_before_tool_call_changes_or_blocks_calls(fake_openai: FakeOpenAI,
     )
     agent = make_agent(tools=[add], hooks=[Hooks(before_tool_call=double_first_number)])
 
-    events = await collect_events(agent.execute("Add"))
+    events = await collect_events(agent.stream("Add"))
 
     finished = finished_calls(events)
     assert [(event.result, event.is_error) for event in finished] == [
@@ -232,7 +232,7 @@ async def test_rust_hooks_block_calls_and_trim_requests(fake_openai: FakeOpenAI,
     )
     agent = make_agent(tools=[fast_tools.count_words], hooks=[fast_tools.guard])
 
-    events = await collect_events(agent.execute("Count", history=long_history))
+    events = await collect_events(agent.stream("Count", history=long_history))
 
     finished = finished_calls(events)
     assert [(event.result, event.is_error) for event in finished] == [

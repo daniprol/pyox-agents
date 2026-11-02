@@ -102,7 +102,7 @@ class RunContext(Generic[DepsT]):
         """`step` for sync tools (`function` may be async)."""
     @property
     def state(self) -> Any:
-        """The run's state (`execute(state=...)`). Change it in place or assign it, inside a tool."""
+        """The run's state (`stream(state=...)`). Change it in place or assign it, inside a tool."""
     @state.setter
     def state(self, new_state: Any) -> None: ...
 
@@ -241,7 +241,7 @@ class RunFinished(Generic[OutputT]):
     def new_messages(self) -> list[Message]: ...
     @property
     def state(self) -> Any:
-        """The state at the end of the run: give it back with `execute(state=...)`."""
+        """The state at the end of the run: give it back with `stream(state=...)`."""
     def messages_json(self) -> str: ...
     def new_messages_json(self) -> str: ...
 
@@ -272,7 +272,7 @@ class Run(Generic[OutputT]):
 
 @final
 class SyncRun(Generic[OutputT]):
-    """A run for code without an event loop, from `Agent.execute_sync`: `for event in run`."""
+    """A run for code without an event loop, from `Agent.stream_sync`: `for event in run`."""
 
     def __iter__(self) -> SyncRun[OutputT]: ...
     def __next__(self) -> _Event[OutputT]: ...
@@ -401,7 +401,7 @@ class Engine:
         output_schema: Mapping[str, Any] | None = None,
         output_parser: Callable[[str], Any] | None = None,
     ) -> Self: ...
-    def execute(
+    def start(
         self,
         prompt: Prompt | None = None,
         *,

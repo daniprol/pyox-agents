@@ -29,7 +29,7 @@ async def test_modes(
 ) -> None:
     fake_openai.queue(text_pieces_response(*MARKDOWN_PIECES))
 
-    events = await collect_events(make_agent(text_chunks=text_chunks).execute("Hi"))
+    events = await collect_events(make_agent(text_chunks=text_chunks).stream("Hi"))
 
     assert texts(events) == expected
 
@@ -40,7 +40,7 @@ async def test_text_is_sent_before_tool_calls(fake_openai: FakeOpenAI, make_agen
         text_pieces_response("All ", "good."),
     )
 
-    events = await collect_events(make_agent(tools=[lambda: "pong"], text_chunks="message").execute("Hi"))
+    events = await collect_events(make_agent(tools=[lambda: "pong"], text_chunks="message").stream("Hi"))
 
     first_text, tool_started, second_text = events[0], events[1], events[3]
     assert isinstance(first_text, TextDelta)
@@ -50,10 +50,10 @@ async def test_text_is_sent_before_tool_calls(fake_openai: FakeOpenAI, make_agen
     assert second_text.text == "All good."
 
 
-async def test_execute_overrides_the_agent_setting(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+async def test_stream_overrides_the_agent_setting(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(text_pieces_response("a", "b", "c"))
 
-    events = await collect_events(make_agent(text_chunks="delta").execute("Hi", text_chunks="message"))
+    events = await collect_events(make_agent(text_chunks="delta").stream("Hi", text_chunks="message"))
 
     assert texts(events) == ["abc"]
 

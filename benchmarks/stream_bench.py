@@ -61,7 +61,7 @@ def ai_sdk_chunk(event: object) -> str:
 
 async def events_in_python(agent: Agent) -> int:
     steps = 0
-    async for event in agent.execute(PROMPT):
+    async for event in agent.stream(PROMPT):
         ai_sdk_chunk(event)
         steps += 1
     return steps
@@ -69,7 +69,7 @@ async def events_in_python(agent: Agent) -> int:
 
 async def batches_in_python(agent: Agent) -> int:
     steps = 0
-    async for events in agent.execute(PROMPT).batches():
+    async for events in agent.stream(PROMPT).batches():
         "".join(ai_sdk_chunk(event) for event in events)
         steps += 1
     return steps
@@ -77,7 +77,7 @@ async def batches_in_python(agent: Agent) -> int:
 
 async def ai_sdk_in_rust(agent: Agent) -> int:
     steps = 0
-    async for _text in agent.execute(PROMPT).ai_sdk():
+    async for _text in agent.stream(PROMPT).ai_sdk():
         steps += 1
     return steps
 

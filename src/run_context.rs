@@ -1,5 +1,5 @@
 //! The `ctx` that tools and hooks receive: what is known about the run, plus
-//! the user's own `deps` (any Python object given with `execute(deps=...)`).
+//! the user's own `deps` (any Python object given with `stream(deps=...)`).
 //!
 //! Inside a tool, `ctx` can also wait for a person (`ctx.ask`) and save work
 //! that must not be repeated when the call runs again (`ctx.step`); see
@@ -187,7 +187,7 @@ impl PythonRunContext {
 
 #[pymethods]
 impl PythonRunContext {
-    /// Whatever was given with `execute(deps=...)`: a database pool, the user, settings...
+    /// Whatever was given with `stream(deps=...)`: a database pool, the user, settings...
     #[getter]
     fn deps(&self, py: Python<'_>) -> Py<PyAny> {
         self.context.deps.clone_ref(py)
@@ -210,7 +210,7 @@ impl PythonRunContext {
         self.context.run.usage
     }
 
-    /// The run's state (`execute(state=...)`), usually a dict. Inside a tool,
+    /// The run's state (`stream(state=...)`), usually a dict. Inside a tool,
     /// change it in place (`ctx.state["todos"].append(...)`) or replace it
     /// (`ctx.state = {...}`): the changes are applied when the tool finishes,
     /// and sent to the app as a `StateChanged` event. Hooks get a copy.

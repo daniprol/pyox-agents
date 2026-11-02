@@ -52,7 +52,7 @@ get_location = Tool.frontend_tool("get_location", "Get the user's location.", {"
 Or give a run the tools your frontend sent with the request, as JSON schemas, for that run only:
 
 ```python
-run = agent.execute(prompt, frontend_tools=[{"name": "get_location", "description": "...", "parameters": {...}}])
+run = agent.stream(prompt, frontend_tools=[{"name": "get_location", "description": "...", "parameters": {...}}])
 ```
 
 Each one becomes an `InputRequested` (with `call_id`, `tool_name`, `arguments`, `kind`: `"approval"`, `"input"`
