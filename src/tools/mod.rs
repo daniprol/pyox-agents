@@ -17,7 +17,7 @@
 //! Any tool object may have a `requires_approval` attribute: `True`, or a
 //! function `(ctx, arguments) -> bool` deciding for each call, and an
 //! `on_error` attribute: a function `(ctx, call, error)` choosing what the
-//! model reads when the tool fails (see `agent::failure_result`).
+//! model reads when the tool fails (see `tool_call::failure_result`).
 //!
 //! A failing tool never stops the run by itself: the model gets an error
 //! result and decides what to do. `ToolDefinition::run` returns the failure
@@ -34,6 +34,7 @@ use serde_json::{Map, Value};
 /// The result of running a tool, as sent back to the model.
 pub use pyox_tools::hooks::ToolResult;
 
+use crate::errors::{InvalidArguments, ToolFailed};
 use crate::human_input::{SharedCallLog, new_request};
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::{Content, Request, RequestKind, ToolCall, content_from_python};
@@ -63,18 +64,10 @@ pub enum Approval {
     WhenFunctionSays(Py<PyAny>),
 }
 
-/// Where the code of a tool lives.
+/// What runs when the model calls a tool.
 pub enum ToolImplementation {
-    /// A Python object with an `invoke(arguments: dict) -> str` method (sync or async).
-    /// `takes_context`: call it as `invoke(arguments, ctx)` instead.
-    /// `run_in_thread`: a sync run calls it on a worker thread, not the thread reading the run.
-    Python {
-        tool: Py<PyAny>,
-        takes_context: bool,
-        run_in_thread: bool,
-    },
-    /// A tool written in Rust in a separately compiled package.
-    Native(NativeTool),
+    /// A Python or Rust function (`ToolDefinition::run_code`).
+    Code(ToolCode),
     /// No code here: the app runs the tool and replies with the result.
     Frontend,
     /// Another agent (see `subagents`).
@@ -85,12 +78,26 @@ pub enum ToolImplementation {
     AskParent,
 }
 
+/// A tool function pyox calls itself.
+pub enum ToolCode {
+    /// A Python object with an `invoke(arguments: dict) -> str` method (sync or async).
+    /// `takes_context`: call it as `invoke(arguments, ctx)` instead.
+    /// `run_in_thread`: a sync run calls it on a worker thread, not the thread reading the run.
+    Python {
+        tool: Py<PyAny>,
+        takes_context: bool,
+        run_in_thread: bool,
+    },
+    /// A tool written in Rust in a separately compiled package.
+    Native(NativeTool),
+}
+
 impl ToolImplementation {
     /// The kind's name, for the tool call's span (`pyox.tool.kind`).
     pub fn kind(&self) -> &'static str {
         match self {
-            ToolImplementation::Python { .. } => "python",
-            ToolImplementation::Native(_) => "rust",
+            ToolImplementation::Code(ToolCode::Python { .. }) => "python",
+            ToolImplementation::Code(ToolCode::Native(_)) => "rust",
             ToolImplementation::Frontend => "frontend",
             ToolImplementation::Subagent(_) => "subagent",
             ToolImplementation::AskUser => "ask_user",
@@ -117,29 +124,12 @@ fn timeout_from_seconds(seconds: f64) -> PyResult<Duration> {
 
 /// `pyox_agents.ToolFailed(message)`: a tool failure whose message the model reads as it is.
 pub fn tool_failed(message: impl Into<String>) -> PyErr {
-    let message = message.into();
-    Python::attach(|py| {
-        match py
-            .import("pyox_agents.tools")
-            .and_then(|tools| tools.getattr("ToolFailed"))
-        {
-            Ok(tool_failed) => PyErr::from_type(tool_failed.cast_into().expect("ToolFailed is a class"), message),
-            Err(import_error) => import_error,
-        }
-    })
+    ToolFailed::new_err(message.into())
 }
 
 /// `pyox_agents.InvalidArguments(tool_name, [problem])`: the model's arguments do not fit the tool.
 pub fn invalid_arguments(tool_name: &str, problem: String) -> PyErr {
-    Python::attach(|py| {
-        let error = py
-            .import("pyox_agents.tools")
-            .and_then(|tools| tools.getattr("InvalidArguments")?.call1((tool_name, vec![problem])));
-        match error {
-            Ok(error) => PyErr::from_value(error),
-            Err(import_error) => import_error,
-        }
-    })
+    InvalidArguments::new_err((tool_name.to_string(), vec![problem]))
 }
 
 /// A tool result telling the model something went wrong.
@@ -175,13 +165,13 @@ impl ToolDefinition {
         };
 
         let implementation = match NativeTool::from_python(tool)? {
-            Some(native_tool) => ToolImplementation::Native(native_tool),
+            Some(native_tool) => ToolImplementation::Code(ToolCode::Native(native_tool)),
             None if is_set(tool, "frontend")? => ToolImplementation::Frontend,
-            None if tool.hasattr("invoke")? => ToolImplementation::Python {
+            None if tool.hasattr("invoke")? => ToolImplementation::Code(ToolCode::Python {
                 tool: tool.clone().unbind(),
                 takes_context: is_set(tool, "takes_ctx")?,
                 run_in_thread: is_set(tool, "run_in_thread")?,
-            },
+            }),
             None => {
                 return Err(PyValueError::new_err(format!(
                     "{} is not a tool. Use the @tool decorator or Tool(...).",
@@ -269,16 +259,18 @@ impl ToolDefinition {
         Ok(needs_approval.then(|| new_request(RequestKind::Approval, Value::Null, Value::Null)))
     }
 
-    /// Runs the tool, giving up after its `timeout` (a `TimeoutError`).
-    /// Giving up drops the call: an async Python tool is cancelled.
-    pub async fn run_with_timeout(
+    /// Runs the tool's `code` (a Python or Rust function), giving up after
+    /// its `timeout` with a `TimeoutError`; giving up drops the call, so an
+    /// async Python tool is cancelled.
+    pub async fn run_code(
         &self,
+        code: &ToolCode,
         call: &ToolCall,
         call_log: &SharedCallLog,
         context: &Context,
         python_calls: &PythonCalls,
     ) -> PyResult<ToolResult> {
-        let running = self.run(call, call_log, context, python_calls);
+        let running = code.run(&self.name, call, call_log, context, python_calls);
         let Some(timeout) = self.timeout else {
             return running.await;
         };
@@ -291,12 +283,15 @@ impl ToolDefinition {
             ))),
         }
     }
+}
 
-    /// Runs the tool. `Err` is the exception it failed with: a Python tool's
-    /// own exception, or a `ToolFailed` for a Rust tool's error message.
+impl ToolCode {
+    /// Calls the function. `Err` is the exception it failed with: a Python
+    /// tool's own exception, or a `ToolFailed` for a Rust tool's error message.
     /// `call_log` is what the call asked so far (Python tools see it through `ctx`).
-    pub async fn run(
+    async fn run(
         &self,
+        tool_name: &str,
         call: &ToolCall,
         call_log: &SharedCallLog,
         context: &Context,
@@ -305,16 +300,16 @@ impl ToolDefinition {
         let Value::Object(arguments) = &call.arguments else {
             // Arguments that are not valid JSON are kept as the model's text.
             let problem = format!("the arguments must be a JSON object, got {}", call.arguments);
-            return Err(invalid_arguments(&self.name, problem));
+            return Err(invalid_arguments(tool_name, problem));
         };
 
-        match &self.implementation {
-            ToolImplementation::Native(native_tool) => {
+        match self {
+            ToolCode::Native(native_tool) => {
                 let native_tool = *native_tool;
                 let arguments = Value::Object(arguments.clone());
-                run_rust_tool(&self.name, move || native_tool.call(&arguments)).await
+                run_rust_tool(tool_name, move || native_tool.call(&arguments)).await
             }
-            ToolImplementation::Python {
+            ToolCode::Python {
                 tool,
                 takes_context,
                 run_in_thread,
@@ -326,10 +321,6 @@ impl ToolDefinition {
                 };
                 run_python_tool(tool, arguments, context, &python_calls).await
             }
-            ToolImplementation::Frontend
-            | ToolImplementation::Subagent(_)
-            | ToolImplementation::AskUser
-            | ToolImplementation::AskParent => unreachable!("the agent loop runs these itself"),
         }
     }
 }

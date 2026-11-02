@@ -35,7 +35,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::ag_ui::AgUiEncoder;
-use crate::agent::{RunInputs, run_in_background};
+use crate::agent_loop::{RunInputs, run_in_background};
 use crate::ai_sdk::AiSdkEncoder;
 use crate::errors::AgentError;
 use crate::events::AgentEvent;
