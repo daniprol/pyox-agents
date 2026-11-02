@@ -69,7 +69,8 @@ print(result.text)
 - [MCP servers](mcp.md): give an agent the tools of any MCP server.
 - [Hooks](hooks.md): watch or change a run at fixed points.
 - [Tracing](telemetry.md): OpenTelemetry spans and metrics for runs, model requests and tool calls.
-- [Client and errors](client.md): API keys, other servers, timeouts and retries.
+- [Errors](errors.md): what happens when a tool fails, and the errors a run raises.
+- [Client](client.md): API keys, other servers, timeouts and retries.
 - Using a coding agent? Install the [pyox-agents skill](https://github.com/daniprol/pyox-agents/tree/main/skills/pyox-agents)
   with `npx skills add daniprol/pyox-agents`.
 - Complete, runnable scripts are in [`examples/`](https://github.com/daniprol/pyox-agents/tree/main/examples).

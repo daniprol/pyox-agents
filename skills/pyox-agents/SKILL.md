@@ -20,8 +20,10 @@ Rust. Python code defines agents and tools; the API is `async`, with sync twins 
 - In sync code (scripts, Django/Flask views, Celery), use `agent.run_sync(...)` and `for event in
   agent.execute_sync(...)` instead; sync tools then use `ctx.ask_sync` / `ctx.step_sync`. Never wrap the async
   API in `asyncio.run` for this.
-- Tool errors do not raise: the exception text goes back to the model and `ToolFinished.is_error` is `True`.
-  Failed runs raise subclasses of `AgentError`, with `error.messages` (history so far) and `error.usage`.
+- Tool errors do not raise: the model reads them and decides what to do. In tools, raise `ToolFailed("message for
+  the model")` for expected failures and `StopRun("why")` to end the run. Failed runs raise subclasses of
+  `AgentError`, with `error.messages` (history so far) and `error.usage`. Never add retry loops for bad tool
+  arguments: the model reads what is wrong and `max_turns` limits it.
 - History is plain dicts (`{"role": "user" | "assistant" | "tool", ...}`), the same format in and out.
   Never build OpenAI-format messages by hand.
 - Do not invent parameters. If something is not on this page, check the docs page linked for it.
@@ -85,6 +87,7 @@ asyncio.run(main())
 | Approvals and questions | run stops with `stop_reason == "waiting"` and `result.pending`; resume with `agent.run(history=result.messages, answers={call_id: Approve() / Deny(...) / Answer(value)})`, or answer live with `on_request=` | [human in the loop](https://daniprol.github.io/pyox-agents/human-in-the-loop/) |
 | Subagents | `writer = Agent(..., tools=[researcher.as_tool("research", "Research a topic", state="read")])` | [subagents](https://daniprol.github.io/pyox-agents/subagents/) |
 | Shared state | `execute(state={...})`; tools change `ctx.state`; `StateChanged` events | [state](https://daniprol.github.io/pyox-agents/state/) |
+| Handle tool failures | `Hooks(on_tool_error=fn)` or `@tool(on_error=fn)`: `fn(ctx, call, error)` returns the text the model reads, or `None` for the default; `@tool(timeout_seconds=30)` | [errors](https://daniprol.github.io/pyox-agents/errors/) |
 | Watch or change a run | `hooks=[Hooks(before_tool_call=fn)]` or any object with hook methods; raise in a tool hook to block the call | [hooks](https://daniprol.github.io/pyox-agents/hooks/) |
 | Serve a chat UI | `StreamingResponse(ai_sdk.stream(agent, await request.body()), headers=ai_sdk.HEADERS)`; same with `ag_ui` | [web frontends](https://daniprol.github.io/pyox-agents/web-frontends/) |
 | Images and PDFs | `agent.run(["Describe it", image("cat.png")])`, `file("report.pdf")` | [images and files](https://daniprol.github.io/pyox-agents/images-and-files/) |

@@ -26,7 +26,8 @@ agent = Agent(model="gpt-5-mini", tools=[search])
 - Plain functions passed in `tools=[...]` are wrapped with `@tool` automatically.
 - Results that are not `str` are sent to the model as JSON. A tool can also return
   [images and files](images-and-files.md#tool-results).
-- If a tool raises, the model gets the error message (and `ToolFinished.is_error` is `True`). The run continues.
+- If a tool raises, the model reads the error and the run continues. Raise `ToolFailed("...")` to choose the
+  message; see [Errors](errors.md) for timeouts, bad arguments and handling failures in one place.
 - Sync tools never block your event loop: they run on worker threads (in [sync runs](sync.md), on your own thread,
   unless `@tool(run_in_thread=True)`).
 

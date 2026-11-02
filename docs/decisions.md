@@ -79,7 +79,7 @@ await decide(
 ```
 
 Errors are the same as for agents: `RateLimitError`, `AuthenticationError`, `ApiError`... (see
-[Client and errors](client.md)). Retries and timeouts come from the `Client`.
+[Errors](errors.md)). Retries and timeouts come from the `Client`.
 
 ## Recipes
 
