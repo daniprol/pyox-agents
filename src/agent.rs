@@ -630,10 +630,13 @@ async fn agent_loop(
                 stop: &stop,
                 span: run_span,
             };
-            resume_waiting_calls(&run, answers).await?
+            run_tool_calls(&run, answered_calls(messages, answers)?).await
         };
-        add_tool_messages(resumed, messages, usage, &events).await;
+        let run_ended = add_tool_messages(resumed, messages, usage);
         context.run.usage = *usage;
+        if let Some(error) = run_ended {
+            return Err(error);
+        }
         if !pending_requests(messages).is_empty() {
             return finish(messages, String::new(), 0, None, StopReason::Waiting, &context).await;
         }
@@ -763,7 +766,7 @@ async fn agent_loop(
             }
 
             // Run all requested tools at the same time and wait for all of them.
-            let tool_messages = {
+            let outcomes = {
                 let run = ToolRun {
                     config: &config,
                     tools: &tools,
@@ -773,15 +776,9 @@ async fn agent_loop(
                     stop: &stop,
                     span: run_span,
                 };
-                join_all(
-                    tool_calls
-                        .iter()
-                        .map(|call| run_tool_call(&run, call, None, HashMap::new())),
-                )
-                .await
+                run_tool_calls(&run, tool_calls.iter().cloned().map(CallToRun::new).collect()).await
             };
-            let (tool_messages, run_ended) = messages_and_first_error(&tool_calls, tool_messages);
-            add_tool_messages(tool_messages, messages, usage, &events).await;
+            let run_ended = add_tool_messages(outcomes, messages, usage);
             context.run.usage = *usage;
             if let Some(error) = run_ended {
                 return Err(error);
@@ -829,83 +826,126 @@ fn tools_named(tools: &[Arc<ToolDefinition>], names: &[String]) -> PyResult<Vec<
         .collect()
 }
 
-/// The tool messages of a turn, and the first error that ends the run (a
-/// `StopRun`, say), if any. The other calls of the turn have finished by then,
-/// and a call that ended the run gets a message too ("The run was stopped:
-/// ..."): every tool call in `error.messages` has a result, so the
-/// conversation can be continued.
-fn messages_and_first_error(
-    calls: &[ToolCall],
-    outcomes: Vec<PyResult<(Message, Usage)>>,
-) -> (Vec<(Message, Usage)>, Option<PyErr>) {
-    let mut tool_messages = Vec::new();
-    let mut first_error = None;
-    for (call, outcome) in calls.iter().zip(outcomes) {
-        match outcome {
-            Ok(tool_message) => tool_messages.push(tool_message),
+/// A tool call to run, and what a resumed run brings for it.
+struct CallToRun {
+    call: ToolCall,
+    /// The call's waiting message, when a resumed run continues it.
+    earlier: Option<Message>,
+    /// Replies for the waiting calls of the subagent the call runs.
+    subagent_answers: HashMap<String, Reply>,
+}
+
+impl CallToRun {
+    /// A call the model just asked for.
+    fn new(call: ToolCall) -> Self {
+        CallToRun {
+            call,
+            earlier: None,
+            subagent_answers: HashMap::new(),
+        }
+    }
+}
+
+/// How one tool call ended: its tool message, the tokens it used (when it
+/// ran a subagent), and the error that ends the run, if it raised one.
+struct CallOutcome {
+    message: Message,
+    usage: Usage,
+    run_ended: Option<PyErr>,
+}
+
+/// Runs the calls at the same time and returns how each ended, in the
+/// calls' order: the order the model reads the results in.
+///
+/// Each call sends its `ToolFinished` as soon as it ends, so the app sees a
+/// fast call's result while slower calls still run. A call that ends the
+/// run (a `StopRun`, say) gets a message too ("The run was stopped: ..."),
+/// and the other calls finish first: every call in `error.messages` has a
+/// result, so the conversation can be continued.
+async fn run_tool_calls(run: &ToolRun<'_>, calls: Vec<CallToRun>) -> Vec<CallOutcome> {
+    join_all(calls.into_iter().map(|to_run| async move {
+        let CallToRun {
+            call,
+            earlier,
+            subagent_answers,
+        } = to_run;
+        let outcome = match run_tool_call(run, &call, earlier.as_ref(), subagent_answers).await {
+            Ok((message, usage)) => CallOutcome {
+                message,
+                usage,
+                run_ended: None,
+            },
             Err(error) => {
                 let note = format!(
                     "The run was stopped: {}",
                     Python::attach(|py| error.value(py).to_string())
                 );
-                let message = Message::tool_result(call.id.clone(), call.name.clone(), note, true);
-                tool_messages.push((message, Usage::default()));
-                first_error.get_or_insert(error);
+                CallOutcome {
+                    message: Message::tool_result(call.id.clone(), call.name.clone(), note, true),
+                    usage: Usage::default(),
+                    run_ended: Some(error),
+                }
             }
+        };
+        if let Some(finished) = tool_finished(&outcome.message) {
+            run.context.human_input.events.send(AgentEvent::ToolFinished(finished)).await;
         }
-    }
-    (tool_messages, first_error)
+        outcome
+    }))
+    .await
 }
 
-/// Adds the tool messages to the history, with a `ToolFinished` event for
-/// each call that finished (a waiting one has no result yet), and the tokens
-/// the calls used (subagents) to `usage`.
-async fn add_tool_messages(
-    tool_messages: Vec<(Message, Usage)>,
-    messages: &mut Vec<Message>,
-    usage: &mut Usage,
-    events: &EventSender,
-) {
-    for (message, call_usage) in tool_messages {
-        usage.add(call_usage);
-        if let Message::Tool {
-            tool_call_id,
-            name,
-            content,
-            is_error,
-            metadata,
-            requests,
-            ..
-        } = &message
-            && !message.is_waiting()
-        {
-            let finished = ToolFinished {
-                call_id: tool_call_id.clone(),
-                name: name.clone(),
-                result: content.text(),
-                content: content.clone(),
-                is_error: *is_error,
-                metadata: metadata.clone(),
-                from_app: requests.iter().any(|request| request.kind == RequestKind::Frontend),
-                subagent_id: None, // set by the event sender
-            };
-            events.send(AgentEvent::ToolFinished(finished)).await;
-        }
-        messages.push(message);
+/// The `ToolFinished` event for a tool message, or `None` while the call
+/// waits (it has no result yet).
+fn tool_finished(message: &Message) -> Option<ToolFinished> {
+    let Message::Tool {
+        tool_call_id,
+        name,
+        content,
+        is_error,
+        metadata,
+        requests,
+        ..
+    } = message
+    else {
+        return None;
+    };
+    if message.is_waiting() {
+        return None;
     }
+    Some(ToolFinished {
+        call_id: tool_call_id.clone(),
+        name: name.clone(),
+        result: content.text(),
+        content: content.clone(),
+        is_error: *is_error,
+        metadata: metadata.clone(),
+        from_app: requests.iter().any(|request| request.kind == RequestKind::Frontend),
+        subagent_id: None, // set by the event sender
+    })
 }
 
-/// Runs again the waiting calls that got a reply in `answers`, at the same
-/// time. Returns their new tool messages (finished, or waiting again).
+/// Adds the calls' tool messages to the history and their tokens to
+/// `usage`. Returns the first error that ends the run, if any.
+fn add_tool_messages(outcomes: Vec<CallOutcome>, messages: &mut Vec<Message>, usage: &mut Usage) -> Option<PyErr> {
+    let mut first_error = None;
+    for outcome in outcomes {
+        usage.add(outcome.usage);
+        messages.push(outcome.message);
+        if let Some(error) = outcome.run_ended {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error
+}
+
+/// The waiting calls that got a reply in `answers`, to run again.
 ///
 /// An answer for `call_0/call_1` is for the call `call_1` of the subagent
 /// that the call `call_0` runs: `call_0` runs again, and passes it on.
-async fn resume_waiting_calls(
-    run: &ToolRun<'_>,
-    mut answers: HashMap<String, Reply>,
-) -> PyResult<Vec<(Message, Usage)>> {
-    let mut answered_calls = Vec::new();
-    for (call, waiting_message) in waiting_calls(run.history) {
+fn answered_calls(history: &[Message], mut answers: HashMap<String, Reply>) -> PyResult<Vec<CallToRun>> {
+    let mut answered = Vec::new();
+    for (call, waiting_message) in waiting_calls(history) {
         let reply = answers.remove(&call.id);
         let subagent_answers = take_subagent_answers(&mut answers, &call.id);
         if reply.is_none() && subagent_answers.is_empty() {
@@ -926,24 +966,18 @@ async fn resume_waiting_calls(
             check_reply(request.kind, &reply)?;
             request.answer = Some(reply);
         }
-        answered_calls.push((call, message, subagent_answers));
+        answered.push(CallToRun {
+            call,
+            earlier: Some(message),
+            subagent_answers,
+        });
     }
     if let Some(call_id) = answers.keys().next() {
         return Err(PyValueError::new_err(format!(
             "Tool call {call_id:?} is not waiting for an answer"
         )));
     }
-
-    join_all(
-        answered_calls
-            .into_iter()
-            .map(|(call, message, subagent_answers)| async move {
-                run_tool_call(run, &call, Some(&message), subagent_answers).await
-            }),
-    )
-    .await
-    .into_iter()
-    .collect()
+    Ok(answered)
 }
 
 /// For a new prompt while calls wait: one closing tool message per waiting

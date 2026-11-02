@@ -1,6 +1,7 @@
 """Running agents: streaming, requests sent, history and concurrency."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -84,9 +85,11 @@ async def test_one_agent_serves_concurrent_runs(fake_openai: FakeOpenAI, make_ag
 
     results = await asyncio.gather(*(agent.run(f"question {number}") for number in range(5)))
 
-    assert [result.text for result in results] == ["answer"] * 5
-    prompts = sorted(request.body["messages"][0]["content"] for request in fake_openai.requests)
-    assert prompts == [f"question {number}" for number in range(5)]
+    # Each run keeps its own conversation: nothing leaks from one run into another.
+    for number, result in enumerate(results):
+        assert [message.get("content") for message in result.messages] == [f"question {number}", "answer"]
+    sent = sorted(json.dumps(request.body["messages"]) for request in fake_openai.requests)
+    assert sent == [json.dumps([{"role": "user", "content": f"question {number}"}]) for number in range(5)]
 
 
 async def test_stopping_early_does_not_hang(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:

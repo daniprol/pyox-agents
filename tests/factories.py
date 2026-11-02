@@ -7,7 +7,7 @@ from typing import Any, TypeVar
 from opentelemetry.sdk.trace import ReadableSpan
 
 from fake_openai import ErrorResponse, JsonResponse, StreamResponse
-from pyox_agents import AgentEvent, Run, RunFinished
+from pyox_agents import AgentEvent, Run, RunFinished, ToolFinished
 
 DEFAULT_USAGE = {"prompt_tokens": 10, "completion_tokens": 5}
 
@@ -100,6 +100,11 @@ async def collect_events(run: Run) -> list[AgentEvent]:
 
 def events_of_type(events: list[AgentEvent], event_type: type[EventType]) -> list[EventType]:
     return [event for event in events if isinstance(event, event_type)]
+
+
+def finished_calls(events: list[AgentEvent]) -> list[ToolFinished]:
+    """The `ToolFinished` events in the order the model asked for the calls (they come as the calls end)."""
+    return sorted(events_of_type(events, ToolFinished), key=lambda event: (event.subagent_id or "", event.call_id))
 
 
 def run_finished(events: list[AgentEvent]) -> RunFinished:

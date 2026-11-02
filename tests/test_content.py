@@ -9,6 +9,7 @@ from conftest import MakeAgent
 from factories import (
     collect_events,
     events_of_type,
+    finished_calls,
     responses_answer,
     run_finished,
     text_response,
@@ -180,7 +181,7 @@ async def test_a_tool_can_return_an_image_or_file_alone(fake_openai: FakeOpenAI,
 
     events = await collect_events(make_agent(tools=[chart, numbers]).execute("Chart"))
 
-    contents = [event.content for event in events_of_type(events, ToolFinished)]
+    contents = [event.content for event in finished_calls(events)]
     assert contents == [[{"type": "image", "url": data_url("image/png", PNG_BYTES)}], "[1, 2]"]
 
 

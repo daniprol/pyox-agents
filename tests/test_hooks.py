@@ -8,7 +8,7 @@ import fast_tools
 import pytest
 
 from conftest import MakeAgent
-from factories import collect_events, events_of_type, text_response, tool_call, tool_calls_response
+from factories import collect_events, events_of_type, finished_calls, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
 from pyox_agents import (
     Approve,
@@ -21,7 +21,6 @@ from pyox_agents import (
     RunContext,
     RunFinished,
     ToolCall,
-    ToolFinished,
     ToolResult,
     tool,
 )
@@ -51,7 +50,7 @@ async def test_tools_asking_for_ctx_get_it(fake_openai: FakeOpenAI, make_agent: 
     events = await collect_events(make_agent(tools=[list_orders, add]).execute("Orders?", deps=Shop()))
 
     assert list_orders.parameters["properties"] == {"status": {"type": "string"}}  # ctx is hidden from the model
-    finished = events_of_type(events, ToolFinished)
+    finished = finished_calls(events)
     assert [(event.result, event.is_error) for event in finished] == [("call_0 turn 1 open: book, lamp", False)]
 
 
@@ -70,7 +69,7 @@ async def test_before_tool_call_changes_or_blocks_calls(fake_openai: FakeOpenAI,
 
     events = await collect_events(agent.execute("Add"))
 
-    finished = events_of_type(events, ToolFinished)
+    finished = finished_calls(events)
     assert [(event.result, event.is_error) for event in finished] == [
         ("7", False),
         ("PermissionError: Zero is not allowed", True),
@@ -235,7 +234,7 @@ async def test_rust_hooks_block_calls_and_trim_requests(fake_openai: FakeOpenAI,
 
     events = await collect_events(agent.execute("Count", history=long_history))
 
-    finished = events_of_type(events, ToolFinished)
+    finished = finished_calls(events)
     assert [(event.result, event.is_error) for event in finished] == [
         ("2", False),
         ("The text is too long (10001 bytes, at most 10000)", True),
