@@ -37,7 +37,7 @@ agent = Agent(model="gpt-5-mini", instructions="Be concise.", tools=[get_weather
 
 
 async def main() -> None:
-    async for event in agent.execute("Weather in Vigo?"):
+    async for event in agent.stream("Weather in Vigo?"):
         if isinstance(event, TextDelta):
             print(event.text, end="", flush=True)
 

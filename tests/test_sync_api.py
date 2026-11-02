@@ -1,4 +1,4 @@
-"""The sync API: `agent.run_sync(...)` and `for event in agent.execute_sync(...)`, with no event loop."""
+"""The sync API: `agent.run_sync(...)` and `for event in agent.stream_sync(...)`, with no event loop."""
 
 import _thread
 import asyncio
@@ -71,10 +71,10 @@ def test_run_sync_returns_the_answer(fake_openai: FakeOpenAI, make_agent: MakeAg
     assert (result.text, result.turns) == ("Hello!", 1)
 
 
-def test_execute_sync_streams_the_events(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+def test_stream_sync_streams_the_events(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(text_response("Hello!"))
 
-    events = list(make_agent().execute_sync("Hi"))
+    events = list(make_agent().stream_sync("Hi"))
 
     assert "".join(event.text for event in events if isinstance(event, TextDelta)) == "Hello!"
     assert isinstance(events[-1], RunFinished)
@@ -235,8 +235,8 @@ def test_batches_and_web_streams_work_with_for(fake_openai: FakeOpenAI, make_age
     fake_openai.queue(text_response("Hello!"), text_response("Hello!"))
     agent = make_agent()
 
-    batches = list(agent.execute_sync("Hi").batches())
-    stream = "".join(agent.execute_sync("Hi", text_chunks="message").ai_sdk())
+    batches = list(agent.stream_sync("Hi").batches())
+    stream = "".join(agent.stream_sync("Hi", text_chunks="message").ai_sdk())
 
     assert isinstance(batches[-1][-1], RunFinished)
     deltas = [part["delta"] for part in sse_data(stream) if isinstance(part, dict) and part["type"] == "text-delta"]
@@ -246,10 +246,10 @@ def test_batches_and_web_streams_work_with_for(fake_openai: FakeOpenAI, make_age
 async def test_each_run_is_read_its_own_way(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     agent = make_agent()
 
-    with pytest.raises(TypeError, match="use execute_sync"):
-        next(iter(agent.execute("Hi").batches()))
+    with pytest.raises(TypeError, match="use stream_sync"):
+        next(iter(agent.stream("Hi").batches()))
     with pytest.raises(TypeError, match="not `async for`"):
-        await anext(aiter(agent.execute_sync("Hi").ai_sdk()))
+        await anext(aiter(agent.stream_sync("Hi").ai_sdk()))
 
 
 def test_stopping_to_read_ends_the_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
@@ -265,7 +265,7 @@ def test_stopping_to_read_ends_the_run(fake_openai: FakeOpenAI, make_agent: Make
     answer = tool_calls_response(tool_call("remember"), text_pieces=("Let me see",))
     fake_openai.queue(replace(answer, chunk_delay_seconds=0.05), text_response("Done"))
 
-    with make_agent(tools=[remember]).execute_sync("Hi") as run:
+    with make_agent(tools=[remember]).stream_sync("Hi") as run:
         for event in run:
             assert isinstance(event, TextDelta)
             break
@@ -277,7 +277,7 @@ def test_stopping_to_read_ends_the_run(fake_openai: FakeOpenAI, make_agent: Make
 def test_stop_keeps_what_the_run_did(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     pieces = [{"choices": [{"delta": {"content": piece}}]} for piece in ("one ", "two ", "three")]
     fake_openai.queue(StreamResponse(pieces, chunk_delay_seconds=0.05))
-    run = make_agent().execute_sync("Count")
+    run = make_agent().stream_sync("Count")
 
     for event in run:
         if isinstance(event, TextDelta):

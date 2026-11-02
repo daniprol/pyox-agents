@@ -1,7 +1,7 @@
 //! The run's state: one JSON document that tools read and change, shared
 //! with the app (AG-UI shared state, a `data-state` part for the AI SDK).
 //!
-//! - The app gives it with `execute(state=...)` and gets it back in
+//! - The app gives it with `stream(state=...)` and gets it back in
 //!   `RunFinished.state`. Nothing is stored: the app keeps it between runs.
 //! - A tool reads and changes it through `ctx.state`, like a dict. When the
 //!   tool finishes, its changes are applied to the run's state and sent as a

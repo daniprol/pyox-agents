@@ -16,12 +16,12 @@ def add_todo(ctx: RunContext, text: str) -> str:
 
 agent = Agent(model="gpt-5-mini", tools=[add_todo])
 
-async for event in agent.execute("Plan my trip", state={"todos": []}):
+async for event in agent.stream("Plan my trip", state={"todos": []}):
     if isinstance(event, StateChanged):
         print(event.delta)  # [{"op": "add", "path": "/todos/0", "value": "Book the flight"}]
 ```
 
-- Give it with `execute(state=...)` (or `run(state=...)`). Anything JSON works.
+- Give it with `stream(state=...)` (or `run(state=...)`). Anything JSON works.
 - Inside a tool, `ctx.state` reads it. Change it in place, or replace it: `ctx.state = {...}`.
 - When the tool finishes, its changes are applied and sent as a `StateChanged` event, with the whole new `state`
   and a `delta`: what changed, as a [JSON Patch](https://jsonpatch.com/).

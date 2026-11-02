@@ -106,9 +106,9 @@ def test_invalid_configuration(client: Client) -> None:
     with pytest.raises(ValueError, match="Two tools"):
         Agent(model="m", client=client, tools=[fast_tools.count_words, fast_tools.count_words])
     with pytest.raises(ValueError, match="Invalid history"):
-        Agent(model="m", client=client).execute(history=[{"role": "robot"}])  # ty: ignore[invalid-argument-type]
+        Agent(model="m", client=client).stream(history=[{"role": "robot"}])  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="prompt"):
-        Agent(model="m", client=client).execute()
+        Agent(model="m", client=client).stream()
     with pytest.raises(ValueError, match="header"):
         Client(headers={"bad header": "x"})
 
@@ -308,7 +308,7 @@ async def test_stopping_a_run_cancels_its_async_tools(fake_openai: FakeOpenAI, m
     agent = make_agent(tools=[slow])
 
     async def read_events() -> None:
-        async for _ in agent.execute("Go"):
+        async for _ in agent.stream("Go"):
             pass
 
     # Cancelling the task reading the run drops the run (a web request cancelled, say).

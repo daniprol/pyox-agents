@@ -111,7 +111,7 @@ async def test_parts_are_kept_in_the_history(fake_openai: FakeOpenAI, make_agent
 
 async def test_invalid_prompt_parts_are_rejected(make_agent: MakeAgent) -> None:
     with pytest.raises(ValueError, match="Invalid content part"):
-        make_agent().execute(["Hi", {"type": "video", "url": "x"}])  # ty: ignore[invalid-argument-type]
+        make_agent().stream(["Hi", {"type": "video", "url": "x"}])  # ty: ignore[invalid-argument-type]
 
 
 # Tool results with images and files ---------------------------------------------------------------
@@ -132,7 +132,7 @@ SCREENSHOT_PARTS = [
 async def test_tool_results_can_hold_images(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(tool_calls_response(tool_call("screenshot", page="home")), text_response("A cat"))
 
-    events = await collect_events(make_agent(tools=[screenshot]).execute("What is on the home page?"))
+    events = await collect_events(make_agent(tools=[screenshot]).stream("What is on the home page?"))
 
     [finished] = events_of_type(events, ToolFinished)
     assert finished.result == "The home page:"  # the text, for streams and logs
@@ -179,7 +179,7 @@ async def test_a_tool_can_return_an_image_or_file_alone(fake_openai: FakeOpenAI,
 
     fake_openai.queue(tool_calls_response(tool_call("chart"), tool_call("numbers")), text_response("Done"))
 
-    events = await collect_events(make_agent(tools=[chart, numbers]).execute("Chart"))
+    events = await collect_events(make_agent(tools=[chart, numbers]).stream("Chart"))
 
     contents = [event.content for event in finished_calls(events)]
     assert contents == [[{"type": "image", "url": data_url("image/png", PNG_BYTES)}], "[1, 2]"]

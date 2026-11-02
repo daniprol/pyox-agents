@@ -10,7 +10,7 @@
 //! | `async for text in run.ai_sdk()` | Vercel AI SDK stream text (`useChat`), see `ai_sdk` |
 //! | `async for text in run.ag_ui(...)` | AG-UI stream text, see `ag_ui`                 |
 //!
-//! A `SyncRun` (`agent.execute_sync(...)`) is read the same four ways with a
+//! A `SyncRun` (`agent.stream_sync(...)`) is read the same four ways with a
 //! plain `for`. The same agent loop runs on the same Rust runtime; the reading
 //! thread waits with the GIL released, and meanwhile runs the run's sync
 //! Python calls (see `python_call`). No Python event loop is needed.
@@ -53,7 +53,7 @@ pub struct Run {
 }
 
 /// Python: `for event in run: ...` (or `run.batches()`, `run.ai_sdk()`, `run.ag_ui(...)`),
-/// from `agent.execute_sync(...)`.
+/// from `agent.stream_sync(...)`.
 #[pyclass(frozen, generic, module = "pyox_agents")]
 pub struct SyncRun {
     queue: Arc<EventQueue>,
@@ -149,7 +149,7 @@ impl SyncRun {
         this
     }
 
-    /// Leaving `with agent.execute_sync(...) as run:` closes the run.
+    /// Leaving `with agent.stream_sync(...) as run:` closes the run.
     fn __exit__(&self, _type: Py<PyAny>, _value: Py<PyAny>, _traceback: Py<PyAny>) {
         self.queue.abort();
     }
@@ -216,7 +216,7 @@ impl EventQueue {
     fn start_async(&self, py: Python<'_>) -> PyResult<()> {
         if self.caller_thread.is_some() {
             return Err(PyTypeError::new_err(
-                "A run from execute_sync() is read with `for`, not `async for`",
+                "A run from stream_sync() is read with `for`, not `async for`",
             ));
         }
         self.start(py)
@@ -228,7 +228,7 @@ impl EventQueue {
     fn wait<T: Send>(&self, py: Python<'_>, future: impl Future<Output = T> + Send) -> PyResult<T> {
         let Some(caller_thread) = &self.caller_thread else {
             return Err(PyTypeError::new_err(
-                "A run from execute() is read with `async for`; for `for`, use execute_sync()",
+                "A run from stream() is read with `async for`; for `for`, use stream_sync()",
             ));
         };
         self.start(py)?;

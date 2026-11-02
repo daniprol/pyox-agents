@@ -7,11 +7,11 @@
         stream = ag_ui.stream(agent, await request.body(), deps=database)
         return StreamingResponse(stream, headers=ag_ui.HEADERS)
 
-`stream` is `parse` + `agent.execute` + `run.ag_ui(thread_id, run_id)`. Use them
+`stream` is `parse` + `agent.stream` + `run.ag_ui(thread_id, run_id)`. Use them
 yourself to check who is asking, or to keep the conversation on the server:
 
     run_input = ag_ui.parse(await request.body())
-    run = agent.execute(run_input.prompt, conversation_id=run_input.thread_id,
+    run = agent.stream(run_input.prompt, conversation_id=run_input.thread_id,
                         answers=run_input.answers, frontend_tools=run_input.frontend_tools)
     return StreamingResponse(run.ag_ui(run_input.thread_id, run_input.run_id), headers=ag_ui.HEADERS)
 
@@ -59,7 +59,7 @@ HEADERS = {
 
 @dataclass(frozen=True, slots=True)
 class RunInput:
-    """What an AG-UI `RunAgentInput` asks for, ready for `agent.execute(...)`."""
+    """What an AG-UI `RunAgentInput` asks for, ready for `agent.stream(...)`."""
 
     thread_id: str
     run_id: str
@@ -73,22 +73,22 @@ class RunInput:
     body: dict[str, Any] = field(default_factory=dict)  # the whole request
 
 
-def stream(agent: Agent[Any], body: bytes | str | Mapping[str, Any], **execute_options: Any) -> ProtocolStream:
+def stream(agent: Agent[Any], body: bytes | str | Mapping[str, Any], **run_options: Any) -> ProtocolStream:
     """Runs the agent for an AG-UI request and returns its AG-UI event stream.
 
-    `execute_options` go to `agent.execute` (`deps=...`). With `conversation_id=`, the
+    `run_options` go to `agent.stream` (`deps=...`). With `conversation_id=`, the
     history comes from the agent's history store instead of the request. The run's
     state is the client's, unless `state=` is given.
     """
     run_input = parse(body)
-    history = None if "conversation_id" in execute_options else run_input.history or None
-    execute_options.setdefault("state", run_input.state)
-    run = agent.execute(
+    history = None if "conversation_id" in run_options else run_input.history or None
+    run_options.setdefault("state", run_input.state)
+    run = agent.stream(
         run_input.prompt,
         history=history,
         answers=run_input.answers,
         frontend_tools=run_input.frontend_tools,
-        **execute_options,
+        **run_options,
     )
     return run.ag_ui(run_input.thread_id, run_input.run_id)
 

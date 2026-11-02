@@ -7,11 +7,11 @@
         stream = ai_sdk.stream(agent, await request.body(), deps=database)
         return StreamingResponse(stream, headers=ai_sdk.HEADERS)
 
-`stream` is `parse` + `agent.execute` + `run.ai_sdk()`. Use them yourself to
+`stream` is `parse` + `agent.stream` + `run.ai_sdk()`. Use them yourself to
 check who is asking, or to keep the conversation on the server:
 
     chat = ai_sdk.parse(await request.body())
-    run = agent.execute(chat.prompt, conversation_id=f"{user.id}:{chat.chat_id}", answers=chat.answers)
+    run = agent.stream(chat.prompt, conversation_id=f"{user.id}:{chat.chat_id}", answers=chat.answers)
     return StreamingResponse(run.ai_sdk(), headers=ai_sdk.HEADERS)
 
 The stream itself is made in Rust (`run.ai_sdk()`); this module only reads
@@ -57,7 +57,7 @@ HEADERS = {
 
 @dataclass(frozen=True, slots=True)
 class ChatRequest:
-    """What a `useChat` request asks for, ready for `agent.execute(...)`."""
+    """What a `useChat` request asks for, ready for `agent.stream(...)`."""
 
     chat_id: str
     prompt: Prompt | None  # the new user message, if the request has one
@@ -68,22 +68,22 @@ class ChatRequest:
     body: dict[str, Any] = field(default_factory=dict)  # the whole request, for your own fields
 
 
-def stream(agent: Agent[Any], body: bytes | str | Mapping[str, Any], **execute_options: Any) -> ProtocolStream:
+def stream(agent: Agent[Any], body: bytes | str | Mapping[str, Any], **run_options: Any) -> ProtocolStream:
     """Runs the agent for a `useChat` request and returns its AI SDK stream.
 
-    `execute_options` go to `agent.execute` (`deps=...`). With `conversation_id=`, the
+    `run_options` go to `agent.stream` (`deps=...`). With `conversation_id=`, the
     history comes from the agent's history store instead of the request. The run's
     state is the one in the request, unless `state=` is given.
     """
     chat = parse(body)
-    history = None if "conversation_id" in execute_options else chat.history or None
-    execute_options.setdefault("state", chat.state)
-    run = agent.execute(
+    history = None if "conversation_id" in run_options else chat.history or None
+    run_options.setdefault("state", chat.state)
+    run = agent.stream(
         chat.prompt,
         history=history,
         answers=chat.answers,
         frontend_tools=chat.frontend_tools,
-        **execute_options,
+        **run_options,
     )
     return run.ai_sdk()
 

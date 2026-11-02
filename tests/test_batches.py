@@ -18,7 +18,7 @@ def add(a: int, b: int) -> int:
 async def test_batches_hold_every_event_in_order(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(tool_calls_response(tool_call("add", a=1, b=2)), text_pieces_response("The ", "answer ", "is 3"))
 
-    batches = [events async for events in make_agent(tools=[add]).execute("1 + 2?").batches()]
+    batches = [events async for events in make_agent(tools=[add]).stream("1 + 2?").batches()]
 
     events = [event for batch in batches for event in batch]
     assert all(batches)  # never an empty batch
@@ -38,7 +38,7 @@ async def test_events_that_piled_up_come_in_one_batch(fake_openai: FakeOpenAI, m
     answered = threading.Event()
     fake_openai.queue(text_pieces_response(*(f"{number} " for number in range(20))))
     agent = make_agent(hooks=[Hooks(after_run=lambda ctx, result: answered.set())])
-    batches = agent.execute("Count").batches()
+    batches = agent.stream("Count").batches()
 
     first = await anext(batches)  # starts the run
     await asyncio.to_thread(answered.wait, 5)  # meanwhile the whole answer arrives
@@ -54,7 +54,7 @@ async def test_a_failing_run_raises_after_its_events(fake_openai: FakeOpenAI, ma
         tool_calls_response(tool_call("add", a=1, b=2)),
         *[error_response(500, "Down", headers={"retry-after-ms": "1"})] * 3,
     )
-    batches = make_agent(tools=[add]).execute("1 + 2?").batches()
+    batches = make_agent(tools=[add]).stream("1 + 2?").batches()
 
     events: list[AgentEvent] = []
     with pytest.raises(ApiError, match="Down"):
@@ -67,8 +67,8 @@ async def test_a_text_run_matches_plain_iteration(fake_openai: FakeOpenAI, make_
     fake_openai.queue(text_response("Hello there"), text_response("Hello there"))
     agent = make_agent()
 
-    one_by_one = [event async for event in agent.execute("Hi")]
-    batched = [event async for batch in agent.execute("Hi").batches() for event in batch]
+    one_by_one = [event async for event in agent.stream("Hi")]
+    batched = [event async for batch in agent.stream("Hi").batches() for event in batch]
 
     assert [repr(event) for event in one_by_one] == [repr(event) for event in batched]
 

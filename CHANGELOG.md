@@ -8,6 +8,9 @@ break comes with a migration note.
 
 ### Breaking changes
 
+- `agent.execute(...)` is now `agent.stream(...)`, and `agent.execute_sync(...)` is now `agent.stream_sync(...)`.
+  They take the same arguments. `run(...)` and `run_sync(...)` still return the finished `RunFinished` without
+  streaming. Migrate: rename the calls. `ai_sdk.stream(...)` and `ag_ui.stream(...)` keep their names.
 - Errors from your hooks, `on_request` and history stores now raise as `HookError` or `HistoryError`, with your
   exception as `__cause__`, so `except AgentError` catches every failure of a run. Migrate:
   `except PermissionError` around a run whose `before_run` raises it becomes `except HookError as error` and
@@ -28,7 +31,7 @@ break comes with a migration note.
   - Bad arguments raise `InvalidArguments`: the model reads one short line per problem and decides whether to try
     again. pyox never retries for it.
 - `ApiError.code`, OpenAI's error code (like `"context_length_exceeded"`).
-- Types: `execute()` returns a `Run[Output]` (and `execute_sync()` a `SyncRun[Output]`), so `RunFinished.output`
+- Types: `stream()` returns a `Run[Output]` (and `stream_sync()` a `SyncRun[Output]`), so `RunFinished.output`
   has the agent's output type in every event. `ctx.ask(...)` returns an `Answer` and `ctx.approval` is an
   `Approve` or `None`. A bare `RunContext` means `RunContext[Any]`.
 - MCP servers: `pyox_agents.mcp.McpTools` gives an agent the tools of any MCP server, over Streamable HTTP
@@ -38,11 +41,11 @@ break comes with a migration note.
   the user something, the question becomes an `InputRequested`, answered live or after the run stops. Works with
   servers on MCP 2025-11-25 and 2026-07-28. Install with `pip install "pyox-agents[mcp]"`.
 - A sync API, for code without an event loop (scripts, Django and Flask views, Celery tasks, notebooks):
-  `agent.run_sync(...)`, and `agent.execute_sync(...)` read with `for` (also `run.batches()`, `run.ai_sdk()` and
+  `agent.run_sync(...)`, and `agent.stream_sync(...)` read with `for` (also `run.batches()`, `run.ai_sdk()` and
   `run.ag_ui(...)`, for Django's `StreamingHttpResponse`). Rust runs the agent with no Python event loop: sync
   tools, hooks and handlers run on your thread, async ones on pyox's own event loop thread. Ctrl+C works. Sync tools
   ask and save steps with `ctx.ask_sync(...)` and `ctx.step_sync(...)`. MCP servers open with `with` for sync runs.
-- `run(tools=...)` and `execute(tools=...)` add tools for one run, on top of the agent's: for tools that depend on
+- `run(tools=...)` and `stream(tools=...)` add tools for one run, on top of the agent's: for tools that depend on
   the user, such as an MCP server opened with their token.
 
 ### Changed

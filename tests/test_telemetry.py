@@ -267,14 +267,14 @@ async def test_hooks_and_approval_functions_run_inside_the_right_span(
     )
 
 
-async def test_a_run_goes_under_the_span_current_at_execute_even_read_in_another_task(
+async def test_a_run_goes_under_the_span_current_at_stream_even_read_in_another_task(
     fake_openai: FakeOpenAI, make_agent: MakeAgent, tracing: Tracing
 ) -> None:
     fake_openai.queue(text_response("Hi"))
     agent = make_agent(name="a", instrument=tracing.instrumentation)
 
     with tracing.tracer.start_as_current_span("POST /chat"):
-        run = agent.execute("Hi")  # like `StreamingResponse(run.ai_sdk())`, read after the handler returned
+        run = agent.stream("Hi")  # like `StreamingResponse(run.ai_sdk())`, read after the handler returned
     text = await asyncio.create_task(read_text(run.ai_sdk()))
 
     assert '"type":"finish"' in text
@@ -359,7 +359,7 @@ async def test_stop_ends_the_chat_span_as_stopped(
 ) -> None:
     chunks = [{"choices": [{"delta": {"content": piece}}]} for piece in ("Once ", "upon ", "a ", "time")]
     fake_openai.queue(StreamResponse(chunks, chunk_delay_seconds=0.1))
-    run = make_agent(name="a", instrument=tracing.instrumentation).execute("Tell me a story")
+    run = make_agent(name="a", instrument=tracing.instrumentation).stream("Tell me a story")
 
     async for event in run:
         if isinstance(event, TextDelta):
@@ -382,7 +382,7 @@ async def test_a_dropped_run_ends_its_spans_as_cancelled(
         return "never"
 
     fake_openai.queue(tool_calls_response(tool_call("slow")))
-    run = make_agent(name="a", tools=[slow], instrument=tracing.instrumentation).execute("Go")
+    run = make_agent(name="a", tools=[slow], instrument=tracing.instrumentation).stream("Go")
     async for _ in run:
         await started.wait()
         break  # stop reading: the run is dropped
@@ -636,9 +636,9 @@ async def test_a_run_event_stream_is_the_same_traced_or_not(
         return [type(event).__name__ for event in events]
 
     fake_openai.queue(*[tool_calls_response(tool_call("get_weather", city="Vigo")), text_response("Sunny")] * 2)
-    plain = await collect_events(make_agent(tools=[get_weather]).execute("Weather?"))
+    plain = await collect_events(make_agent(tools=[get_weather]).stream("Weather?"))
     traced = await collect_events(
-        make_agent(tools=[get_weather], instrument=tracing.instrumentation).execute("Weather?")
+        make_agent(tools=[get_weather], instrument=tracing.instrumentation).stream("Weather?")
     )
 
     assert describe(plain) == describe(traced)

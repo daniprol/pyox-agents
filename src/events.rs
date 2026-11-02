@@ -136,10 +136,10 @@ pub struct RunFinished {
     pub messages: Vec<Message>,
     pub new_messages_start: usize,
     /// The requests of tool calls still waiting for an answer. When there are
-    /// any, the run stopped early: answer them with `execute(answers=...)`.
+    /// any, the run stopped early: answer them with `stream(answers=...)`.
     #[pyo3(get)]
     pub pending: Vec<InputRequested>,
-    /// The state at the end of the run (`execute(state=...)` plus the tools' changes).
+    /// The state at the end of the run (`stream(state=...)` plus the tools' changes).
     pub state: Value,
     /// Why the run ended (see `StopReason`).
     pub stop_reason: StopReason,
@@ -274,7 +274,7 @@ impl RunFinished {
         self.output.as_ref().map(|output| output.clone_ref(py))
     }
 
-    /// The state at the end of the run: save it, and give it back with `execute(state=...)`.
+    /// The state at the end of the run: save it, and give it back with `stream(state=...)`.
     #[getter]
     fn state<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         json_to_python(py, &self.state)

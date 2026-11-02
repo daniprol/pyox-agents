@@ -53,7 +53,7 @@ use crate::usage::Usage;
 /// What a hook knows about the run it is part of.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RunContext {
-    /// The conversation given with `execute(conversation_id=...)`, if any.
+    /// The conversation given with `stream(conversation_id=...)`, if any.
     pub conversation_id: Option<String>,
     /// The current turn: 1 during the first model request, 2 during the second...
     pub turn: u32,

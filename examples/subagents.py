@@ -34,7 +34,7 @@ planner = Agent(
 
 
 async def main() -> None:
-    async for event in planner.execute("Plan a day in Vigo", state={"todos": []}):
+    async for event in planner.stream("Plan a day in Vigo", state={"todos": []}):
         match event:
             case SubagentStarted(name=name, task=task):
                 print(f"[{name}] {task}")

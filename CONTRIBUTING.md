@@ -71,7 +71,7 @@ When you add or change a feature, update its page in [`docs/`](docs) too, and th
 Python                               Rust (src/)
 ------                               -----------
 Agent(...)  ───────────────────────► Engine         config shared by all runs (engine.rs)
-agent.execute("...")  ─────────────► Run            one run: history + event queue (run.rs)
+agent.stream("...")  ─────────────► Run            one run: history + event queue (run.rs)
 async for event in run  ◄─ events ── agent loop     request → stream → tools → repeat (agent_loop.rs)
                                        ├── model_api.rs     picks the API adapter
                                        ├── openai_chat.rs   Chat Completions: request body + chunk parsing

@@ -53,7 +53,7 @@ async def test_text_answers_stream_as_text_parts(
 ) -> None:
     fake_openai.queue(text_response("Hello there"))
 
-    sse = await read_text(make_agent().execute("Hi").ai_sdk())
+    sse = await read_text(make_agent().stream("Hi").ai_sdk())
 
     chunks = sse_data(sse)
     assert chunk_types(chunks) == [
@@ -72,7 +72,7 @@ async def test_tool_calls_and_results_become_tool_parts_in_steps(
         tool_calls_response(tool_call("add", a=2, b=3), text_pieces=("Let me add. ",)), text_response("5")
     )
 
-    sse = await read_text(make_agent(tools=[add]).execute("2 + 3?").ai_sdk())
+    sse = await read_text(make_agent(tools=[add]).stream("2 + 3?").ai_sdk())
 
     chunks = sse_data(sse)
     assert chunk_types(chunks) == [
@@ -97,7 +97,7 @@ async def test_errors_end_the_stream_with_an_error_chunk(
 ) -> None:
     fake_openai.queue(error_response(400, "Bad model"))
 
-    sse = await read_text(make_agent().execute("Hi").ai_sdk())
+    sse = await read_text(make_agent().stream("Hi").ai_sdk())
 
     chunks = sse_data(sse)
     assert chunk_types(chunks) == ["start", "error", "[DONE]"]
@@ -107,7 +107,7 @@ async def test_errors_end_the_stream_with_an_error_chunk(
 
 async def test_stopping_early_stops_the_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(text_response("Hello there"))
-    stream = make_agent().execute("Hi").ai_sdk()
+    stream = make_agent().stream("Hi").ai_sdk()
 
     first = await anext(stream)  # a client that disconnects after the first chunks
 
@@ -420,7 +420,7 @@ async def test_the_state_travels_in_a_data_part(
     agent = make_agent(tools=[add_todo])
     fake_openai.queue(tool_calls_response(tool_call("add_todo", text="pack")), text_response("Added"))
 
-    sse = await read_text(agent.execute("Add pack", state={"todos": []}).ai_sdk())
+    sse = await read_text(agent.stream("Add pack", state={"todos": []}).ai_sdk())
 
     [state_part] = [chunk for chunk in sse_data(sse) if chunk != "[DONE]" and chunk["type"] == "data-state"]
     assert state_part == {"type": "data-state", "id": "state", "data": {"todos": ["pack"]}}
@@ -448,7 +448,7 @@ async def test_subagent_work_is_shown_in_a_data_part(
         text_response("The answer is 5"),
     )
 
-    sse = await read_text(agent.execute("Ask").ai_sdk())
+    sse = await read_text(agent.stream("Ask").ai_sdk())
 
     result = protocol_client("ai-sdk", sse)
     assert result["errors"] == []

@@ -45,11 +45,11 @@ OutputT = TypeVar("OutputT")
 class Agent(Generic[OutputT]):
     """A model, its instructions (the system prompt) and tools.
 
-    Create it once and reuse it: each `execute()` call has its own history,
+    Create it once and reuse it: each `stream()` call has its own history,
     so many runs can happen at the same time.
 
         agent = Agent(model="gpt-5-mini", instructions="Be brief.", tools=[get_weather])
-        async for event in agent.execute("Weather in Vigo?"):
+        async for event in agent.stream("Weather in Vigo?"):
             ...
 
     With a `history_store`, a run names its conversation and the agent loads
@@ -162,7 +162,7 @@ class Agent(Generic[OutputT]):
     def output_type(self) -> type[OutputT] | Mapping[str, Any] | None:
         return self._output_type
 
-    def execute(
+    def stream(
         self,
         prompt: Prompt | None = None,
         *,
@@ -177,7 +177,7 @@ class Agent(Generic[OutputT]):
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
     ) -> Run[OutputT]:
-        """Start a run and stream its events: `async for event in agent.execute(...)`.
+        """Start a run and stream its events: `async for event in agent.stream(...)`.
 
         `prompt` is text, or a list of text, images and files: `["What is this?", image("cat.png")]`.
 
@@ -223,7 +223,7 @@ class Agent(Generic[OutputT]):
             state=state,
         )
 
-    def execute_sync(
+    def stream_sync(
         self,
         prompt: Prompt | None = None,
         *,
@@ -238,11 +238,11 @@ class Agent(Generic[OutputT]):
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
     ) -> SyncRun[OutputT]:
-        """`execute`, for code without an event loop: `for event in agent.execute_sync(...)`.
+        """`stream`, for code without an event loop: `for event in agent.stream_sync(...)`.
 
         Read it event by event, in batches (`run.batches()`) or as a web stream: in Django,
         `StreamingHttpResponse(run.ai_sdk(), headers=ai_sdk.HEADERS)`. The arguments are the
-        same as `execute`'s.
+        same as `stream`'s.
 
         The run starts at the first read. Rust does the HTTP and the streaming meanwhile, with
         the GIL released, so other threads keep running. The run's sync tools, hooks, history
@@ -254,7 +254,7 @@ class Agent(Generic[OutputT]):
         the run at once. `run.stop()` ends it at the next safe point and keeps what it did.
         """
         if _background_loop.is_current():
-            raise RuntimeError("Inside an async tool, use `await agent.run(...)` or `agent.execute(...)`")
+            raise RuntimeError("Inside an async tool, use `await agent.run(...)` or `agent.stream(...)`")
         return self._start(
             prompt,
             history=history,
@@ -279,7 +279,7 @@ class Agent(Generic[OutputT]):
         frontend_tools: Sequence[Mapping[str, Any]] | None,
         **options: Any,
     ) -> Any:
-        return self._engine.execute(
+        return self._engine.start(
             prompt,
             answers=dict(answers) if answers else None,
             tools=[_as_tool(item) for item in tools] if tools else None,
@@ -305,7 +305,7 @@ class Agent(Generic[OutputT]):
         """Run to completion (or until tool calls wait for a person, see `.pending`) and return
         the final event (with `.text` and `.messages`)."""
         # Nobody reads the text as it streams here, so group it per message: fewer events.
-        async for event in self.execute(
+        async for event in self.stream(
             prompt,
             history=history,
             conversation_id=conversation_id,
@@ -337,9 +337,9 @@ class Agent(Generic[OutputT]):
         state: Any = None,
     ) -> RunFinished[OutputT]:
         """`run`, for code without an event loop: scripts, Django and Flask views, Celery tasks,
-        notebooks. Blocks this thread until the run ends (see `execute_sync` for where the
+        notebooks. Blocks this thread until the run ends (see `stream_sync` for where the
         run's Python code runs). Ctrl+C raises `KeyboardInterrupt` and ends the run."""
-        with self.execute_sync(
+        with self.stream_sync(
             prompt,
             history=history,
             conversation_id=conversation_id,

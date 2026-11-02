@@ -18,7 +18,7 @@ server. The modules read the requests in Python, where they are easy to change.
 ```
 
 `stream(agent, body, **options)` reads the request, runs the agent and returns the stream. `options` go to
-`agent.execute` (`deps=...`, `text_chunks=...`).
+`agent.stream` (`deps=...`, `text_chunks=...`).
 
 ## The pieces, for more control
 
@@ -29,7 +29,7 @@ the conversation on the server:
 @app.post("/api/chat")
 async def chat(request: Request, user: User = Depends(current_user)) -> StreamingResponse:
     chat = ai_sdk.parse(await request.body())  # chat.prompt, chat.history, chat.answers, chat.body
-    run = agent.execute(chat.prompt, conversation_id=f"{user.id}:{chat.chat_id}", answers=chat.answers, deps=user)
+    run = agent.stream(chat.prompt, conversation_id=f"{user.id}:{chat.chat_id}", answers=chat.answers, deps=user)
     return StreamingResponse(run.ai_sdk(), headers=ai_sdk.HEADERS)
 ```
 

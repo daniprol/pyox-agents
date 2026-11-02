@@ -44,7 +44,7 @@ def make_pyox_agent(
     )
 
     async def stream(prompt: str) -> AsyncIterator[str]:
-        async for event in agent.execute(prompt):
+        async for event in agent.stream(prompt):
             if isinstance(event, TextDelta):
                 yield event.text
 
@@ -250,7 +250,7 @@ def make_pyox_responses_agent(base_url: str, transport: Literal["http", "websock
     )
 
     async def stream(prompt: str) -> AsyncIterator[str]:
-        async for event in agent.execute(prompt):
+        async for event in agent.stream(prompt):
             if isinstance(event, TextDelta):
                 yield event.text
 

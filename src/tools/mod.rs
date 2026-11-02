@@ -196,7 +196,7 @@ impl ToolDefinition {
         })
     }
 
-    /// A tool the app runs, sent for one run (`execute(frontend_tools=[...])`):
+    /// A tool the app runs, sent for one run (`stream(frontend_tools=[...])`):
     /// a dict with `name`, and optionally `description` and `parameters`.
     pub fn frontend_from_python(tool: &Bound<'_, PyAny>) -> PyResult<Self> {
         let field = |key: &str| -> PyResult<Option<Bound<'_, PyAny>>> {

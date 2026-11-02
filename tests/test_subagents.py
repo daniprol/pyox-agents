@@ -66,7 +66,7 @@ async def test_the_subagent_answer_is_the_tool_result(fake_openai: FakeOpenAI, m
         text_response("Here is your article"),
     )
 
-    events = await collect_events(writer.execute("Write about Vigo"))
+    events = await collect_events(writer.stream("Write about Vigo"))
 
     # The subagent's request: its own model, prompt and tools, and the task as its first message.
     request = fake_openai.requests[1].body
@@ -126,7 +126,7 @@ async def test_subagent_tools_run_and_are_marked(fake_openai: FakeOpenAI, make_a
         text_response("Done"),
     )
 
-    events = await collect_events(writer.execute("Go"))
+    events = await collect_events(writer.stream("Go"))
 
     started = events_of_type(events, ToolStarted)
     assert [(event.call_id, event.name, event.subagent_id) for event in started] == [
@@ -173,7 +173,7 @@ async def test_subagent_errors_are_results_the_calling_agent_can_handle(
         text_response("Sorry"),
     )
 
-    events = await collect_events(writer.execute("Go"))
+    events = await collect_events(writer.stream("Go"))
 
     [finished] = events_of_type(events, SubagentFinished)
     assert finished.is_error
@@ -212,7 +212,7 @@ async def test_subagent_approvals_stop_the_run_and_resume(fake_openai: FakeOpenA
     assert waiting.get("subagent")  # its conversation, to continue it
 
     fake_openai.queue(text_response("Booked F1"), text_response("All done"))
-    events = await collect_events(assistant.execute(history=stopped.messages, answers={"call_0/call_0": Approve()}))
+    events = await collect_events(assistant.stream(history=stopped.messages, answers={"call_0/call_0": Approve()}))
 
     result = run_finished(events)
     assert (result.text, result.pending) == ("All done", [])
@@ -355,7 +355,7 @@ async def test_subagents_running_together_keep_their_own_ids(fake_openai: FakeOp
         text_response("Done"),
     )
 
-    events = await collect_events(writer.execute("Go"))
+    events = await collect_events(writer.stream("Go"))
 
     assert sorted((event.call_id, event.task) for event in events_of_type(events, SubagentStarted)) == [
         ("call_0", "Vigo"),
@@ -445,7 +445,7 @@ async def test_subagent_tools_get_the_same_deps(fake_openai: FakeOpenAI, make_ag
         text_response("You are Dani"),
     )
 
-    events = await collect_events(agent.execute("Who am I?", deps={"user": "Dani"}))
+    events = await collect_events(agent.stream("Who am I?", deps={"user": "Dani"}))
 
     subagent_tool, _ = events_of_type(events, ToolFinished)
     assert (subagent_tool.call_id, subagent_tool.result) == ("call_0/call_0", "Dani")
@@ -460,7 +460,7 @@ async def test_a_subagent_that_hits_max_turns_fails_its_tool(fake_openai: FakeOp
         text_response("It gave up"),
     )
 
-    events = await collect_events(agent.execute("Go"))
+    events = await collect_events(agent.stream("Go"))
 
     [finished] = events_of_type(events, SubagentFinished)
     assert finished.is_error

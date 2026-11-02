@@ -27,7 +27,7 @@ from pyox_agents import (
 async def tool_results(fake_openai: FakeOpenAI, make_agent: MakeAgent, *calls: Any, **agent: Any) -> list[str]:
     """Runs one turn of tool calls, and returns what the model read from each."""
     fake_openai.queue(tool_calls_response(*calls), text_response("Done"))
-    events = await collect_events(make_agent(**agent).execute("Go"))
+    events = await collect_events(make_agent(**agent).stream("Go"))
     finished = finished_calls(events)
     assert all(event.is_error for event in finished)
     return [event.result for event in finished]
@@ -342,7 +342,7 @@ async def test_valid_arguments_still_arrive_built(fake_openai: FakeOpenAI, make_
         text_response("Done"),
     )
 
-    events = await collect_events(make_agent(tools=[distance, forecast]).execute("Go"))
+    events = await collect_events(make_agent(tools=[distance, forecast]).stream("Go"))
 
     assert [event.result for event in finished_calls(events)] == [
         "5.0",

@@ -21,7 +21,7 @@ from pyox_agents import RunFinished, TextDelta, Usage
 async def test_streams_text_then_finishes(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(text_response("Hello there!"))
 
-    events = await collect_events(make_agent().execute("Hi"))
+    events = await collect_events(make_agent().stream("Hi"))
 
     assert [event.text for event in events_of_type(events, TextDelta)] == ["Hello ", "there!"]
     assert isinstance(events[-1], RunFinished)
@@ -95,7 +95,7 @@ async def test_one_agent_serves_concurrent_runs(fake_openai: FakeOpenAI, make_ag
 async def test_stopping_early_does_not_hang(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(text_response("A long answer"))
 
-    async for event in make_agent().execute("Hi"):
+    async for event in make_agent().stream("Hi"):
         assert isinstance(event, TextDelta)
         break
 

@@ -67,7 +67,7 @@ async def test_text_and_tools_stream_as_ag_ui_events(
         tool_calls_response(tool_call("add", a=2, b=3), text_pieces=("Adding. ",)), text_response("It is 5")
     )
 
-    sse = await read_text(make_agent(tools=[add]).execute("2 + 3?").ag_ui("thread-1", "run-1"))
+    sse = await read_text(make_agent(tools=[add]).stream("2 + 3?").ag_ui("thread-1", "run-1"))
 
     events = events_of(sse)
     assert types(events) == [
@@ -98,7 +98,7 @@ async def test_errors_become_run_error(
 ) -> None:
     fake_openai.queue(error_response(400, "Bad model"))
 
-    sse = await read_text(make_agent().execute("Hi").ag_ui("t", "r"))
+    sse = await read_text(make_agent().stream("Hi").ag_ui("t", "r"))
 
     events = events_of(sse)
     assert types(events) == ["RUN_STARTED", "RUN_ERROR"]
@@ -302,7 +302,7 @@ async def test_subagents_stream_inside_their_tool_call(
         text_response("The answer is 5"),
     )
 
-    sse = await read_text(agent.execute("Ask the researcher").ag_ui("thread-1", "run-1"))
+    sse = await read_text(agent.stream("Ask the researcher").ag_ui("thread-1", "run-1"))
 
     events = events_of(sse)
     assert types(events) == [

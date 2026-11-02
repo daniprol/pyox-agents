@@ -55,7 +55,7 @@ TOOL_RESULT_ONLY = WHOLE_HISTORY[-1:]
 async def test_streams_text_over_a_websocket(fake_openai: FakeOpenAI, make_websocket_agent: MakeAgent) -> None:
     fake_openai.queue(responses_answer("Hello there!", response_id="resp_7"))
 
-    events = await collect_events(make_websocket_agent(instructions="Be nice.").execute("Hi"))
+    events = await collect_events(make_websocket_agent(instructions="Be nice.").stream("Hi"))
 
     assert [event.text for event in events_of_type(events, TextDelta)] == ["Hello ", "there!"]
     result = events[-1]
@@ -148,7 +148,7 @@ async def test_stopping_a_run_mid_stream_closes_its_connection(
     fake_openai.queue(slow_answer, responses_answer("Hi"))
     agent = make_websocket_agent()
 
-    async for event in agent.execute("Hi"):
+    async for event in agent.stream("Hi"):
         if isinstance(event, TextDelta):
             break  # drops the run, which closes its connection
     await agent.run("Again")

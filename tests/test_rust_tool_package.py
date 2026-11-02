@@ -31,7 +31,7 @@ async def test_agent_runs_rust_tools(fake_openai: FakeOpenAI, make_agent: MakeAg
     )
     agent = make_agent(tools=[fast_tools.count_words, fast_tools.most_common_words])
 
-    events = await collect_events(agent.execute("Analyze"))
+    events = await collect_events(agent.stream("Analyze"))
 
     finished = finished_calls(events)
     assert [(event.result, event.is_error) for event in finished[:2]] == [("6", False), ("be: 2\nto: 2", False)]
@@ -51,7 +51,7 @@ async def test_file_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent, tmp_pa
     )
     agent = make_agent(tools=[fast_tools.write_file, fast_tools.read_file])
 
-    events = await collect_events(agent.execute("Save a note"))
+    events = await collect_events(agent.stream("Save a note"))
 
     finished = finished_calls(events)
     assert [event.result for event in finished[:2]] == [f"Wrote 8 bytes to {path}", "buy milk"]

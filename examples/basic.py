@@ -23,7 +23,7 @@ agent = Agent(
 
 
 async def main() -> None:
-    async for event in agent.execute("What's the weather in Vigo?"):
+    async for event in agent.stream("What's the weather in Vigo?"):
         match event:
             case TextDelta(text=text):
                 print(text, end="", flush=True)

@@ -24,7 +24,7 @@
 //! (`error.messages`) and the tokens used (`error.usage`). When your own code
 //! (a hook, a history store, `on_request`) raised, the `HookError` or
 //! `HistoryError` has your exception as `__cause__`. Mistakes in how pyox is
-//! called (bad arguments to `Agent(...)` or `execute(...)`) stay plain
+//! called (bad arguments to `Agent(...)` or `stream(...)`) stay plain
 //! `ValueError` / `TypeError`.
 //!
 //! Tool errors are not raised: the model gets them as the tool's result (see

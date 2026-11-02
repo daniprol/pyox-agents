@@ -44,7 +44,7 @@ async def test_streams_text_and_sends_a_stateless_request(
 ) -> None:
     fake_openai.queue(responses_answer("Hello there!", response_id="resp_7"))
 
-    events = await collect_events(make_responses_agent(instructions="Be nice.").execute("Hi"))
+    events = await collect_events(make_responses_agent(instructions="Be nice.").stream("Hi"))
 
     assert [event.text for event in events_of_type(events, TextDelta)] == ["Hello ", "there!"]
     result = events[-1]
@@ -344,11 +344,11 @@ def test_invalid_configuration(make_agent: MakeAgent, make_responses_agent: Make
 
     stateless_agent, stored_agent = make_responses_agent(), make_responses_agent(store=True)
     with pytest.raises(ValueError, match="`store=True`"):
-        stateless_agent.execute("Hi", previous_response_id="resp_1")
+        stateless_agent.stream("Hi", previous_response_id="resp_1")
     with pytest.raises(ValueError, match="not both"):
-        stored_agent.execute("Hi", previous_response_id="resp_1", history=[])
+        stored_agent.stream("Hi", previous_response_id="resp_1", history=[])
     with pytest.raises(ValueError, match="needs a prompt"):
-        stored_agent.execute(previous_response_id="resp_1")
+        stored_agent.stream(previous_response_id="resp_1")
 
 
 async def test_chat_history_continues_on_the_responses_api(

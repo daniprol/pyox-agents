@@ -69,7 +69,7 @@ pub fn build_request_body(
     if let Some(response_id) = previous_response_id {
         body.insert("previous_response_id".into(), json!(response_id));
         // When the response is not in our messages (it came from
-        // `execute(previous_response_id=...)`), all our messages are new to OpenAI.
+        // `stream(previous_response_id=...)`), all our messages are new to OpenAI.
         if let Some(newer_messages) = messages_after_response(request.messages, response_id) {
             messages_to_send = newer_messages;
         }
@@ -862,7 +862,7 @@ mod tests {
         );
         assert!(body.get("include").is_none());
 
-        // A response from outside the history (`execute(previous_response_id=...)`):
+        // A response from outside the history (`stream(previous_response_id=...)`):
         // every message is new (2 user messages, the reasoning, the call and its output).
         let body = build_request_body(&request(&history, &parameters), options, Some("resp_older"));
         assert_eq!(body["input"].as_array().unwrap().len(), 5);

@@ -27,7 +27,7 @@ async def test_runs_sync_and_async_python_tools(fake_openai: FakeOpenAI, make_ag
         text_response("Done"),
     )
 
-    events = await collect_events(make_agent(tools=[add, shout]).execute("Go"))
+    events = await collect_events(make_agent(tools=[add, shout]).stream("Go"))
 
     started = events_of_type(events, ToolStarted)
     assert [(event.call_id, event.name, event.arguments) for event in started] == [
@@ -74,7 +74,7 @@ async def test_each_result_streams_as_its_call_ends_and_the_model_reads_them_in_
     fake_openai.queue(tool_calls_response(tool_call("slow"), tool_call("fast")), text_response("Done"))
 
     finished = []
-    async for event in make_agent(tools=[slow, fast]).execute("Go"):
+    async for event in make_agent(tools=[slow, fast]).stream("Go"):
         if isinstance(event, ToolFinished):
             finished.append(event.result)
             app_saw_fast.set()
@@ -95,7 +95,7 @@ async def test_failing_and_unknown_tools_are_reported_to_the_model(
 
     fake_openai.queue(tool_calls_response(tool_call("explode"), tool_call("missing")), text_response("Sorry"))
 
-    events = await collect_events(make_agent(tools=[explode]).execute("Go"))
+    events = await collect_events(make_agent(tools=[explode]).stream("Go"))
 
     assert [(event.result, event.is_error) for event in finished_calls(events)] == [
         ("ValueError: boom", True),
@@ -115,7 +115,7 @@ async def test_threaded_tool_like_a_compiled_rust_function(fake_openai: FakeOpen
     )
     fake_openai.queue(tool_calls_response(tool_call("word_lengths", text="to be or")), text_response("."))
 
-    events = await collect_events(make_agent(tools=[word_lengths]).execute("Count"))
+    events = await collect_events(make_agent(tools=[word_lengths]).stream("Count"))
 
     assert [event.result for event in events_of_type(events, ToolFinished)] == ["[2, 2, 2]"]
 
@@ -135,7 +135,7 @@ class Greeter:
 async def test_custom_tool_objects_with_sync_invoke(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(tool_calls_response(tool_call("greet", name="Dani")), text_response("."))
 
-    events = await collect_events(make_agent(tools=[Greeter()]).execute("Greet Dani"))
+    events = await collect_events(make_agent(tools=[Greeter()]).stream("Greet Dani"))
 
     assert [event.result for event in events_of_type(events, ToolFinished)] == ["Hello Dani"]
 
@@ -189,8 +189,8 @@ def test_tools_for_a_run_need_names_of_their_own(make_agent: MakeAgent) -> None:
     agent = make_agent(tools=[add])
 
     with pytest.raises(ValueError, match='"add"'):
-        agent.execute("Hi", tools=[add])
+        agent.stream("Hi", tools=[add])
     with pytest.raises(ValueError, match='"whoami"'):
-        agent.execute("Hi", tools=[*tools_for("ana"), *tools_for("ben")])
+        agent.stream("Hi", tools=[*tools_for("ana"), *tools_for("ben")])
     with pytest.raises(ValueError, match='"whoami"'):
-        agent.execute("Hi", tools=tools_for("ana"), frontend_tools=[{"name": "whoami"}])
+        agent.stream("Hi", tools=tools_for("ana"), frontend_tools=[{"name": "whoami"}])
