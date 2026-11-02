@@ -136,9 +136,20 @@ where
             if !result.hasattr("__await__")? {
                 return Ok(CallResult::Finished(result.unbind()));
             }
+            // Run it through `Cancellable`, so dropping the future (a stopped
+            // or cancelled run) cancels the Python task too.
+            let cancellable = py
+                .import("pyox_agents._tasks")?
+                .getattr("Cancellable")?
+                .call1((result,))?;
             let task_locals = python_calls.task_locals(py)?;
-            let future = pyo3_async_runtimes::into_future_with_locals(&task_locals, result)?;
-            Ok(CallResult::Pending(Box::pin(future)))
+            let future = pyo3_async_runtimes::into_future_with_locals(&task_locals, cancellable.call_method0("run")?)?;
+            let mut cancel_on_drop = CancelOnDrop(Some(cancellable.unbind()));
+            Ok(CallResult::Pending(Box::pin(async move {
+                let result = future.await;
+                cancel_on_drop.disarm(); // finished: nothing to cancel
+                result
+            })))
         })
     };
 
@@ -154,6 +165,28 @@ where
     match call_result {
         CallResult::Finished(result) => Ok(result),
         CallResult::Pending(future) => future.await,
+    }
+}
+
+/// Holds a `pyox_agents._tasks.Cancellable` while its task runs. When the
+/// future awaiting it is dropped before the end, `drop` cancels the task.
+/// (`Drop` is like `__del__`, but runs at a known moment: when the value goes away.)
+struct CancelOnDrop(Option<Py<PyAny>>);
+
+impl CancelOnDrop {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some(cancellable) = self.0.take() {
+            Python::attach(|py| {
+                // `let _ =`: if cancelling fails there is nothing more to do.
+                let _ = cancellable.bind(py).call_method0("cancel");
+            });
+        }
     }
 }
 

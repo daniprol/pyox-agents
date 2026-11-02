@@ -1,5 +1,7 @@
 """Failures surface as typed exceptions from the event stream."""
 
+import asyncio
+import pickle
 import socket
 import time
 
@@ -15,12 +17,18 @@ from pyox_agents import (
     ApiError,
     AuthenticationError,
     Client,
+    HookError,
+    Hooks,
+    InputRequested,
     InvalidResponseError,
     MaxTurnsExceededError,
     NetworkError,
     RateLimitError,
     RequestTimeoutError,
+    RunContext,
+    RunFinished,
     Usage,
+    tool,
 )
 
 
@@ -179,3 +187,134 @@ async def test_client_errors_are_not_retried(fake_openai: FakeOpenAI, client: Cl
 def test_api_error_fields_are_none_outside_the_api() -> None:
     error = ApiError("made by hand")
     assert (error.status_code, error.body, error.request_id, error.retry_after_seconds) == (None, None, None, None)
+
+
+async def test_api_errors_have_a_short_message_and_a_code(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    fake_openai.queue(error_response(400, "Too long", code="context_length_exceeded"))
+
+    with pytest.raises(ApiError) as error:
+        await make_agent().run("Hi")
+
+    assert str(error.value) == "HTTP 400: Too long"  # the whole body is in `error.body`
+    assert error.value.code == "context_length_exceeded"
+
+
+async def test_rate_limits_inside_the_stream_keep_the_request_id(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    error_chunk = {"error": {"message": "Slow down", "code": "rate_limit_exceeded"}}
+    fake_openai.queue(StreamResponse([error_chunk], headers={"x-request-id": "req_9"}))
+
+    with pytest.raises(RateLimitError, match=r"^Slow down$") as error:
+        await make_agent().run("Hi")
+
+    assert (error.value.status_code, error.value.code, error.value.request_id) == (None, "rate_limit_exceeded", "req_9")
+
+
+async def test_network_errors_say_why(make_agent: MakeAgent) -> None:
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        port = unused.getsockname()[1]
+    client = Client(api_key="x", base_url=f"http://127.0.0.1:{port}/v1", max_retries=0)
+
+    with pytest.raises(NetworkError, match=r"(?i)connection refused"):
+        await Agent(client=client, model="m").run("Hi")
+
+
+@pytest.mark.parametrize("retry_after", ["inf", "1e999", "nan"])
+async def test_odd_retry_after_headers_are_ignored(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent, retry_after: str
+) -> None:
+    fake_openai.queue(error_response(400, "Bad", headers={"retry-after": retry_after}))
+
+    with pytest.raises(ApiError) as error:
+        await make_agent().run("Hi")
+
+    assert error.value.retry_after_seconds is None
+
+
+@pytest.mark.parametrize("seconds", [-1.0, float("nan"), float("inf")])
+def test_timeouts_must_be_positive(seconds: float) -> None:
+    with pytest.raises(ValueError, match="must be a positive number of seconds"):
+        Client(connect_timeout_seconds=seconds)
+    with pytest.raises(ValueError, match="must be a positive number of seconds"):
+        Client(request_timeout_seconds=seconds)
+
+
+async def test_run_errors_can_be_pickled(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    # Celery, multiprocessing and Ray send exceptions between processes with pickle.
+    fake_openai.queue(text_response("Hi"), error_response(400, "Bad", code="bad"))
+    agent = make_agent()
+    result = await agent.run("Hi")
+
+    with pytest.raises(ApiError) as error:
+        await agent.run("Again", history=result.messages)
+
+    copy = pickle.loads(pickle.dumps(error.value))
+    assert (copy.status_code, copy.code, copy.usage, copy.messages) == (400, "bad", Usage(), error.value.messages)
+
+
+# Runs that fail at the end keep their work ------------------------------------------------------
+
+
+async def test_a_failing_after_run_hook_keeps_the_finished_conversation(
+    fake_openai: FakeOpenAI, make_agent: MakeAgent
+) -> None:
+    def save_somewhere(ctx: RunContext, result: RunFinished) -> None:
+        raise ConnectionError("database is down")
+
+    fake_openai.queue(text_response("Hello!"))
+
+    with pytest.raises(HookError) as error:
+        await make_agent(hooks=[Hooks(after_run=save_somewhere)]).run("Hi")
+
+    assert error.value.messages is not None
+    assert [message["role"] for message in error.value.messages] == ["user", "assistant"]
+
+
+async def test_on_request_errors_inside_ctx_ask_end_the_run(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    @tool
+    async def ask_name(ctx: RunContext) -> str:
+        """Ask the user's name."""
+        answer = await ctx.ask("What is your name?")
+        return answer.value
+
+    def broken_handler(request: InputRequested) -> None:
+        raise RuntimeError("the UI is gone")
+
+    fake_openai.queue(tool_calls_response(tool_call("ask_name")))
+
+    with pytest.raises(HookError, match="on_request handler raised RuntimeError") as error:
+        await make_agent(tools=[ask_name]).run("Hi", on_request=broken_handler)
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
+async def test_stopping_a_run_cancels_its_async_tools(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    @tool
+    async def slow() -> str:
+        """Takes a while."""
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "done"
+
+    fake_openai.queue(tool_calls_response(tool_call("slow")))
+    agent = make_agent(tools=[slow])
+
+    async def read_events() -> None:
+        async for _ in agent.execute("Go"):
+            pass
+
+    # Cancelling the task reading the run drops the run (a web request cancelled, say).
+    reading = asyncio.create_task(read_events())
+    await asyncio.wait_for(started.wait(), 1)
+    reading.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reading
+
+    await asyncio.wait_for(cancelled.wait(), 1)  # the tool did not go on alone

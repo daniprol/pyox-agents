@@ -144,6 +144,95 @@ def from_json(annotation: Any, value: Any) -> Any:
     return value
 
 
+def type_problems(annotation: Any, value: Any, path: str) -> list[str]:
+    """What is wrong with `value` (parsed JSON) as a `annotation`, one line per problem,
+    each starting with where it is (`path`, like `trip.days`). Empty when it fits.
+
+    Checks the types `json_schema` supports. Pydantic models are left to pydantic
+    (see `validation_problems`); anything else accepts any value."""
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Annotated:
+        return type_problems(args[0], value, path)
+    if annotation in _TYPE_NAMES:
+        return [] if _is_simple_type(annotation, value) else [_wrong(path, _TYPE_NAMES[annotation], value)]
+    if origin is Literal:
+        return [] if value in args else [_wrong(path, "one of " + ", ".join(json.dumps(arg) for arg in args), value)]
+    if origin in (Union, types.UnionType):
+        problems_per_option = [type_problems(arg, value, path) for arg in args]
+        if any(not problems for problems in problems_per_option):
+            return []
+        options = [arg for arg in args if arg is not type(None)]
+        return (
+            problems_per_option[args.index(options[0])] if len(options) == 1 else [_wrong(path, "another type", value)]
+        )
+    if annotation is list or origin is list:
+        if not isinstance(value, list):
+            return [_wrong(path, "a list", value)]
+        return [
+            problem
+            for index, item in enumerate(value)
+            for problem in type_problems(args[0] if args else Any, item, f"{path}[{index}]")
+        ]
+    if annotation is dict or origin is dict:
+        return [] if isinstance(value, dict) else [_wrong(path, "an object", value)]
+    if dataclasses.is_dataclass(annotation) and isinstance(annotation, type) and not _is_pydantic_model(annotation):
+        fields = dataclasses.fields(annotation)
+        required = [field.name for field in fields if not _has_default(field)]
+        return _object_problems(annotation, [field.name for field in fields], required, value, path)
+    if is_typeddict(annotation):
+        names = list(get_type_hints(annotation))
+        return _object_problems(annotation, names, sorted(annotation.__required_keys__), value, path)
+    return []
+
+
+_TYPE_NAMES: dict[Any, str] = {
+    str: "a string",
+    int: "an integer",
+    float: "a number",
+    bool: "true or false",
+    type(None): "null",
+}
+
+
+def _is_simple_type(annotation: Any, value: Any) -> bool:
+    if annotation is float:  # JSON has one number type: 3 is a fine float
+        return isinstance(value, int | float) and not isinstance(value, bool)
+    if annotation is int:  # `True` is an `int` in Python, but not in JSON
+        return isinstance(value, int) and not isinstance(value, bool)
+    return isinstance(value, annotation)
+
+
+def _object_problems(cls: type, names: list[str], required: list[str], value: Any, path: str) -> list[str]:
+    if not isinstance(value, dict):
+        return [_wrong(path, "an object", value)]
+    type_hints = get_type_hints(cls, include_extras=True)
+    problems = [f"{path}.{name}: missing" for name in required if name not in value]
+    for name in names:
+        if name in value:
+            problems.extend(type_problems(type_hints.get(name, Any), value[name], f"{path}.{name}"))
+    return problems
+
+
+def _wrong(path: str, expected: str, value: Any) -> str:
+    shown = json.dumps(value)
+    return f"{path}: expected {expected}, got {shown if len(shown) <= 60 else shown[:57] + '...'}"
+
+
+def validation_problems(error: Exception, path: str) -> list[str]:
+    """`error` (raised while building an argument) as problem lines, like `type_problems`.
+    A pydantic `ValidationError` gives one short line per error, without its links."""
+    errors = getattr(error, "errors", None)
+    if not callable(errors):
+        return [f"{path}: {error}"]
+    problems = []
+    for details in errors():
+        where = ".".join([path, *(str(part) for part in details.get("loc", ()))])
+        shown = json.dumps(details.get("input"), default=str)
+        given = f" (got {shown})" if "input" in details and len(shown) <= 60 else ""
+        problems.append(f"{where}: {details.get('msg', 'invalid')}{given}")
+    return problems
+
+
 def needs_conversion(annotation: Any) -> bool:
     """Whether `from_json` would build something (a dataclass or a pydantic model) from JSON."""
     if _is_pydantic_model(annotation) or (dataclasses.is_dataclass(annotation) and isinstance(annotation, type)):

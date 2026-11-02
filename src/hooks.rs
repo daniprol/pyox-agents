@@ -25,7 +25,7 @@ pub use pyox_tools::native_hooks::Hook;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::errors::HookError;
+use crate::errors::{HookError, wrap_user_error};
 use crate::events::RunFinished;
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::{Message, ToolCall};
@@ -37,6 +37,9 @@ use crate::tools::ToolResult;
 #[derive(Default)]
 pub struct AgentHooks {
     hook_sets: Vec<HookSet>,
+    /// The `on_tool_error(ctx, call, error)` functions, in order. Python only:
+    /// they get the exception object itself (see `agent::failure_result`).
+    pub tool_error_handlers: Vec<Py<PyAny>>,
 }
 
 /// One item of `Agent(hooks=[...])`.
@@ -64,6 +67,7 @@ impl HookSet {
 impl AgentHooks {
     pub fn from_python(items: &[Bound<'_, PyAny>]) -> PyResult<Self> {
         let mut hook_sets = Vec::new();
+        let mut tool_error_handlers = Vec::new();
         for item in items {
             if let Some(native_hooks) = NativeHooks::from_python(item)? {
                 hook_sets.push(HookSet::Native {
@@ -72,23 +76,28 @@ impl AgentHooks {
                 });
                 continue;
             }
+            // `getattr` with a default: `Hooks(...)` leaves unused hooks as `None`.
+            let function_named = |name: &str| item.getattr(name).ok().filter(|function| !function.is_none());
             let mut functions = Vec::new();
             for hook in Hook::ALL {
-                // `getattr` with a default: `Hooks(...)` leaves unused hooks as `None`.
-                let function = item.getattr(hook.name()).ok().filter(|function| !function.is_none());
-                if let Some(function) = function {
+                if let Some(function) = function_named(hook.name()) {
                     functions.push((hook, function.unbind()));
                 }
             }
-            if functions.is_empty() {
+            let on_tool_error = function_named("on_tool_error");
+            if functions.is_empty() && on_tool_error.is_none() {
                 return Err(PyTypeError::new_err(format!(
                     "{} has no hooks: give an object with methods like `before_tool_call`, or use Hooks(...)",
                     item.repr()?
                 )));
             }
+            tool_error_handlers.extend(on_tool_error.map(Bound::unbind));
             hook_sets.push(HookSet::Python(functions));
         }
-        Ok(AgentHooks { hook_sets })
+        Ok(AgentHooks {
+            hook_sets,
+            tool_error_handlers,
+        })
     }
 
     // One method per hook, for the agent loop. Each one returns at once when
@@ -96,7 +105,8 @@ impl AgentHooks {
 
     pub async fn before_run(&self, context: &Context, python_calls: &PythonCalls) -> PyResult<()> {
         if self.has(Hook::BeforeRun) {
-            self.run(Hook::BeforeRun, context, Vec::new(), python_calls).await?;
+            let ran = self.run(Hook::BeforeRun, context, Vec::new(), python_calls).await;
+            ran.map_err(|error| wrap_user_error::<HookError>(error, "The before_run hook"))?;
         }
         Ok(())
     }
@@ -114,8 +124,11 @@ impl AgentHooks {
             return Ok(None);
         }
         let arguments = vec![to_json(&make_request())];
-        let changed = self.run(Hook::BeforeModelRequest, context, arguments, python_calls);
-        from_json(Hook::BeforeModelRequest, changed.await?).map(Some)
+        let changed = self
+            .run(Hook::BeforeModelRequest, context, arguments, python_calls)
+            .await;
+        let changed = changed.map_err(|error| wrap_user_error::<HookError>(error, "The before_model_request hook"))?;
+        from_json(Hook::BeforeModelRequest, changed).map(Some)
     }
 
     pub async fn after_model_response(
@@ -128,8 +141,11 @@ impl AgentHooks {
             return Ok(message);
         }
         let arguments = vec![to_json(&message)];
-        let changed = self.run(Hook::AfterModelResponse, context, arguments, python_calls);
-        match from_json(Hook::AfterModelResponse, changed.await?)? {
+        let changed = self
+            .run(Hook::AfterModelResponse, context, arguments, python_calls)
+            .await;
+        let changed = changed.map_err(|error| wrap_user_error::<HookError>(error, "The after_model_response hook"))?;
+        match from_json(Hook::AfterModelResponse, changed)? {
             message @ Message::Assistant { .. } => Ok(message),
             _ => Err(HookError::new_err(
                 "after_model_response must return an assistant message",
@@ -181,7 +197,8 @@ impl AgentHooks {
                     call_python_hook(function, context, python_calls, move |py| {
                         Ok(vec![Py::new(py, finished)?.into_bound(py).into_any()])
                     })
-                    .await?;
+                    .await
+                    .map_err(|error| wrap_user_error::<HookError>(error, "The after_run hook"))?;
                 }
                 HookSet::Native { hooks, .. } => {
                     let arguments = Value::Array(vec![to_json(&finished.messages)]);
@@ -259,7 +276,7 @@ fn python_function(functions: &[(Hook, Py<PyAny>)], hook: Hook) -> Py<PyAny> {
 }
 
 /// Calls `function(ctx, *arguments)`, awaiting it if it is async.
-async fn call_python_hook(
+pub async fn call_python_hook(
     function: Py<PyAny>,
     context: &Context,
     python_calls: &PythonCalls,

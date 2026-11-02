@@ -123,8 +123,9 @@ async def test_store_errors_reach_the_caller(make_agent: MakeAgent) -> None:
     def load_invalid(conversation_id: str) -> str:
         return "not json"
 
-    with pytest.raises(ConnectionError, match="database is down"):
+    with pytest.raises(HistoryError, match="load` raised ConnectionError: database is down") as raised:
         await make_agent(history_store=BrokenStore()).run("Hi", conversation_id="x")
+    assert isinstance(raised.value.__cause__, ConnectionError)
     with pytest.raises(HistoryError, match='Could not read the history of "x"'):
         await make_agent(history_store=load_invalid).run("Hi", conversation_id="x")
 

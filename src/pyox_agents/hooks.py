@@ -48,9 +48,15 @@ class Hooks:
       (e.g. other `arguments`), or raise to block it: the model gets the error.
     - `after_tool_call(ctx, call, result)`: after each tool runs. Return a
       changed result. Raising also gives the model the error.
+    - `on_tool_error(ctx, call, error)`: when a tool fails, with the exception
+      itself (also for bad arguments, an unknown tool or a timeout). Return a
+      `str` for the model to read instead of the default, or `None` to keep it.
+      Raise (`StopRun`, say) to end the run. A tool's own `@tool(on_error=...)`
+      is asked first.
     - `after_run(ctx, result)`: once, when the run finishes successfully.
 
-    Raising in the other hooks stops the run with that exception.
+    Raising in the other hooks ends the run with a `HookError` (your exception
+    is its `__cause__`); raise `StopRun` to end it with your own message.
 
         def no_deletes(ctx: RunContext, call: ToolCall) -> None:
             if call["name"] == "delete_file":
@@ -66,4 +72,5 @@ class Hooks:
     )
     before_tool_call: Callable[[RunContext, ToolCall], MaybeAwaitable[ToolCall | None]] | None = None
     after_tool_call: Callable[[RunContext, ToolCall, ToolResult], MaybeAwaitable[ToolResult | None]] | None = None
+    on_tool_error: Callable[[RunContext, ToolCall, Exception], MaybeAwaitable[str | ToolResult | None]] | None = None
     after_run: Callable[[RunContext, RunFinished], MaybeAwaitable[None]] | None = None

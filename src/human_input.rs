@@ -29,6 +29,7 @@ use pyo3::prelude::*;
 use pyox_tools::usage::Usage;
 use serde_json::{Map, Value, json};
 
+use crate::errors::{HookError, wrap_user_error};
 use crate::events::EventSender;
 use crate::json_convert::{json_to_python, python_to_json};
 pub use crate::messages::waiting_calls;
@@ -62,6 +63,9 @@ pub struct CallLog {
     steps_used: HashSet<String>,
     /// Set when a question was answered with `Deny`: the call's result.
     pub denied: Option<String>,
+    /// Set when `on_request` raised (or replied wrongly) inside the tool's
+    /// `ctx.ask`: the run ends with this error, whatever the tool does with it.
+    pub on_request_failed: Option<PyErr>,
     /// The conversation of the subagent this call runs (see `subagents`).
     pub subagent: Vec<Message>,
     /// Replies for the subagent's waiting calls, by the subagent's own call ids.
@@ -109,6 +113,7 @@ impl CallLog {
             requests_made: 0,
             steps_used: HashSet::new(),
             denied: None,
+            on_request_failed: None,
             subagent,
             subagent_answers: HashMap::new(),
             subagent_usage: Usage::default(),
@@ -198,15 +203,29 @@ pub async fn reply_to(
         return Ok(None);
     };
     let on_request = Python::attach(|py| on_request.clone_ref(py));
-    let reply = call_python(
-        on_request,
-        move |py| Ok(vec![Py::new(py, event)?.into_bound(py).into_any()]),
-        python_calls,
-    )
-    .await?;
-    let reply = Python::attach(|py| reply_from_python(reply.bind(py)))?;
+    let reply = async {
+        let reply = call_python(
+            on_request,
+            move |py| Ok(vec![Py::new(py, event)?.into_bound(py).into_any()]),
+            python_calls,
+        )
+        .await?;
+        let reply = Python::attach(|py| reply_from_python(reply.bind(py)))?;
+        if let Some(reply) = &reply {
+            check_reply(kind, reply)?;
+        }
+        Ok(reply)
+    };
+    let reply = match reply.await {
+        Ok(reply) => reply,
+        Err(error) => {
+            let error = wrap_user_error::<HookError>(error, "The on_request handler");
+            let copy = Python::attach(|py| error.clone_ref(py));
+            log.lock().unwrap().on_request_failed = Some(copy);
+            return Err(error);
+        }
+    };
     if let Some(reply) = &reply {
-        check_reply(kind, reply)?;
         log.lock().unwrap().requests[position].answer = Some(reply.clone());
         span.add_event("input_replied", reply_details(reply, "on_request"))
             .await;

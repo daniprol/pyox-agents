@@ -35,14 +35,16 @@ use pyox_tools::usage::Usage;
 use serde_json::{Value, json};
 
 use crate::agent::{AgentConfig, Engine, RunInputs, ToolRun, run_agent_loop};
-use crate::errors::AgentError;
+use crate::errors::{AgentError, StopRun};
 use crate::events::{AgentEvent, SubagentFinished, SubagentStarted};
 use crate::human_input::{HumanInput, SharedCallLog};
 use crate::messages::{Message, Reply, ToolCall};
 use crate::model_api::StopReason;
 use crate::state::StateAccess;
 use crate::telemetry::Telemetry;
-use crate::tools::{Approval, ToolDefinition, ToolImplementation, ToolResult, error_result, success_result};
+use crate::tools::{
+    Approval, ToolDefinition, ToolImplementation, ToolResult, invalid_arguments, success_result, tool_failed,
+};
 
 /// The name of the tool a subagent with `talk_to="user"` asks the person with.
 const ASK_USER: &str = "ask_user";
@@ -117,6 +119,8 @@ pub fn subagent_tool_from_python(tool: &Bound<'_, PyAny>) -> PyResult<Option<Too
         parameters: subagent.parameters(),
         implementation: ToolImplementation::Subagent(subagent),
         approval: Approval::Never,
+        on_error: None,
+        timeout: None,
     }))
 }
 
@@ -170,11 +174,17 @@ impl Subagent {
         tools
     }
 
-    /// Runs the subagent for one tool call. `None` means it waits for a person.
-    pub async fn run(&self, call_log: &SharedCallLog, run: &ToolRun<'_>) -> PyResult<Option<ToolResult>> {
+    /// Runs the subagent for one tool call. `None` means it waits for a person;
+    /// `Some(Err(...))` is a failure the calling agent's model gets as the tool's
+    /// error (`ToolFailed`, with the subagent's own error as `__cause__`).
+    /// `Err` ends the whole run: a `StopRun` in the subagent stops its caller too.
+    pub async fn run(&self, call_log: &SharedCallLog, run: &ToolRun<'_>) -> PyResult<Option<PyResult<ToolResult>>> {
         let call = call_log.lock().unwrap().call.clone();
         let Some(Value::String(task)) = call.arguments.get("task") else {
-            return Ok(Some(error_result("Give the subagent a `task`")));
+            return Ok(Some(Err(invalid_arguments(
+                &call.name,
+                "give the subagent a `task`".to_string(),
+            ))));
         };
         let task = task.clone();
 
@@ -196,9 +206,9 @@ impl Subagent {
                 (log.subagent.clone(), None, std::mem::take(&mut log.subagent_answers))
             } else if let Some(subagent_id) = continued_id {
                 let Some(conversation) = earlier_conversation(run.history, &call.name, subagent_id) else {
-                    return Ok(Some(error_result(format!(
+                    return Ok(Some(Err(tool_failed(format!(
                         "There is no conversation with subagent_id {subagent_id:?}"
-                    ))));
+                    )))));
                 };
                 (conversation, Some(task.clone().into()), HashMap::new())
             } else {
@@ -248,11 +258,13 @@ impl Subagent {
         let finished = match outcome {
             Ok(finished) => finished,
             // An API error, too many turns...: the calling agent can react to it.
-            Err(error) if Python::attach(|py| error.is_instance_of::<AgentError>(py)) => {
+            Err(error) if Python::attach(|py| failed_on_its_own(py, &error)) => {
                 let message = Python::attach(|py| error.value(py).to_string());
                 let result = format!("The subagent failed: {message}");
                 self.send_finished(&call, &result, true, None, usage, run).await;
-                return Ok(Some(error_result(result)));
+                let failure = tool_failed(result);
+                Python::attach(|py| failure.set_cause(py, Some(error)));
+                return Ok(Some(Err(failure)));
             }
             Err(error) => return Err(error),
         };
@@ -266,7 +278,7 @@ impl Subagent {
         call_log.lock().unwrap().subagent = finished.messages;
         let stop_reason = Some(finished.stop_reason);
         self.send_finished(&call, &result, false, stop_reason, usage, run).await;
-        Ok((!waiting).then(|| success_result(result, Value::Null)))
+        Ok((!waiting).then(|| Ok(success_result(result, Value::Null))))
     }
 
     /// What the calling agent reads: the subagent's answer or, with
@@ -306,6 +318,13 @@ impl Subagent {
     }
 }
 
+/// Whether the subagent's error is its own failure (an API error, too many
+/// turns...), which its caller's model gets, rather than one that ends the
+/// whole run (`StopRun`, `KeyboardInterrupt`, a mistake in how pyox is called).
+fn failed_on_its_own(py: Python<'_>, error: &PyErr) -> bool {
+    error.is_instance_of::<AgentError>(py) && !error.is_instance_of::<StopRun>(py)
+}
+
 /// `ask_user` or `ask_parent`: a tool taking one `question`.
 fn ask_tool(name: &str, description: &str, implementation: ToolImplementation) -> ToolDefinition {
     ToolDefinition {
@@ -318,6 +337,8 @@ fn ask_tool(name: &str, description: &str, implementation: ToolImplementation) -
         }),
         implementation,
         approval: Approval::Never,
+        on_error: None,
+        timeout: None,
     }
 }
 
