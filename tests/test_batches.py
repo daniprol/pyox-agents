@@ -1,13 +1,14 @@
 """`run.batches()`: every event already waiting, in one step."""
 
 import asyncio
+import threading
 
 import pytest
 
 from conftest import MakeAgent
 from factories import error_response, text_pieces_response, text_response, tool_call, tool_calls_response
 from fake_openai import FakeOpenAI
-from pyox_agents import AgentEvent, ApiError, EventBatches, RunFinished, TextDelta, ToolFinished, ToolStarted
+from pyox_agents import AgentEvent, ApiError, EventBatches, Hooks, RunFinished, TextDelta, ToolFinished, ToolStarted
 
 
 def add(a: int, b: int) -> int:
@@ -34,11 +35,14 @@ async def test_batches_hold_every_event_in_order(fake_openai: FakeOpenAI, make_a
 
 
 async def test_events_that_piled_up_come_in_one_batch(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    answered = threading.Event()
     fake_openai.queue(text_pieces_response(*(f"{number} " for number in range(20))))
-    batches = make_agent().execute("Count").batches()
+    agent = make_agent(hooks=[Hooks(after_run=lambda ctx, result: answered.set())])
+    batches = agent.execute("Count").batches()
 
     first = await anext(batches)  # starts the run
-    await asyncio.sleep(0.2)  # meanwhile the whole answer arrives
+    await asyncio.to_thread(answered.wait, 5)  # meanwhile the whole answer arrives
+    await asyncio.sleep(0.05)  # and the `RunFinished` sent right after `after_run`
     rest = [events async for events in batches]
 
     assert len(first) + sum(len(events) for events in rest) == 21

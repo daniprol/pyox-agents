@@ -6,6 +6,7 @@ import contextvars
 import os
 import threading
 import time
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -118,19 +119,21 @@ async def test_run_sync_works_inside_a_running_event_loop(fake_openai: FakeOpenA
 
 
 async def test_sync_tools_of_async_runs_run_on_worker_threads(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    both_running = threading.Barrier(2, timeout=5)
+
     @tool
     def slow() -> str:
-        """Takes a while."""
-        time.sleep(0.2)
+        """Waits for the other call: only calls running at the same time get past it."""
+        both_running.wait()
         return where_am_i()
 
     fake_openai.queue(tool_calls_response(tool_call("slow"), tool_call("slow")), text_response("Done"))
 
-    started = time.monotonic()
     result = await make_agent(tools=[slow]).run("Twice")
 
-    assert time.monotonic() - started < 0.35  # in parallel, and the event loop never blocked
-    assert all(place.endswith("no loop") for place in tool_results(result))
+    places = tool_results(result)
+    assert len(places) == 2
+    assert all(place.endswith("no loop") for place in places)  # worker threads, never the event loop
 
 
 def test_hooks_and_handlers_run_on_the_calling_thread(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
@@ -258,7 +261,9 @@ def test_stopping_to_read_ends_the_run(fake_openai: FakeOpenAI, make_agent: Make
         ran.append("ran")
         return "ok"
 
-    fake_openai.queue(tool_calls_response(tool_call("remember"), text_pieces=("Let me see",)), text_response("Done"))
+    # The tool call arrives well after the text, so the run cannot get there before the reader stops.
+    answer = tool_calls_response(tool_call("remember"), text_pieces=("Let me see",))
+    fake_openai.queue(replace(answer, chunk_delay_seconds=0.05), text_response("Done"))
 
     with make_agent(tools=[remember]).execute_sync("Hi") as run:
         for event in run:
@@ -293,7 +298,7 @@ def test_ctrl_c_while_waiting_ends_the_run(fake_openai: FakeOpenAI, make_agent: 
     with pytest.raises(KeyboardInterrupt):
         make_agent().run_sync("Hi")
 
-    assert time.monotonic() - started < 1
+    assert time.monotonic() - started < 3  # long before the answer would come (5 s)
 
 
 def test_ctrl_c_inside_a_sync_tool_is_not_a_tool_error(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:

@@ -40,6 +40,7 @@ use crate::ai_sdk::AiSdkEncoder;
 use crate::errors::AgentError;
 use crate::events::AgentEvent;
 use crate::python_call::{CallerThread, PythonCalls, check_not_forked, wait};
+use crate::python_exit::future_into_py;
 
 /// Python: `async for event in run: ...` (or `run.batches()`, `run.ai_sdk()`, `run.ag_ui(...)`).
 ///
@@ -89,7 +90,7 @@ impl Run {
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         self.queue.start_async(py)?;
         let queue = self.queue.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        future_into_py(py, async move {
             match queue.next().await {
                 Some(Ok(event)) => Python::attach(|py| event.into_python(py)),
                 Some(Err(error)) => Err(error),
@@ -314,7 +315,7 @@ impl EventBatches {
         }
         this.get().queue.start_async(py)?;
         let batches = this.unbind();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        future_into_py(py, async move {
             let batch = batches.get().queue.next_batch().await;
             if batch.is_empty() {
                 return Err(PyStopAsyncIteration::new_err(()));
@@ -433,7 +434,7 @@ impl ProtocolStream {
         self.queue.start_async(py)?;
         let queue = self.queue.clone();
         let state = self.state.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        future_into_py(py, async move {
             loop {
                 if state.lock().unwrap().finished {
                     return Err(PyStopAsyncIteration::new_err(()));

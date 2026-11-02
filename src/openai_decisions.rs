@@ -66,7 +66,7 @@ pub fn send_decision<'py>(
     // The client's settings are cheap to clone (shared handles). The request
     // runs on the Tokio runtime; `future_into_py` turns it into a Python awaitable.
     let client = client.settings.clone();
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    crate::python_exit::future_into_py(py, async move {
         let response = client
             .post_json("/decisions", &request_body)
             .await
