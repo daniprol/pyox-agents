@@ -32,8 +32,8 @@ use serde_json::{Map, Value, json};
 
 use crate::client::{ClientSettings, Transport, backoff_delay, is_retryable_status, wait_before_retry};
 use crate::errors::{
-    InvalidResponseError, NetworkError, RequestTimeoutError, api_error, error_for_http_failure, error_for_http_status,
-    error_for_response, header_text,
+    InvalidResponseError, NetworkError, RequestTimeoutError, api_error, error_code, error_for_http_failure,
+    error_for_http_status, error_for_response, header_text, invalid_response, with_request_id,
 };
 use crate::messages::{Content, ContentPart, Message, Reasoning, ToolCall, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, ResponsesOptions, StopReason};
@@ -360,8 +360,8 @@ pub struct EventReader {
 impl EventReader {
     /// Reads one event (the JSON text of an SSE event). Returns the new text, if any.
     pub fn add_event(&mut self, event_json: &str) -> PyResult<Option<String>> {
-        let event: StreamEvent = serde_json::from_str(event_json)
-            .map_err(|error| InvalidResponseError::new_err(format!("{error}: {event_json}")))?;
+        let event: StreamEvent =
+            serde_json::from_str(event_json).map_err(|error| invalid_response(error, event_json))?;
 
         match event.kind.as_str() {
             "response.output_text.delta" => Ok(event.delta.filter(|text| !text.is_empty())),
@@ -369,7 +369,7 @@ impl EventReader {
                 let response: FinishedResponse = event
                     .response
                     .and_then(|response| serde_json::from_value(response).ok())
-                    .ok_or_else(|| InvalidResponseError::new_err(format!("Invalid response: {event_json}")))?;
+                    .ok_or_else(|| invalid_response("Invalid response", event_json))?;
                 self.turn = Some(turn_from_response(response));
                 Ok(None)
             }
@@ -506,7 +506,9 @@ async fn stream_over_http(
             .map_err(error_for_http_failure)?;
         if sent.response.status().is_success() {
             let request_id = header_text(sent.response.headers(), "x-request-id");
-            let turn = read_events(sent.response, text_output).await?;
+            let turn = read_events(sent.response, text_output)
+                .await
+                .map_err(|error| with_request_id(error, &request_id))?;
             return Ok(AssistantTurn {
                 retries: sent.retries,
                 request_id,
@@ -520,7 +522,7 @@ async fn stream_over_http(
         // conversation: send all of it instead. This happens at most once,
         // since the second request has no `previous_response_id`.
         if have_whole_history(request, previous_response_id)
-            && error.to_string().contains("previous_response_not_found")
+            && error_code(&error).as_deref() == Some("previous_response_not_found")
         {
             previous_response_id = None;
             continue;

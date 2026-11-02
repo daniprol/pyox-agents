@@ -208,8 +208,9 @@ async def test_failing_hooks_stop_the_run(fake_openai: FakeOpenAI, make_agent: M
     def broken(ctx: RunContext, request: ModelRequest) -> Any:
         return "not a request"
 
-    with pytest.raises(PermissionError, match="Runs are disabled"):
+    with pytest.raises(HookError, match="before_run hook raised PermissionError: Runs are disabled") as raised:
         await make_agent(hooks=[Hooks(before_run=no_runs)]).run("Hi")
+    assert isinstance(raised.value.__cause__, PermissionError)
     with pytest.raises(HookError, match="before_model_request hook returned an invalid value"):
         await make_agent(hooks=[Hooks(before_model_request=broken)]).run("Hi")
     assert fake_openai.requests == []

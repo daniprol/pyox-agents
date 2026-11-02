@@ -15,9 +15,18 @@
 //! - **Subagents** (`agent.as_tool(...)`): another agent, run by the agent loop (see `subagents`).
 //!
 //! Any tool object may have a `requires_approval` attribute: `True`, or a
-//! function `(ctx, arguments) -> bool` deciding for each call.
+//! function `(ctx, arguments) -> bool` deciding for each call, and an
+//! `on_error` attribute: a function `(ctx, call, error)` choosing what the
+//! model reads when the tool fails (see `agent::failure_result`).
+//!
+//! A failing tool never stops the run by itself: the model gets an error
+//! result and decides what to do. `ToolDefinition::run` returns the failure
+//! as a Python exception (`Err(PyErr)`), so the `on_error` and `on_tool_error`
+//! functions see the real exception.
 
-use pyo3::exceptions::PyValueError;
+use std::time::Duration;
+
+use pyo3::exceptions::{PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
 use pyox_tools::native::NativeTool;
 use serde_json::{Map, Value};
@@ -40,6 +49,10 @@ pub struct ToolDefinition {
     pub parameters: Value,
     pub implementation: ToolImplementation,
     pub approval: Approval,
+    /// The tool's own `on_error(ctx, call, error)` function, if it has one.
+    pub on_error: Option<Py<PyAny>>,
+    /// How long a call may take (`timeout_seconds`), if limited.
+    pub timeout: Option<Duration>,
 }
 
 /// Whether a call must be approved by a person before the tool runs.
@@ -94,6 +107,41 @@ fn is_set(tool: &Bound<'_, PyAny>, name: &str) -> PyResult<bool> {
     }
 }
 
+/// A tool's `timeout_seconds`, checked.
+fn timeout_from_seconds(seconds: f64) -> PyResult<Duration> {
+    Duration::try_from_secs_f64(seconds)
+        .ok()
+        .filter(|timeout| !timeout.is_zero())
+        .ok_or_else(|| PyValueError::new_err(format!("`timeout_seconds` must be a positive number, got {seconds}")))
+}
+
+/// `pyox_agents.ToolFailed(message)`: a tool failure whose message the model reads as it is.
+pub fn tool_failed(message: impl Into<String>) -> PyErr {
+    let message = message.into();
+    Python::attach(|py| {
+        match py
+            .import("pyox_agents.tools")
+            .and_then(|tools| tools.getattr("ToolFailed"))
+        {
+            Ok(tool_failed) => PyErr::from_type(tool_failed.cast_into().expect("ToolFailed is a class"), message),
+            Err(import_error) => import_error,
+        }
+    })
+}
+
+/// `pyox_agents.InvalidArguments(tool_name, [problem])`: the model's arguments do not fit the tool.
+pub fn invalid_arguments(tool_name: &str, problem: String) -> PyErr {
+    Python::attach(|py| {
+        let error = py
+            .import("pyox_agents.tools")
+            .and_then(|tools| tools.getattr("InvalidArguments")?.call1((tool_name, vec![problem])));
+        match error {
+            Ok(error) => PyErr::from_value(error),
+            Err(import_error) => import_error,
+        }
+    })
+}
+
 /// A tool result telling the model something went wrong.
 pub fn error_result(message: impl Into<String>) -> ToolResult {
     ToolResult {
@@ -141,12 +189,20 @@ impl ToolDefinition {
                 )));
             }
         };
+        // `getattr` with a default: tools without `on_error` (or with `None`) have none.
+        let on_error = tool.getattr("on_error").ok().filter(|function| !function.is_none());
+        let timeout = match tool.getattr("timeout_seconds") {
+            Ok(seconds) if !seconds.is_none() => Some(timeout_from_seconds(seconds.extract()?)?),
+            _ => None,
+        };
         Ok(ToolDefinition {
             name: tool.getattr("name")?.extract()?,
             description: tool.getattr("description")?.extract()?,
             parameters: python_to_json(&tool.getattr("parameters")?)?,
             implementation,
             approval,
+            on_error: on_error.map(Bound::unbind),
+            timeout,
         })
     }
 
@@ -175,17 +231,19 @@ impl ToolDefinition {
             },
             implementation: ToolImplementation::Frontend,
             approval: Approval::Never,
+            on_error: None,
+            timeout: None,
         })
     }
 
-    /// The approval request this call needs, if any. `Err` is the error
-    /// result for the model when the `requires_approval` function failed.
+    /// The approval request this call needs, if any. `Err` is the exception
+    /// the `requires_approval` function raised.
     pub async fn approval_request(
         &self,
         call_log: &SharedCallLog,
         context: &Context,
         python_calls: &PythonCalls,
-    ) -> Result<Option<Request>, ToolResult> {
+    ) -> PyResult<Option<Request>> {
         let needs_approval = match &self.approval {
             Approval::Never => false,
             Approval::Always => true,
@@ -204,16 +262,38 @@ impl ToolDefinition {
                     },
                     python_calls,
                 )
-                .await
-                .and_then(|answer| Python::attach(|py| answer.bind(py).is_truthy()));
-                answer.map_err(|python_error| error_result(python_error.to_string()))?
+                .await?;
+                Python::attach(|py| answer.bind(py).is_truthy())?
             }
         };
         Ok(needs_approval.then(|| new_request(RequestKind::Approval, Value::Null, Value::Null)))
     }
 
-    /// Runs the tool. Errors never stop the agent: they are returned to the
-    /// model as an error result, so it can react (for example, retry).
+    /// Runs the tool, giving up after its `timeout` (a `TimeoutError`).
+    /// Giving up drops the call: an async Python tool is cancelled.
+    pub async fn run_with_timeout(
+        &self,
+        call: &ToolCall,
+        call_log: &SharedCallLog,
+        context: &Context,
+        python_calls: &PythonCalls,
+    ) -> PyResult<ToolResult> {
+        let running = self.run(call, call_log, context, python_calls);
+        let Some(timeout) = self.timeout else {
+            return running.await;
+        };
+        match tokio::time::timeout(timeout, running).await {
+            Ok(outcome) => outcome,
+            Err(_) => Err(PyTimeoutError::new_err(format!(
+                "Tool {:?} timed out after {} seconds",
+                self.name,
+                timeout.as_secs_f64()
+            ))),
+        }
+    }
+
+    /// Runs the tool. `Err` is the exception it failed with: a Python tool's
+    /// own exception, or a `ToolFailed` for a Rust tool's error message.
     /// `call_log` is what the call asked so far (Python tools see it through `ctx`).
     pub async fn run(
         &self,
@@ -221,9 +301,11 @@ impl ToolDefinition {
         call_log: &SharedCallLog,
         context: &Context,
         python_calls: &PythonCalls,
-    ) -> ToolResult {
+    ) -> PyResult<ToolResult> {
         let Value::Object(arguments) = &call.arguments else {
-            return error_result(format!("Tool arguments must be a JSON object, got: {}", call.arguments));
+            // Arguments that are not valid JSON are kept as the model's text.
+            let problem = format!("the arguments must be a JSON object, got {}", call.arguments);
+            return Err(invalid_arguments(&self.name, problem));
         };
 
         match &self.implementation {
@@ -242,11 +324,7 @@ impl ToolDefinition {
                     true => python_calls.on_worker_thread(),
                     false => python_calls.clone(),
                 };
-                match run_python_tool(tool, arguments, context, &python_calls).await {
-                    Ok(result) => result,
-                    // `to_string()` gives e.g. "ValueError: city not found".
-                    Err(python_error) => error_result(python_error.to_string()),
-                }
+                run_python_tool(tool, arguments, context, &python_calls).await
             }
             ToolImplementation::Frontend
             | ToolImplementation::Subagent(_)
@@ -259,11 +337,14 @@ impl ToolDefinition {
 /// Runs a Rust tool on a thread meant for blocking work, so slow tools
 /// (file access, heavy computation) do not block the network tasks.
 /// No Python is involved.
-async fn run_rust_tool(tool_name: &str, run: impl FnOnce() -> Result<String, String> + Send + 'static) -> ToolResult {
+async fn run_rust_tool(
+    tool_name: &str,
+    run: impl FnOnce() -> Result<String, String> + Send + 'static,
+) -> PyResult<ToolResult> {
     match tokio::task::spawn_blocking(run).await {
-        Ok(Ok(content)) => success_result(content, Value::Null),
-        Ok(Err(message)) => error_result(message),
-        Err(_) => error_result(format!("Tool {tool_name} crashed")),
+        Ok(Ok(content)) => Ok(success_result(content, Value::Null)),
+        Ok(Err(message)) => Err(tool_failed(message)),
+        Err(_) => Err(tool_failed(format!("Tool {tool_name} crashed"))),
     }
 }
 

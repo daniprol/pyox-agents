@@ -27,6 +27,8 @@ from pyox_agents._core import (
     RunFinished,
     ScoreAnswer,
     StateChanged,
+    StopRun,
+    StopToolCall,
     SubagentFinished,
     SubagentStarted,
     SyncRun,
@@ -60,7 +62,17 @@ from pyox_agents.messages import (
 )
 from pyox_agents.subagents import StateAccess, Subagent, TalkTo
 from pyox_agents.telemetry import Instrumentation, instrument
-from pyox_agents.tools import RequiresApproval, Tool, ToolContent, ToolLike, ToolReturn, tool
+from pyox_agents.tools import (
+    InvalidArguments,
+    OnToolError,
+    RequiresApproval,
+    Tool,
+    ToolContent,
+    ToolFailed,
+    ToolLike,
+    ToolReturn,
+    tool,
+)
 
 DecisionAnswer = PredicateAnswer | ChoiceAnswer | ScoreAnswer | Refusal
 """Any answer in a `Decision`."""
@@ -107,6 +119,7 @@ __all__ = [
     "ImagePart",
     "InputRequested",
     "Instrumentation",
+    "InvalidArguments",
     "InvalidResponseError",
     "LoadHistory",
     "MaxTurnsExceededError",
@@ -114,6 +127,7 @@ __all__ = [
     "ModelRequest",
     "NetworkError",
     "OnRequest",
+    "OnToolError",
     "PendingRequestsError",
     "Predicate",
     "PredicateAnswer",
@@ -135,6 +149,8 @@ __all__ = [
     "StateAccess",
     "StateChanged",
     "StopReason",
+    "StopRun",
+    "StopToolCall",
     "Subagent",
     "SubagentFinished",
     "SubagentStarted",
@@ -146,6 +162,7 @@ __all__ = [
     "Tool",
     "ToolCall",
     "ToolContent",
+    "ToolFailed",
     "ToolFinished",
     "ToolLike",
     "ToolMessage",

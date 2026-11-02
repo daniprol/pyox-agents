@@ -71,6 +71,21 @@ impl Usage {
         total
     }
 
+    /// Lets `pickle` and `copy` rebuild a `Usage` (`Usage.__new__(**fields)`),
+    /// so errors carrying one can cross process boundaries (Celery, multiprocessing).
+    fn __getnewargs_ex__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(Bound<'py, pyo3::types::PyTuple>, Bound<'py, pyo3::types::PyDict>)> {
+        let fields = pyo3::types::PyDict::new(py);
+        fields.set_item("input_tokens", self.input_tokens)?;
+        fields.set_item("cached_input_tokens", self.cached_input_tokens)?;
+        fields.set_item("output_tokens", self.output_tokens)?;
+        fields.set_item("reasoning_tokens", self.reasoning_tokens)?;
+        fields.set_item("requests", self.requests)?;
+        Ok((pyo3::types::PyTuple::empty(py), fields))
+    }
+
     pub fn __repr__(&self) -> String {
         format!(
             "Usage(input_tokens={}, cached_input_tokens={}, output_tokens={}, reasoning_tokens={}, requests={})",

@@ -425,6 +425,8 @@ class AgentError(Exception):
 class ApiError(AgentError):
     status_code: int | None
     """The HTTP status; `None` for an error that came inside a stream."""
+    code: str | None
+    """OpenAI's error code, like `"rate_limit_exceeded"` or `"context_length_exceeded"`, if it gave one."""
     body: Any
     """The error body: parsed JSON (usually `{"error": {...}}`) when it is JSON, else the text."""
     request_id: str | None
@@ -438,9 +440,18 @@ class RequestTimeoutError(AgentError): ...
 class NetworkError(AgentError): ...
 class InvalidResponseError(AgentError): ...
 class MaxTurnsExceededError(AgentError): ...
-class HistoryError(AgentError): ...
-class HookError(AgentError): ...
+
+class HistoryError(AgentError):
+    """A history store failed. When your store raised, its exception is `__cause__`."""
+
+class HookError(AgentError):
+    """A hook (or `on_request`) raised or returned something invalid. When your code raised,
+    its exception is `__cause__`."""
+
 class PendingRequestsError(AgentError): ...
+
+class StopRun(AgentError):  # noqa: N818 (an instruction, like `StopIteration`)
+    """Raise in a tool or a hook to end the run. The run raises it, with `messages` and `usage`."""
 
 class StopToolCall(BaseException):
     """Raised by `ctx.ask` to stop a tool that must wait or was denied. Do not catch it."""

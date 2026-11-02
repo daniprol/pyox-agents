@@ -17,7 +17,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyString};
 use pyox_tools::native_history::NativeHistoryStore;
 
-use crate::errors::HistoryError;
+use crate::errors::{HistoryError, wrap_user_error};
 use crate::json_convert::python_to_json;
 use crate::messages::Message;
 use crate::python_call::{PythonCalls, call_python};
@@ -100,7 +100,8 @@ impl HistoryStore {
                     move |py| Ok(vec![conversation_id.into_pyobject(py)?.into_any()]),
                     python_calls,
                 )
-                .await?;
+                .await
+                .map_err(|error| wrap_user_error::<HistoryError>(error, "The history store's `load`"))?;
                 Python::attach(|py| messages_from_python(result.bind(py)).map_err(|error| error.value(py).to_string()))
             }
         };
@@ -138,7 +139,8 @@ impl HistoryStore {
                     },
                     python_calls,
                 )
-                .await?;
+                .await
+                .map_err(|error| wrap_user_error::<HistoryError>(error, "The history store's `save`"))?;
                 Ok(())
             }
             HistoryStore::Python { save: None, .. } => Ok(()),

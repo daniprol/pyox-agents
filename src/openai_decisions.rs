@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::client::Client;
-use crate::errors::{InvalidResponseError, error_for_http_failure, error_for_response, header_text};
+use crate::errors::{error_for_http_failure, error_for_response, header_text, invalid_response};
 use crate::history_store::messages_from_python;
 use crate::json_convert::{json_to_python, python_to_json};
 use crate::messages::content_from_python;
@@ -151,8 +151,8 @@ impl Answer {
 }
 
 fn read_decision(response_body: &str, request_id: Option<String>) -> PyResult<Decision> {
-    let response: DecisionResponse = serde_json::from_str(response_body)
-        .map_err(|error| InvalidResponseError::new_err(format!("{error}: {response_body}")))?;
+    let response: DecisionResponse =
+        serde_json::from_str(response_body).map_err(|error| invalid_response(error, response_body))?;
     Ok(Decision {
         model: response.model,
         usage: response.usage.into_usage(),

@@ -171,9 +171,17 @@ pub fn backoff_delay(retries_done: u32) -> Duration {
     full_delay.mul_f64(1.0 - 0.25 * random_fraction)
 }
 
-/// Waits 0.1 s before the first retry, then 0.2 s, 0.4 s...
+/// Waits 0.1 s before the first retry, then 0.2 s, 0.4 s... up to 6.4 s.
 pub async fn wait_before_retry(retries_done: u32) {
-    tokio::time::sleep(Duration::from_millis(100 << retries_done)).await;
+    tokio::time::sleep(Duration::from_millis(100 << retries_done.min(6))).await;
+}
+
+/// A timeout given in seconds, checked: a negative, infinite or NaN number is a mistake.
+fn seconds(name: &str, value: f64) -> PyResult<Duration> {
+    Duration::try_from_secs_f64(value)
+        .ok()
+        .filter(|_| value.is_finite())
+        .ok_or_else(|| PyValueError::new_err(format!("`{name}` must be a positive number of seconds, got {value}")))
 }
 
 /// True for connection problems; false for timeouts (retrying would only make the wait longer).
@@ -234,8 +242,10 @@ impl Client {
         let mut builder = reqwest::Client::builder()
             .default_headers(default_headers)
             .redirect(reqwest::redirect::Policy::custom(follow_redirect))
-            .connect_timeout(Duration::from_secs_f64(connect_timeout_seconds));
-        let request_timeout = request_timeout_seconds.map(Duration::from_secs_f64);
+            .connect_timeout(seconds("connect_timeout_seconds", connect_timeout_seconds)?);
+        let request_timeout = request_timeout_seconds
+            .map(|limit| seconds("request_timeout_seconds", limit))
+            .transpose()?;
         if let Some(request_timeout) = request_timeout {
             builder = builder.timeout(request_timeout);
         }

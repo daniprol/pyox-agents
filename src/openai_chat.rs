@@ -17,7 +17,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::client::ClientSettings;
-use crate::errors::{InvalidResponseError, api_error, error_for_http_failure, error_for_response, header_text};
+use crate::errors::{
+    InvalidResponseError, api_error, error_for_http_failure, error_for_response, header_text, invalid_response,
+    with_request_id,
+};
 use crate::messages::{Content, ContentPart, Message, ToolCall, arguments_as_text, arguments_from_text};
 use crate::model_api::{AssistantTurn, ModelRequest, StopReason};
 use crate::sse::SseDecoder;
@@ -256,8 +259,8 @@ pub struct ChunkAccumulator {
 impl ChunkAccumulator {
     /// Adds one chunk (the JSON text of an SSE event). Returns the new text, if any.
     pub fn add_chunk(&mut self, chunk_json: &str) -> PyResult<Option<String>> {
-        let chunk: ChatCompletionChunk = serde_json::from_str(chunk_json)
-            .map_err(|error| InvalidResponseError::new_err(format!("{error}: {chunk_json}")))?;
+        let chunk: ChatCompletionChunk =
+            serde_json::from_str(chunk_json).map_err(|error| invalid_response(error, chunk_json))?;
 
         if let Some(error) = chunk.error {
             return Err(api_error(None, &error.to_string(), None, None));
@@ -384,7 +387,8 @@ pub async fn stream_chat_completion(
                 received_done = true;
                 break 'reading;
             }
-            if let Some(text) = accumulator.add_chunk(&event_data)? {
+            let text = accumulator.add_chunk(&event_data);
+            if let Some(text) = text.map_err(|error| with_request_id(error, &request_id))? {
                 text_output.push(&text).await;
             }
         }
@@ -393,7 +397,9 @@ pub async fn stream_chat_completion(
         && let Some(event_data) = sse_decoder.finish()
         && event_data != "[DONE]"
     {
-        accumulator.add_chunk(&event_data)?;
+        accumulator
+            .add_chunk(&event_data)
+            .map_err(|error| with_request_id(error, &request_id))?;
     }
 
     if !received_done && !accumulator.finished {

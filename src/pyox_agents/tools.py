@@ -1,4 +1,5 @@
-"""Python tools: the `Tool` class and the `@tool` decorator."""
+"""Python tools: the `Tool` class and the `@tool` decorator, and the
+exceptions a tool raises to choose what the model reads when it fails."""
 
 import inspect
 import json
@@ -8,7 +9,7 @@ from typing import Any, Protocol, get_type_hints, overload
 
 from pyox_agents._core import RunContext
 from pyox_agents.messages import ContentPart
-from pyox_agents.schema import JsonSchema, from_json, json_schema, needs_conversion
+from pyox_agents.schema import JsonSchema, from_json, json_schema, type_problems, validation_problems
 
 ToolContent = str | list[str | ContentPart]
 """What the model reads from a tool: text, or a list of text, images and files."""
@@ -31,6 +32,35 @@ class ToolLike(Protocol):
 
 RequiresApproval = bool | Callable[[RunContext, dict[str, Any]], bool | Awaitable[bool]]
 """`True` to approve every call, or a function deciding per call from `ctx` and the arguments."""
+
+OnToolError = Callable[[RunContext, Any, Exception], Any]
+"""`on_error(ctx, call, error)`: what the model reads when a tool fails. Return `None` for the
+default text or a `str`; raise (e.g. `StopRun`) to end the run. The function may be async.
+Works like `Hooks.on_tool_error`, and is asked first."""
+
+
+class ToolFailed(Exception):  # noqa: N818 (it reads as what happened, like `StopRun`)
+    """Raise in a tool to tell the model it failed, with exactly this message
+    (other exceptions are shown as "ValueError: message"). The run goes on, and
+    the model decides what to do next.
+
+        raise ToolFailed(f"No flights from {origin} on {date}. Try another date.")
+    """
+
+
+class InvalidArguments(ToolFailed):
+    """The model called a tool with arguments that do not fit it (missing, of the
+    wrong type, not valid JSON...). The model reads what is wrong, one line per
+    problem, and decides whether to call the tool again. `errors` lists the problems."""
+
+    def __init__(self, tool_name: str, errors: list[str]) -> None:
+        lines = "\n".join(f"- {error}" for error in errors)
+        super().__init__(f"Invalid arguments for {tool_name}:\n{lines}")
+        self.tool_name = tool_name
+        self.errors = errors
+
+    def __reduce__(self) -> tuple[Any, ...]:  # for `pickle` and `copy`
+        return (type(self), (self.tool_name, self.errors))
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +93,12 @@ class Tool:
     `requires_approval`: the call waits for a person's `Approve` before it runs
     (see `pyox_agents.human_input`). `frontend=True`: the tool has no Python
     code; the app runs it and sends back the result (`function` is never called).
+
+    `on_error(ctx, call, error)`: chooses what the model reads when this tool
+    fails, before the agent's `on_tool_error` hooks (see `OnToolError`).
+    `timeout_seconds`: stop waiting for a call that takes longer; the model reads
+    that it timed out. An async tool is cancelled; a sync one cannot be
+    interrupted, and finishes on its own in the background.
     """
 
     name: str
@@ -73,8 +109,11 @@ class Tool:
     takes_ctx: bool = False
     requires_approval: RequiresApproval = False
     frontend: bool = False
+    on_error: OnToolError | None = None
+    timeout_seconds: float | None = None
     argument_types: Mapping[str, Any] = field(default_factory=dict)
-    """Types of the arguments built from JSON before the call (dataclasses, pydantic models)."""
+    """The type of each argument, set by `@tool`: the model's arguments are checked against
+    them, and dataclasses and pydantic models built from JSON, before the call."""
 
     @staticmethod
     def frontend_tool(name: str, description: str, parameters: JsonSchema) -> "Tool":
@@ -90,14 +129,32 @@ class Tool:
         (the agent loop picks the thread); an async one gives a coroutine to await."""
         positional = (ctx,) if self.takes_ctx else ()
         if self.argument_types:
-            arguments = {
-                name: from_json(self.argument_types[name], value) if name in self.argument_types else value
-                for name, value in arguments.items()
-            }
+            arguments = self._checked_arguments(arguments)
         result = self.function(*positional, **arguments)
         if inspect.isawaitable(result):
             return _tool_result_when_done(result)
         return _tool_result(result)
+
+    def _checked_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """The model's arguments, checked against the parameter types, with dataclasses and
+        pydantic models built from JSON. Raises `InvalidArguments` listing every problem."""
+        problems = [f"{name}: missing" for name in self.parameters.get("required", []) if name not in arguments]
+        checked = {}
+        for name, value in arguments.items():
+            if name not in self.argument_types:
+                problems.append(f"{name}: not a parameter of this tool")
+                continue
+            annotation = self.argument_types[name]
+            found = type_problems(annotation, value, name)
+            if not found:
+                try:
+                    checked[name] = from_json(annotation, value)
+                except Exception as error:  # a pydantic `ValidationError`, or a dataclass's own check
+                    found = validation_problems(error, name)
+            problems.extend(found)
+        if problems:
+            raise InvalidArguments(self.name, problems)
+        return checked
 
 
 async def _tool_result_when_done(result: Awaitable[Any]) -> ToolContent | ToolReturn:
@@ -145,6 +202,8 @@ def tool(
     run_in_thread: bool = False,
     requires_approval: RequiresApproval = False,
     frontend: bool = False,
+    on_error: OnToolError | None = None,
+    timeout_seconds: float | None = None,
 ) -> Callable[[Callable[..., Any]], Tool]: ...
 
 
@@ -157,6 +216,8 @@ def tool(
     run_in_thread: bool = False,
     requires_approval: RequiresApproval = False,
     frontend: bool = False,
+    on_error: OnToolError | None = None,
+    timeout_seconds: float | None = None,
 ) -> Tool | Callable[[Callable[..., Any]], Tool]:
     """Turn a function into a `Tool`, building the JSON schema from its signature.
 
@@ -174,6 +235,9 @@ def tool(
         async def my_orders(ctx: RunContext[Database]) -> list[str]:
             '''List the user's orders.'''
             return await ctx.deps.orders(ctx.conversation_id)
+
+    The model's arguments are checked against the parameter types before the call. When
+    they do not fit, the model reads what is wrong and decides whether to try again.
 
     `requires_approval=True` makes each call wait for a person's approval.
     `frontend=True` declares a tool the app runs: only the signature and the
@@ -194,6 +258,8 @@ def tool(
             takes_ctx=takes_ctx(function),
             requires_approval=requires_approval,
             frontend=frontend,
+            on_error=on_error,
+            timeout_seconds=timeout_seconds,
             argument_types=argument_types(function),
         )
 
@@ -224,13 +290,13 @@ def parameters_schema(function: Callable[..., Any]) -> JsonSchema:
 
 
 def argument_types(function: Callable[..., Any]) -> dict[str, Any]:
-    """The parameters of `function` whose JSON value is built into a dataclass or pydantic model."""
+    """The type of each parameter the model fills in (`Any` when it has none). Empty for a
+    function taking `**kwargs`, whose arguments cannot be checked."""
     type_hints = get_type_hints(function, include_extras=True)
-    return {
-        parameter.name: type_hints[parameter.name]
-        for parameter in _model_parameters(function)
-        if needs_conversion(type_hints.get(parameter.name))
-    }
+    parameters = _model_parameters(function)
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return {}
+    return {parameter.name: type_hints.get(parameter.name, Any) for parameter in parameters}
 
 
 def _model_parameters(function: Callable[..., Any]) -> list[inspect.Parameter]:
