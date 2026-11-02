@@ -32,6 +32,7 @@ hooks = [
 
     # On push
     { id = "ty", name = "ty check", entry = "uv run --frozen ty check", language = "system", types_or = ["python", "pyi"], pass_filenames = false, stages = ["pre-push"] },
+    { id = "stubtest", name = "stubtest (_core.pyi matches the Rust module)", entry = "uv run --frozen python -m mypy.stubtest pyox_agents._core --allowlist stubtest-allowlist.txt", language = "system", types_or = ["pyi", "rust"], pass_filenames = false, stages = ["pre-push"] },
     { id = "cargo-clippy", name = "cargo clippy", entry = "cargo clippy --workspace --all-targets -- -D warnings", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
     { id = "cargo-test", name = "cargo test", entry = "scripts/cargo-test.sh --workspace", language = "system", types = ["rust"], pass_filenames = false, stages = ["pre-push"] },
     { id = "pytest", name = "pytest", entry = "uv run --frozen pytest", language = "system", types_or = ["python", "rust"], pass_filenames = false, stages = ["pre-push"] },

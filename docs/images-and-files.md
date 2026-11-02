@@ -75,5 +75,5 @@ The history keeps the tool message's `content` as that list, `ToolFinished.conte
 ## Example
 
 ```python
---8<-- "examples/images_and_files.py"
+--8 < --"examples/images_and_files.py"
 ```

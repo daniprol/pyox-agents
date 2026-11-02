@@ -73,7 +73,7 @@ class RunInput:
     body: dict[str, Any] = field(default_factory=dict)  # the whole request
 
 
-def stream(agent: Agent, body: bytes | str | Mapping[str, Any], **execute_options: Any) -> ProtocolStream:
+def stream(agent: Agent[Any], body: bytes | str | Mapping[str, Any], **execute_options: Any) -> ProtocolStream:
     """Runs the agent for an AG-UI request and returns its AG-UI event stream.
 
     `execute_options` go to `agent.execute` (`deps=...`). With `conversation_id=`, the

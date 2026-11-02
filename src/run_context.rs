@@ -292,7 +292,7 @@ impl PythonRunContext {
     /// that is slow, random, or changes something. The result must be JSON
     /// (it is saved in the history), and is returned as JSON gives it back
     /// (e.g. tuples become lists), the first time too. `function` may be async.
-    #[pyo3(signature = (name, function, *args, **kwargs))]
+    #[pyo3(signature = (name, function, /, *args, **kwargs))]
     fn step<'py>(
         &self,
         py: Python<'py>,
@@ -307,7 +307,7 @@ impl PythonRunContext {
     }
 
     /// `step` for sync tools: `flights = ctx.step_sync("search", search_flights, city)`.
-    #[pyo3(signature = (name, function, *args, **kwargs))]
+    #[pyo3(signature = (name, function, /, *args, **kwargs))]
     fn step_sync(
         &self,
         py: Python<'_>,

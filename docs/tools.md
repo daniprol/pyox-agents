@@ -114,7 +114,7 @@ impl RustTool for CountWords {
 Register it in the module with `add_tool::<CountWords>(module)?`, then use it from Python:
 
 ```python
---8<-- "examples/rust_tools.py"
+--8 < --"examples/rust_tools.py"
 ```
 
 When the model calls these tools, the agent runs your Rust function directly: no Python is involved.

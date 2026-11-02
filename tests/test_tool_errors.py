@@ -75,7 +75,7 @@ async def test_unexpected_tool_errors_are_logged(
     [record] = [record for record in caplog.records if record.name == "pyox_agents"]
     assert record.levelno == logging.WARNING
     assert record.getMessage() == "Tool 'read_config' failed"
-    assert record.exc_info is not None
+    assert isinstance(record.exc_info, tuple)
     assert isinstance(record.exc_info[1], FileNotFoundError)
 
 

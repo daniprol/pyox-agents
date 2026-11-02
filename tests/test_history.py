@@ -1,6 +1,7 @@
 """History: passing it directly, and loading/saving it with Python history stores."""
 
 import json
+from typing import Any
 
 import pytest
 
@@ -29,7 +30,7 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-def sent_messages(fake_openai: FakeOpenAI, request_index: int = 0) -> list[dict]:
+def sent_messages(fake_openai: FakeOpenAI, request_index: int = 0) -> list[dict[str, Any]]:
     return fake_openai.requests[request_index].body["messages"]
 
 

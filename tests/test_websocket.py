@@ -29,7 +29,7 @@ def add(a: int, b: int) -> int:
 def make_websocket_agent(websocket_client: Client) -> MakeAgent:
     """Responses API agents whose client uses WebSocket: `make_websocket_agent(tools=[...])`."""
 
-    def make(**options: Any) -> Agent:
+    def make(**options: Any) -> Agent[Any]:
         return Agent(client=websocket_client, model="test-model", api="responses", **options)
 
     return make

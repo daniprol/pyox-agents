@@ -216,7 +216,7 @@ async def test_ask_sync_is_for_sync_tools(fake_openai: FakeOpenAI, make_agent: M
     @tool
     async def wrong(ctx: RunContext) -> str:
         """Asks the wrong way."""
-        return ctx.ask_sync("?")
+        return ctx.ask_sync("?").value
 
     fake_openai.queue(tool_calls_response(tool_call("wrong")), text_response("Done"))
 

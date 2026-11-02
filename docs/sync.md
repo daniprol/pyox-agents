@@ -14,7 +14,7 @@ tasks, notebooks.
 The arguments are the same.
 
 ```python
---8<-- "examples/sync.py"
+--8 < --"examples/sync.py"
 ```
 
 ## How it works
@@ -42,9 +42,11 @@ it needs it, and keeps for the life of the process, so async clients made by one
 from django.http import JsonResponse, StreamingHttpResponse
 from pyox_agents import ai_sdk
 
+
 def chat(request):
     result = agent.run_sync(request.POST["prompt"], deps=request.user)
     return JsonResponse({"text": result.text})
+
 
 def chat_stream(request):  # for `useChat`, see Web frontends
     chat = ai_sdk.parse(request.body)

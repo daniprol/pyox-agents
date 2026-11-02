@@ -2,14 +2,14 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict, assert_type
 
 import pytest
 
 from conftest import MakeAgent
 from factories import responses_answer, text_response
 from fake_openai import FakeOpenAI, StreamResponse
-from pyox_agents import InvalidResponseError
+from pyox_agents import Agent, Client, InvalidResponseError, Run, RunFinished
 from pyox_agents.schema import output_format
 
 
@@ -164,3 +164,18 @@ async def test_without_output_type_there_is_no_output(fake_openai: FakeOpenAI, m
 def test_output_type_must_be_an_object() -> None:
     with pytest.raises(TypeError, match="JSON object"):
         output_format(list[str])
+
+
+async def test_the_output_type_reaches_every_event_of_the_run(fake_openai: FakeOpenAI, client: Client) -> None:
+    fake_openai.queue(text_response(TICKET_JSON))
+    agent = Agent(model="test-model", client=client, output_type=Ticket)
+
+    # `ty` checks these types; at run time `assert_type` does nothing.
+    run = agent.execute("The printer is on fire")
+    assert_type(run, Run[Ticket])
+    async for events in run.batches():
+        for event in events:
+            if isinstance(event, RunFinished):
+                assert_type(event.output, Ticket | None)
+                assert event.output is not None
+                assert event.output.team == "support"

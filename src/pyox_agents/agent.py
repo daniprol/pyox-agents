@@ -176,7 +176,7 @@ class Agent(Generic[OutputT]):
         tools: Sequence[ToolLike | Subagent | Callable[..., Any]] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
-    ) -> Run:
+    ) -> Run[OutputT]:
         """Start a run and stream its events: `async for event in agent.execute(...)`.
 
         `prompt` is text, or a list of text, images and files: `["What is this?", image("cat.png")]`.
@@ -237,7 +237,7 @@ class Agent(Generic[OutputT]):
         tools: Sequence[ToolLike | Subagent | Callable[..., Any]] | None = None,
         frontend_tools: Sequence[Mapping[str, Any]] | None = None,
         state: Any = None,
-    ) -> SyncRun:
+    ) -> SyncRun[OutputT]:
         """`execute`, for code without an event loop: `for event in agent.execute_sync(...)`.
 
         Read it event by event, in batches (`run.batches()`) or as a web stream: in Django,
