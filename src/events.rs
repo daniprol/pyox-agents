@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyox_tools::usage::Usage;
@@ -245,6 +246,21 @@ impl SubagentFinished {
 
 #[pymethods]
 impl RunFinished {
+    /// Called only for attributes `RunFinished` does not have. The web
+    /// streams belong to the run, not to its result: say where they are.
+    fn __getattr__(&self, name: &str) -> PyResult<Py<PyAny>> {
+        let hint = match name {
+            "ai_sdk" | "ag_ui" | "batches" => format!(
+                ": `agent.run(...)` returns only the result. For `{name}()`, stream the run: \
+                 `agent.stream(...).{name}(...)` (or `agent.stream_sync(...)`)"
+            ),
+            _ => String::new(),
+        };
+        Err(PyAttributeError::new_err(format!(
+            "'RunFinished' object has no attribute '{name}'{hint}"
+        )))
+    }
+
     /// The full conversation (without the system prompt), as a list of dicts.
     /// Pass it as `history=` to continue the conversation.
     #[getter]
