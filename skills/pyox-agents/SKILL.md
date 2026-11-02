@@ -17,6 +17,8 @@ Rust. Python code defines agents and tools; the API is `async`, with sync twins 
 - `agent.stream(...)` returns a `Run` to iterate with `async for`; `await agent.run(...)` returns the final
   `RunFinished`. Both take `history=`, `conversation_id=`, `deps=`, `answers=`, `on_request=`, `state=`, and
   `tools=` (extra tools for that run only, e.g. a user's own MCP server).
+- Web streams (`run.ai_sdk()`, `run.ag_ui(...)`, `run.batches()`) exist only on the `Run` from `stream()`, never on
+  the `RunFinished` from `run()`.
 - In sync code (scripts, Django/Flask views, Celery), use `agent.run_sync(...)` and `for event in
   agent.stream_sync(...)` instead; sync tools then use `ctx.ask_sync` / `ctx.step_sync`. Never wrap the async
   API in `asyncio.run` for this.
