@@ -27,7 +27,8 @@ order it asked for the calls.
 
 A subagent's events come in the same stream, with `subagent_id` set (it is `None` for the main agent's events).
 
-`await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event. Without an
+`await agent.run(prompt)` does the same run without streaming and returns the `RunFinished` event. It has no
+[web streams](web-frontends.md): `ai_sdk()` and `ag_ui()` are on the run `stream()` returns. Without an
 event loop (scripts, Django, Celery), use `agent.run_sync(prompt)` and `for event in agent.stream_sync(prompt)`:
 see [Sync code](sync.md).
 
