@@ -26,7 +26,8 @@ nav = [
   { "Hooks" = "hooks.md" },
   { "MCP servers" = "mcp.md" },
   { "Tracing (OpenTelemetry)" = "telemetry.md" },
-  { "Client and errors" = "client.md" },
+  { "Errors" = "errors.md" },
+  { "Client" = "client.md" },
   { "Benchmarks" = "benchmarks.md" },
 ]
 

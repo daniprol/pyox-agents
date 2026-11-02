@@ -10,6 +10,7 @@ Return `None` to leave things as they are, or a new value to replace them:
 | `after_model_response(ctx, message)`   | after each model response          | assistant message                       |
 | `before_tool_call(ctx, call)`          | before each tool call              | call (e.g. other `arguments`)           |
 | `after_tool_call(ctx, call, result)`   | after each tool call               | result (`{"content", "is_error"}`)      |
+| `on_tool_error(ctx, call, error)`      | a tool call failed                 | text the model reads (a `str`)          |
 | `after_run(ctx, result)`               | the run finished (`RunFinished`)   | -                                       |
 
 `ctx` is the same [`RunContext`](tools.md#run-context-and-dependencies) tools get.
@@ -35,7 +36,8 @@ agent = Agent(model="gpt-5-mini", tools=[...], hooks=[Hooks(before_tool_call=no_
 
 - Hooks can be sync or async, and run in the order given: each one sees the changes of the previous ones.
 - Raising in `before_tool_call` or `after_tool_call` blocks the call: the model gets the error as the tool result.
-  Raising in any other hook stops the run.
+  Raising in any other hook stops the run with a `HookError` (your exception is its `__cause__`).
+- Raise `StopRun("...")` in any hook to end the run with your own message (see [Errors](errors.md#ending-the-run)).
 
 ## Changing a request
 

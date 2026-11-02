@@ -130,6 +130,7 @@ Small surface, the features production agents need:
 | [Subagents](https://daniprol.github.io/pyox-agents/subagents/) and [state](https://daniprol.github.io/pyox-agents/state/) | Agents as tools, in the same event stream, with a shared JSON state. |
 | [MCP servers](https://daniprol.github.io/pyox-agents/mcp/) | The tools of any MCP server, local or remote, with approvals and questions to the user. |
 | [Hooks](https://daniprol.github.io/pyox-agents/hooks/) | Watch or change a run before and after each model request and tool call. |
+| [Errors](https://daniprol.github.io/pyox-agents/errors/) | Failed tools tell the model what went wrong, in words you choose. Typed errors for everything else. |
 | [Web frontends](https://daniprol.github.io/pyox-agents/web-frontends/) | Serve the Vercel AI SDK (`useChat`) and AG-UI (CopilotKit) protocols, written by Rust. |
 | [Tracing](https://daniprol.github.io/pyox-agents/telemetry/) | OpenTelemetry spans and metrics following the GenAI conventions. Free when off. |
 | [Images and files](https://daniprol.github.io/pyox-agents/images-and-files/) | Images and PDFs in prompts and in tool results. |

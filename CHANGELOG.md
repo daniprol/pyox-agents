@@ -6,8 +6,31 @@ break comes with a migration note.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Errors from your hooks, `on_request` and history stores now raise as `HookError` or `HistoryError`, with your
+  exception as `__cause__`, so `except AgentError` catches every failure of a run. Migrate:
+  `except PermissionError` around a run whose `before_run` raises it becomes `except HookError as error` and
+  `error.__cause__`. Or raise `StopRun("...")` in the hook, which the run raises as it is.
+- Tool arguments are checked against the tool's type hints before the call. Before, a tool typed `days: int`
+  could get `"3"`; now the model reads `days: expected an integer, got "3"` and the tool is not called.
+- `ApiError` messages are short (`HTTP 400: Too long`). The whole body is still in `error.body`.
+
 ### Added
 
+- Error handling for tools (see [Errors](https://daniprol.github.io/pyox-agents/errors/)):
+  - `raise ToolFailed("...")` in a tool: the model reads exactly that message. Other exceptions are shown as
+    `ValueError: ...` and logged as warnings on the `pyox_agents` logger.
+  - `Hooks(on_tool_error=...)` and `@tool(on_error=...)` choose what the model reads when a tool fails, with the
+    exception itself.
+  - `raise StopRun("...")` in a tool or hook ends the run; the run raises it, with a history you can continue.
+  - `@tool(timeout_seconds=...)`: the model reads that the call timed out, and an async tool is cancelled.
+  - Bad arguments raise `InvalidArguments`: the model reads one short line per problem and decides whether to try
+    again. pyox never retries for it.
+- `ApiError.code`, OpenAI's error code (like `"context_length_exceeded"`).
+- Types: `execute()` returns a `Run[Output]` (and `execute_sync()` a `SyncRun[Output]`), so `RunFinished.output`
+  has the agent's output type in every event. `ctx.ask(...)` returns an `Answer` and `ctx.approval` is an
+  `Approve` or `None`. A bare `RunContext` means `RunContext[Any]`.
 - MCP servers: `pyox_agents.mcp.McpTools` gives an agent the tools of any MCP server, over Streamable HTTP
   (`McpTools.http(url, headers=...)`) or stdio (`McpTools.stdio(command, args)`). Tools keep the server's names,
   descriptions and schemas (`prefix=`, `include=`, `exclude=` to choose), can need approval
@@ -30,6 +53,14 @@ break comes with a migration note.
 
 ### Fixed
 
+- Cancelling the task that reads a run (or a timeout) cancels the async tools still running, instead of leaving
+  them running.
+- A run that fails in `after_run` or while saving its history keeps its messages in `error.messages`.
+- `StopRun` in one of several parallel tool calls leaves every call with a result, so the history stays valid.
+- A rate limit inside a stream keeps its `request_id`, `NetworkError` says why the connection failed, odd
+  `Retry-After` values are ignored, and invalid `Client` timeouts raise a clear `ValueError`.
+- A failed subagent becomes its tool's error result, instead of ending the parent run.
+- `Usage` and run errors (with their `usage` and `messages`) can be pickled, for Celery and multiprocessing.
 - A process forked after pyox-agents ran in its parent (Gunicorn `--preload`, Celery prefork) raises a clear
   `RuntimeError` instead of hanging.
 - A run's stream (`async for event in run`, `run.batches()`) ends with its `RunFinished` or error. Before, it hung

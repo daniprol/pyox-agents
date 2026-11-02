@@ -1,6 +1,4 @@
-# Client and errors
-
-## Client
+# Client
 
 The client holds the API key, the server address and the connection pool. Without one, the agent creates a
 default client from the environment (`OPENAI_API_KEY`, `OPENAI_BASE_URL`).
@@ -22,7 +20,7 @@ agent = Agent(client=client, model="gpt-5-mini")
 
 Share one `Client` between agents to reuse its connections.
 
-### Retries
+## Retries
 
 A request is sent again, up to `max_retries` times, when it failed before anything of the answer was read:
 
@@ -36,7 +34,7 @@ A request is sent again, up to `max_retries` times, when it failed before anythi
 Once the answer starts streaming it is never retried: its text may already be on the user's screen. Other errors
 (400, 401, 404...) are never retried.
 
-### WebSocket mode
+## WebSocket mode
 
 With `transport="websocket"`, Responses API requests travel over WebSocket connections
 (`wss://api.openai.com/v1/responses`, or `wss://my-resource.openai.azure.com/openai/v1/responses` on Azure) instead
@@ -63,7 +61,7 @@ agent = Agent(client=client, model="gpt-5-mini", api="responses", tools=[...])
 
 The connection is opened with the same settings as HTTP requests: `headers`, the API key, proxies and timeouts.
 
-### Other OpenAI-compatible servers
+## Other OpenAI-compatible servers
 
 Point `base_url` at any server that speaks the Chat Completions API:
 
@@ -72,7 +70,7 @@ client = Client(base_url="http://localhost:11434/v1", api_key="ollama")  # e.g. 
 agent = Agent(client=client, model="llama3.2")
 ```
 
-### Azure OpenAI
+## Azure OpenAI
 
 `Client.azure(...)` talks to Azure OpenAI (Microsoft Foundry) through its
 [v1 API](https://learn.microsoft.com/azure/foundry/openai/api-version-lifecycle), which speaks the same protocol as
@@ -91,43 +89,4 @@ same options (`headers`, timeouts, `max_retries`). `Client(base_url=".../openai/
 Both APIs work (`api="chat"` and `api="responses"`). For Microsoft Entra ID, pass a token as `api_key`; tokens
 expire, so create a new client with a fresh one.
 
-## Errors
-
-All exceptions inherit from `AgentError`, so one `except` catches them all:
-
-| Exception                | Raised when                                                       |
-|--------------------------|-------------------------------------------------------------------|
-| `ApiError`               | the API answered with an error                                    |
-| `AuthenticationError`    | the API key is missing or wrong (an `ApiError`)                   |
-| `RateLimitError`         | the API is rate limiting you (an `ApiError`)                      |
-| `RequestTimeoutError`    | a request took longer than its timeout                            |
-| `NetworkError`           | the server could not be reached                                   |
-| `InvalidResponseError`   | the API sent something that could not be parsed                   |
-| `MaxTurnsExceededError`  | the run made more than `max_turns` model requests (20 by default) |
-| `HistoryError`           | a history store returned something invalid                        |
-| `HookError`              | a Rust hook failed, or a hook returned something invalid          |
-
-```python
-from pyox_agents import AgentError, ApiError
-
-try:
-    result = await agent.run("Hi")
-except ApiError as error:
-    print(error.status_code, error.body, error.request_id)
-except AgentError as error:
-    print(f"The run failed: {error}")
-```
-
-An `ApiError` has the details as attributes, so there is no message to parse:
-
-| Attribute             | What it holds                                                             |
-|-----------------------|---------------------------------------------------------------------------|
-| `status_code`         | the HTTP status (`None` for an error that came inside a stream)           |
-| `body`                | the error body, as parsed JSON when it is JSON (`{"error": {...}}`)       |
-| `request_id`          | OpenAI's id for the request (`x-request-id`), for support                 |
-| `retry_after_seconds` | how long the server asked to wait, if it said                             |
-
-A `RateLimitError` or a 5xx `ApiError` comes after the retries (see [Retries](#retries)).
-
-Errors inside tools don't raise: the model gets the error message and the run continues
-(see [Tools](tools.md#python-tools)).
+What each error means, and how to handle it: [Errors](errors.md).
