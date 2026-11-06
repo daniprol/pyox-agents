@@ -56,7 +56,8 @@ def search_first(ctx: RunContext, request: ModelRequest) -> ModelRequest | None:
     return None
 ```
 
-`tools` can only name the run's own tools (a `HookError` otherwise): drop some, or reorder them.
+`tools` can only name the run's own tools (a `HookError` otherwise): drop some, or reorder them. A tool you drop
+cannot run in that turn either: if the model calls it anyway, it reads `Unknown tool "..."`.
 
 ## Rust hooks
 

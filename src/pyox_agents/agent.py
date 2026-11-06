@@ -9,6 +9,7 @@ from pyox_agents.hooks import Hooks
 from pyox_agents.human_input import OnRequest, Reply
 from pyox_agents.messages import History, HistoryStore, LoadHistory, Prompt
 from pyox_agents.schema import output_format
+from pyox_agents.skills import SkillLike, SkillsHook
 from pyox_agents.subagents import StateAccess, Subagent, TalkTo
 from pyox_agents.telemetry import Instrumentation, recorder_for, require_opentelemetry
 from pyox_agents.tools import Tool, ToolLike, tool
@@ -73,6 +74,9 @@ class Agent(Generic[OutputT]):
 
     An agent can be another agent's tool: `agent.as_tool(...)` (see `pyox_agents.subagents`).
 
+    `skills` are instructions and tools the model loads when a task needs them
+    (see `pyox_agents.skills`).
+
     `output_type` asks for a structured answer: a dataclass, `TypedDict`, pydantic model or
     JSON schema dict, sent as a strict JSON schema. `RunFinished.output` has the answer as
     that type (`None` when the run stops before answering: see `stop_reason`):
@@ -104,6 +108,7 @@ class Agent(Generic[OutputT]):
         unanswered: Unanswered = "close",
         output_type: type[OutputT] | Mapping[str, Any] | None = None,
         instrument: Instrumentation | bool | None = None,
+        skills: Sequence[SkillLike] = (),
     ) -> None:
         if instrument:
             require_opentelemetry()
@@ -114,6 +119,9 @@ class Agent(Generic[OutputT]):
         self._api: Api = api
         # Plain functions are accepted too: they are wrapped with `@tool`.
         self._tools: tuple[ToolLike | Subagent, ...] = tuple(_as_tool(item) for item in tools)
+        # Skills bring their own tools and a hook that hides them until the model loads the skill.
+        skills_hook = SkillsHook(skills) if skills else None
+        self._skills = tuple(skills)
         self._output_type = output_type
         output_schema, output_parser = output_format(output_type) if output_type is not None else (None, None)
         self._engine = Engine(
@@ -121,12 +129,12 @@ class Agent(Generic[OutputT]):
             model=model,
             name=name,
             instructions=instructions,
-            tools=list(self._tools),
+            tools=[*self._tools, *(skills_hook.tools if skills_hook else ())],
             model_parameters=dict(model_parameters or {}),
             max_turns=max_turns,
             text_chunks=text_chunks,
             history_store=history_store,
-            hooks=list(hooks),
+            hooks=[skills_hook, *hooks] if skills_hook else list(hooks),
             api=api,
             store=store,
             encrypted_reasoning=encrypted_reasoning,
@@ -157,6 +165,10 @@ class Agent(Generic[OutputT]):
     @property
     def tools(self) -> tuple[ToolLike | Subagent, ...]:
         return self._tools
+
+    @property
+    def skills(self) -> tuple[SkillLike, ...]:
+        return self._skills
 
     @property
     def output_type(self) -> type[OutputT] | Mapping[str, Any] | None:

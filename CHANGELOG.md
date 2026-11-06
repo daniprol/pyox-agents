@@ -47,9 +47,16 @@ break comes with a migration note.
   ask and save steps with `ctx.ask_sync(...)` and `ctx.step_sync(...)`. MCP servers open with `with` for sync runs.
 - `run(tools=...)` and `stream(tools=...)` add tools for one run, on top of the agent's: for tools that depend on
   the user, such as an MCP server opened with their token.
+- Skills (see [Skills](https://daniprol.github.io/pyox-agents/skills/)): `Agent(skills=[...])` lists each skill's
+  name and description in the instructions, and the model loads one with `load_skill` when a task needs it. Its
+  tools stay hidden until then. Skills come from `SKILL.md` folders (`skills_from_dir`, the Agent Skills format),
+  from code (`Skill(...)`, with text or functions that load it), or from any object that fits `SkillLike` (a
+  database, an API).
 
 ### Changed
 
+- A tool that a `before_model_request` hook did not offer cannot run in that turn: the model reads
+  `Unknown tool "..."`. Before, the model could still call it by name.
 - Sync tools no longer block the event loop: async runs call them on worker threads, so several run in parallel.
   `Tool.invoke` is now a plain `def` that returns a coroutine for async functions. Migrate: tests that
   `await tool.invoke(...)` on a sync tool call it without `await`.

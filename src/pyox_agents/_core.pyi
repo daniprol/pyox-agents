@@ -358,6 +358,8 @@ def send_decision(
     safety_identifier: str | None = None,
     prompt_cache_key: str | None = None,
 ) -> Awaitable[Decision]: ...
+def parse_skill_md(text: str) -> tuple[dict[str, Any], str]:
+    """A SKILL.md file's frontmatter (a dict) and the Markdown body after it. Raises `ValueError`."""
 
 @final
 class EventBatches(Generic[OutputT]):

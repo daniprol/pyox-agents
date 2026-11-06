@@ -25,6 +25,7 @@ nav = [
   { "Web frontends" = "web-frontends.md" },
   { "Hooks" = "hooks.md" },
   { "MCP servers" = "mcp.md" },
+  { "Skills" = "skills.md" },
   { "Tracing (OpenTelemetry)" = "telemetry.md" },
   { "Errors" = "errors.md" },
   { "Client" = "client.md" },

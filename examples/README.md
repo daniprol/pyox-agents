@@ -88,6 +88,15 @@ uv run examples/mcp_tools.py
 Starts a small MCP server (in the same file) and gives its tools to an agent: one needs your approval,
 and the server asks you a question while it runs.
 
+## 11. Skills
+
+```bash
+uv run examples/skills.py
+```
+
+Loads a skill from [`skills/`](skills) (a folder with a `SKILL.md`) and another made in code, whose tool the model
+only sees once it loads the skill.
+
 ## Using another OpenAI-compatible server
 
 ```bash

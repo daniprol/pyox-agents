@@ -158,3 +158,33 @@ def test_sync_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
 
     assert output == "Sunny\nAlso sunny\n"
     assert fake_openai.requests[1].body["messages"][-1]["content"] == "Sunny, 21 °C in Vigo"
+
+
+def test_skills_example(fake_openai: FakeOpenAI, tmp_path: Path) -> None:
+    fake_openai.queue(
+        tool_calls_response(tool_call("load_skill", name="hiking-trips"), tool_call("load_skill", name="weather")),
+        tool_calls_response(
+            tool_call("read_skill_file", skill="hiking-trips", path="references/packing.md"),
+            tool_call("get_forecast", place="Picos de Europa"),
+        ),
+        text_response("Walk the Cares gorge."),
+    )
+    environment = {**os.environ, "OPENAI_BASE_URL": fake_openai.base_url, "OPENAI_API_KEY": "test-key"}
+
+    output = subprocess.run(
+        [sys.executable, EXAMPLES / "skills.py"],
+        cwd=tmp_path,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert output.splitlines()[-1] == "Walk the Cares gorge."
+    first, second, _ = fake_openai.requests
+    assert [tool["function"]["name"] for tool in first.body["tools"]] == ["load_skill", "read_skill_file"]
+    assert "- hiking-trips: Plan a day hike" in first.body["messages"][0]["content"]
+    assert "get_forecast" in [tool["function"]["name"] for tool in second.body["tools"]]
+    tool_results = [message["content"] for message in fake_openai.requests[2].body["messages"][-2:]]
+    assert tool_results[0].startswith("# Day hike packing list")
+    assert tool_results[1] == "Picos de Europa: light rain in the morning, then sunny, 14 °C"
