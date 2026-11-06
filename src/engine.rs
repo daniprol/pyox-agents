@@ -45,6 +45,9 @@ pub struct AgentConfig {
     pub instructions: String,
     /// `Arc` (a shared pointer) so each run can list them with its own frontend tools.
     pub tools: Vec<Arc<ToolDefinition>>,
+    /// The names of the tools `Agent(skills=...)` added (`load_skill`, ...):
+    /// subagents with `inherit_tools` don't get them (see `subagents`).
+    pub skill_tools: Vec<String>,
     pub model_parameters: Map<String, Value>,
     pub max_turns: u32,
     /// How streamed text is grouped into `TextDelta` events (can be changed per run).
@@ -101,7 +104,7 @@ pub struct Engine {
 impl Engine {
     #[new]
     #[pyo3(signature = (
-        *, client, model, name = None, instructions = String::new(), tools = Vec::new(), model_parameters = None, max_turns = 20,
+        *, client, model, name = None, instructions = String::new(), tools = Vec::new(), skill_tools = Vec::new(), model_parameters = None, max_turns = 20,
         text_chunks = None, history_store = None, hooks = Vec::new(),
         api = "chat", store = false, encrypted_reasoning = true, unanswered = "close",
         output_schema = None, output_parser = None,
@@ -113,6 +116,7 @@ impl Engine {
         name: Option<String>,
         instructions: String,
         tools: Vec<Bound<'_, PyAny>>,
+        skill_tools: Vec<String>,
         model_parameters: Option<Bound<'_, PyDict>>,
         max_turns: u32,
         text_chunks: Option<Bound<'_, PyAny>>,
@@ -171,6 +175,7 @@ impl Engine {
                 model,
                 instructions,
                 tools,
+                skill_tools,
                 model_parameters,
                 max_turns,
                 text_chunks: match text_chunks {

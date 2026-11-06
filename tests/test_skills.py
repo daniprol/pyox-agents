@@ -70,6 +70,28 @@ async def test_a_skills_tools_appear_once_the_model_loads_it(fake_openai: FakeOp
     assert agent.tools == ()  # the skill tools are not the agent's own (subagents do not inherit them)
 
 
+async def test_subagents_do_not_inherit_skills(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
+    def check_order(order_id: str) -> str:
+        """Check an order."""
+        return "Paid"
+
+    helper = make_agent()
+    agent = make_agent(
+        tools=[check_order, helper.as_tool("helper", "Help", inherit_tools=True)], skills=[refunds_skill()]
+    )
+    fake_openai.queue(
+        tool_calls_response(tool_call("load_skill", name="refunds")),
+        tool_calls_response(tool_call("helper", task="Refund A1")),
+        text_response("Done."),
+        text_response("Refunded."),
+    )
+
+    await agent.run("Money back for A1")
+
+    assert "refund" in offered_tools(fake_openai.requests[1])  # loaded, so the agent itself has it
+    assert offered_tools(fake_openai.requests[2]) == ["check_order"]  # the helper: no skill tools, loaded or not
+
+
 async def test_a_hidden_tool_cannot_be_called(fake_openai: FakeOpenAI, make_agent: MakeAgent) -> None:
     fake_openai.queue(tool_calls_response(tool_call("refund", order_id="A1")), text_response("Sorry."))
 

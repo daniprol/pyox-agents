@@ -1,6 +1,6 @@
 [package]
 name = "pyox-tools"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Write pyox-agents tools and history stores in Rust"
 

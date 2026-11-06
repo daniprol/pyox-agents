@@ -48,6 +48,6 @@ class Subagent:
     agent: "Agent[Any]"
     name: str
     description: str
-    inherit_tools: bool = False  # also give it the calling agent's tools (not its subagents)
+    inherit_tools: bool = False  # also give it the calling agent's tools (not its subagents or skills)
     talk_to: TalkTo | None = None
     state: StateAccess | None = None

@@ -149,13 +149,21 @@ impl Subagent {
     }
 
     /// The tools the subagent gets for this run, on top of its own.
-    fn run_tools(&self, calling_agent_tools: &[Arc<ToolDefinition>]) -> Vec<Arc<ToolDefinition>> {
+    /// `calling_agent_tools` are the ones the calling agent can use right now.
+    fn run_tools(
+        &self,
+        calling_agent: &AgentConfig,
+        calling_agent_tools: &[Arc<ToolDefinition>],
+    ) -> Vec<Arc<ToolDefinition>> {
         let mut tools = Vec::new();
         if self.inherit_tools {
             for tool in calling_agent_tools {
                 let is_subagent = matches!(tool.implementation, ToolImplementation::Subagent(_));
                 let has_its_own = self.agent.tools.iter().any(|own| own.name == tool.name);
-                if !is_subagent && !has_its_own {
+                // Skills stay with their agent: their tools only make sense
+                // with the hook that hides them until the skill is loaded.
+                let is_skill_tool = calling_agent.skill_tools.contains(&tool.name);
+                if !is_subagent && !has_its_own && !is_skill_tool {
                     tools.push(tool.clone());
                 }
             }
@@ -244,7 +252,7 @@ impl Subagent {
                 on_request,
                 events: events.for_subagent(&call.id),
             }),
-            extra_tools: self.run_tools(run.tools),
+            extra_tools: self.run_tools(run.config, run.tools),
             state: run.context.state.with_access(self.state),
             stop: run.stop.clone(),
             // Its span goes under this tool call's span.

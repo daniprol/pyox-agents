@@ -47,7 +47,7 @@ researcher.as_tool(
 ```
 
 **Tools.** By default a subagent has only its own tools. With `inherit_tools=True` it also gets the main agent's
-tools (never its subagents). When names clash, its own tool wins. Tools keep their approval rules wherever they run.
+tools (never its subagents or [skills](skills.md)). When names clash, its own tool wins. Tools keep their approval rules wherever they run.
 
 **Talking to the user.** With `talk_to="user"`, the subagent gets an `ask_user(question)` tool. The question
 waits for the person like a [`ctx.ask`](human-in-the-loop.md), and the answer is the tool's result.
