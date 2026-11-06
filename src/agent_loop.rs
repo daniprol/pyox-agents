@@ -452,10 +452,12 @@ async fn agent_loop(
             }
 
             // Run all requested tools at the same time and wait for all of them.
+            // Only the tools this request offered can run: a tool a hook hid
+            // (a skill's tool before the skill is loaded, say) is unknown here.
             let outcomes = {
                 let run = ToolRun {
                     config: &config,
-                    tools: &tools,
+                    tools: &request_tools,
                     history: messages,
                     context: &context,
                     python_calls: &python_calls,

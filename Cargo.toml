@@ -20,6 +20,8 @@ pyox-tools = { path = "crates/pyox-tools" }
 # WebSocket framing only: the connection itself is opened by reqwest (see `src/ws.rs`).
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 json-patch = "4"
+# YAML for the frontmatter of SKILL.md files (see `src/skills.rs`): pure Rust, maintained.
+yaml-rust2 = "0.13"
 
 [workspace]
 members = [".", "crates/pyox-tools", "examples/rust_tool_package", "examples/rust_history_store"]

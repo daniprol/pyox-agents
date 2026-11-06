@@ -59,6 +59,7 @@ mod python_call;
 mod python_exit;
 mod run;
 mod run_context;
+mod skills;
 mod sse;
 mod state;
 mod subagents;
@@ -92,6 +93,7 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<pyox_tools::usage::Usage>()?;
 
     module.add_function(wrap_pyfunction!(openai_decisions::send_decision, module)?)?;
+    module.add_function(wrap_pyfunction!(skills::parse_skill_md, module)?)?;
     module.add_class::<openai_decisions::Decision>()?;
     module.add_class::<openai_decisions::PredicateAnswer>()?;
     module.add_class::<openai_decisions::ChoiceAnswer>()?;

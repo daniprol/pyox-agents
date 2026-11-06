@@ -25,10 +25,10 @@ server. The modules read the requests in Python, where they are easy to change.
     returns only the finished `RunFinished`, which has no `ai_sdk()` or `ag_ui()`.
 
     ```python
-    run = agent.stream(prompt)                    # yes
+    run = agent.stream(prompt)  # yes
     return StreamingResponse(run.ai_sdk(), headers=ai_sdk.HEADERS)
 
-    result = await agent.run(prompt)              # no: AttributeError
+    result = await agent.run(prompt)  # no: AttributeError
     result.ai_sdk()
     ```
 
