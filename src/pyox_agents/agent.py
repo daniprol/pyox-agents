@@ -130,6 +130,7 @@ class Agent(Generic[OutputT]):
             name=name,
             instructions=instructions,
             tools=[*self._tools, *(skills_hook.tools if skills_hook else ())],
+            skill_tools=[skill_tool.name for skill_tool in skills_hook.tools] if skills_hook else [],
             model_parameters=dict(model_parameters or {}),
             max_turns=max_turns,
             text_chunks=text_chunks,
@@ -385,7 +386,7 @@ class Agent(Generic[OutputT]):
         The model calls it with a `task`, and reads the subagent's final answer as the result.
 
         - `inherit_tools=True` also gives the subagent the calling agent's tools (its own win
-          when names clash).
+          when names clash), but not its subagents or skills.
         - `talk_to`: who the subagent's model can ask questions: nobody (`None`), the person
           (`"user"`, with an `ask_user` tool) or the calling agent (`"parent"`, with an
           `ask_parent` tool; the calling agent can then answer and follow up).

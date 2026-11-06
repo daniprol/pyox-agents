@@ -391,6 +391,7 @@ class Engine:
         name: str | None = None,
         instructions: str = ...,
         tools: Sequence[Any] = ...,
+        skill_tools: Sequence[str] = ...,
         model_parameters: Mapping[str, Any] | None = None,
         max_turns: int = 20,
         text_chunks: str | int | None = None,

@@ -6,6 +6,8 @@ break comes with a migration note.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-06
+
 ### Breaking changes
 
 - `agent.execute(...)` is now `agent.stream(...)`, and `agent.execute_sync(...)` is now `agent.stream_sync(...)`.
@@ -51,7 +53,7 @@ break comes with a migration note.
   name and description in the instructions, and the model loads one with `load_skill` when a task needs it. Its
   tools stay hidden until then. Skills come from `SKILL.md` folders (`skills_from_dir`, the Agent Skills format),
   from code (`Skill(...)`, with text or functions that load it), or from any object that fits `SkillLike` (a
-  database, an API).
+  database, an API). Subagents don't get the calling agent's skills, even with `inherit_tools=True`.
 
 ### Changed
 
@@ -131,6 +133,7 @@ First release: agents with a Rust core for the OpenAI Chat Completions, Response
 Azure OpenAI), streaming events, Python and Rust tools, history stores, hooks, human in the loop, images and
 files in prompts, and AI SDK and AG-UI web streams.
 
-[Unreleased]: https://github.com/daniprol/pyox-agents/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/daniprol/pyox-agents/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/daniprol/pyox-agents/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/daniprol/pyox-agents/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/daniprol/pyox-agents/releases/tag/v0.1.0

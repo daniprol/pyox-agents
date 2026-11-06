@@ -143,7 +143,7 @@ nothing: the skill's tools stay hidden.
 
 - Skill names and the names of their tools must be unique, and differ from the agent's own tools.
 - Skills are the agent's, not the run's: make the agent with the skills a user may use.
-- [Subagents](subagents.md) don't get the calling agent's skills: give them their own `skills=`. With
-  `inherit_tools=True` they get `load_skill` and every skill's tools, none of them hidden.
+- [Subagents](subagents.md) don't get the calling agent's skills, even with `inherit_tools=True`: give them
+  their own `skills=`.
 - The hook runs before your own [`before_model_request`](hooks.md) hooks, which see the catalog in
   `request["instructions"]` and only the tools offered.
